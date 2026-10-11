@@ -1,5 +1,5 @@
 ﻿<#
-Ophira v2.48  -  Windows Incident Response Triage Toolkit
+Ophira v2.49  -  Windows Incident Response Triage Toolkit
 READ-ONLY by design: never modifies the system, only reads and copies data
 into its own output folder. Intended to be handed to a system owner or run
 by a responder during early triage / threat hunting.
@@ -42,7 +42,7 @@ param(
     [System.Management.Automation.PSCredential]$Credential
 )
 
-$ScriptVersion = "2.48"
+$ScriptVersion = "2.49"
 $ErrorActionPreference = 'Continue'
 $ProgressPreference = 'SilentlyContinue'
 
@@ -223,7 +223,8 @@ $script:CsvCatMap = @{
     'entities_binaries' = 'derived'; 'entities_accounts' = 'derived'; 'entities_remotes' = 'derived'
     'session_activity' = 'derived'; 'process_chains' = 'derived'; 'logging_gaps' = 'derived'
     'ioc_hits_amcache' = 'derived'; 'ioc_hits_browser' = 'derived'; 'ioc_hits_dns' = 'derived'
-    'ioc_hits_network' = 'derived'; 'ioc_hits_mft' = 'derived'; 'process_pivot' = 'derived'
+    'ioc_hits_network' = 'derived'; 'ioc_hits_mft' = 'derived'; 'ioc_hits_hash' = 'derived'
+    'ioc_export' = 'derived'; 'process_pivot' = 'derived'
 }
 
 function Get-CaseCsvPath {
@@ -4684,6 +4685,7 @@ tr.techrow{cursor:pointer}
     foreach ($y in ($yaraScanned | Where-Object { "$($_.Hits)" -match '^\d+$' -and [int]$_.Hits -gt 0 -and "$($_.SHA256)" })) { $iocBlock.Add("sha256  $($y.SHA256)") }
     foreach ($h in (Import-CaseCsv 'ioc_hits_dns')) { $iocBlock.Add("domain  $($h.Query)"); if ("$($h.Resolved)") { $iocBlock.Add("ip  $(("$($h.Resolved)" -split '[,;]')[0].Trim())") } }
     foreach ($h in (Import-CaseCsv 'ioc_hits_network')) { $iocBlock.Add("ip  $($h.RemoteIp)") }
+    foreach ($h in (Import-CaseCsv 'ioc_hits_hash')) { $iocBlock.Add("sha256  $($h.Hash)") }
     $iocUnique = @($iocBlock.ToArray() | Sort-Object -Unique)
     if ($iocUnique.Count -gt 0) {
         $null = $sb.AppendLine("<h3>Copy-ready indicator list (defanged)</h3><pre class='ioc'>")
@@ -4695,6 +4697,9 @@ tr.techrow{cursor:pointer}
         $null = $sb.AppendLine("</pre>")
     } else {
         $null = $sb.AppendLine("<div class='meta'>No indicators to export.</div>")
+    }
+    if (Test-CaseCsv 'ioc_export') {
+        $null = $sb.AppendLine("<div class='meta'><b>Fleet memory:</b> this case exported $(@(Import-CaseCsv 'ioc_export').Count) high-confidence indicator(s) to <span style='font-family:Consolas,monospace'>ioc_export.csv</span> + <span style='font-family:Consolas,monospace'>raw\analysis\ioc_export.txt</span> - drop that txt into <span style='font-family:Consolas,monospace'>tools\iocs\</span> and every future collection xrefs them (hash/domain/IP).</div>")
     }
 
     # ---------- findings by tactic (med+ alerts) ----------
@@ -5012,7 +5017,7 @@ tr.techrow{cursor:pointer}
         }
         $null = $sb.AppendLine("</table><div class='meta'>High-severity hunt rules are high-precision (version-info renames, side-loaded system DLLs, downloaded-then-executed, LSASS access, Office-to-interpreter chains, proxy-execution LOLBin command lines, admin-share staging, Defender tamper, DCSync, password spray, webshell chains, cross-process injection, C2-style named pipes) and contribute to the verdict. Medium rules (UAC bypass pattern, discovery storms, timestomping, Kerberoasting/AS-REP patterns, web anomalies, USB/account/RDP anomalies) are report-only leads. Verify against the cited raw evidence. Source: csv\hunt_findings.csv</div>")
         if ($Sysmon -and @(Import-CaseCsv 'sysmon_process_access').Count -eq 0 -and @(Import-CaseCsv 'sysmon_remote_thread').Count -eq 0 -and @(Import-CaseCsv 'sysmon_pipes').Count -eq 0) {
-            $null = $sb.AppendLine("<div class='meta'><b>Sysmon config gap:</b> Sysmon is running but no ProcessAccess (EID 10) / remote-thread (EID 8) / named-pipe (EID 17/18) telemetry arrived - the installed config does not capture it, so the LSASS/injection/pipe rules above run blind. Deploy <b>tools\sysmon\ophira-sysmon.xml</b> from the kit (<span style='font-family:Consolas,monospace'>sysmon64.exe -accepteula -i ophira-sysmon.xml</span>) and collect again.</div>")
+            $null = $sb.AppendLine("<div class='meta'><b>Sysmon config gap:</b> Sysmon is running but no ProcessAccess (EID 10) / remote-thread (EID 8) / named-pipe (EID 17/18) telemetry arrived - the endpoint's own Sysmon config does not capture it, so the LSASS/injection/pipe rules above run blind. Ophira never touches the endpoint; if widening the coverage matters, the Sysmon owner can extend their config (or stock Sysmon defaults capture all of these) and you collect again.</div>")
         }
     } else {
         $null = $sb.AppendLine("<div class='meta'>No hunt findings - all techniques clean.</div>")
@@ -5415,6 +5420,8 @@ tr.techrow{cursor:pointer}
         'ioc_hits_dns'                    = 'IOC-listed domains observed in Sysmon DNS queries (feed-attributed)'
         'ioc_hits_network'                = 'IOC-listed IPs observed in historical connections (feed-attributed)'
         'ioc_hits_mft'                    = 'IOC-listed filenames found on disk ($MFT, exact name match)'
+        'ioc_hits_hash'                   = 'IOC-listed binary hashes found in execution history (process_hashes - hits even if the file is gone)'
+        'ioc_export'                      = 'Case indicators exported for fleet memory (HIGH verdicts/YARA/high beacons) - copy raw\analysis\ioc_export.txt into tools\iocs\ to arm future collections'
         'credential_sweep'                = 'Credential exposure: auto-logon, WLAN keys (raw\wifi), DPAPI vault (raw\vault), LSASS dumps on disk'
         'usn_write_bursts'                = 'USN journal: mass file-modification windows (ransomware)'
         'lnk_parsed'                      = 'LNK parse (Recent docs - what files were opened)'
@@ -6099,6 +6106,86 @@ function New-IocHits {
     }
     Save-Rows -Name 'ioc_hits_mft' -Rows $mft
     if (@($mft).Count -gt 0) { Write-CaseLog "    FILENAME IOC HITS: $($mft.Count) known-bad filename(s) on disk -> csv\ioc_hits_mft.csv" 'Red' }
+    # v2.49: feed hashes x execution history (process_hashes) - a hash from a previous case
+    # (ioc_export feedback loop) or an external feed hits any host where that exact binary
+    # ever executed, even if the file is gone
+    $hh = @()
+    if ($iocs.Hashes.Count -gt 0) {
+        foreach ($r in (Import-CaseCsv 'process_hashes')) {
+            $hit = ''
+            foreach ($hn in @('SHA256', 'SHA1', 'MD5')) {
+                $p2 = $r.PSObject.Properties[$hn]
+                if ($p2 -and "$($p2.Value)") {
+                    $hv = "$($p2.Value)".ToUpper()
+                    if ($iocs.Hashes.ContainsKey($hv)) { $hit = $hv; break }
+                }
+            }
+            if (-not $hit) { continue }
+            $hh += [pscustomobject]@{ Indicator = $hit; Feed = (& $feedOf $hit); Path = "$($r.Path)"; Process = "$($r.Name)"; Hash = $hit; Match = 'execution-hash' }
+        }
+    }
+    Save-Rows -Name 'ioc_hits_hash' -Rows $hh
+    if (@($hh).Count -gt 0) { Write-CaseLog "    HASH IOC HITS: $($hh.Count) known-bad binary hash(es) in execution history -> csv\ioc_hits_hash.csv" 'Red' }
+}
+
+function New-CaseIocExport {
+    # v2.49: case -> fleet memory. High-confidence case indicators exported in the exact
+    # tools\iocs feed dialect, so dropping raw\analysis\ioc_export.txt into tools\iocs\
+    # arms every future collection with what this case found. Conservative on purpose -
+    # fleet-feed material only: HIGH process verdicts (hash via process_hashes), YARA-hit
+    # binaries, high-severity beacons. Medium rows are leads, not feed material.
+    $out = New-Object System.Collections.Generic.List[object]
+    $seen = New-Object 'System.Collections.Generic.HashSet[string]'
+    $feeds = $null
+    try { $feeds = Get-IocList } catch { }
+    $add = {
+        param([string]$kind, [string]$value, [string]$why, [string]$detail)
+        $v = "$value".Trim()
+        if (-not $v) { return }
+        if ($kind -eq 'domain') { $v = $v.ToLower() }
+        if ($feeds) {
+            if ($kind -eq 'sha256' -and $feeds.Hashes.ContainsKey($v.ToUpper())) { return }
+            if ($kind -eq 'ip' -and $feeds.Ips.ContainsKey($v)) { return }
+            if ($kind -eq 'domain' -and $feeds.Domains.ContainsKey($v)) { return }
+        }
+        $key = "$kind|$($v.ToLower())"
+        if (-not $seen.Add($key)) { return }
+        $null = $out.Add([pscustomobject]@{ Kind = $kind; Value = $v; Source = $why; Detail = $detail })
+    }
+    $hashByPath = @{}
+    foreach ($r in (Import-CaseCsv 'process_hashes')) {
+        $p = "$($r.Path)".ToLower()
+        $h5 = "$($r.SHA256)".ToUpper()
+        if ($p -and $h5 -and -not $hashByPath[$p]) { $hashByPath[$p] = $h5 }
+    }
+    foreach ($r in (Import-CaseCsv 'flash_process_scored')) {
+        if ("$($r.Verdict)" -ne 'HIGH') { continue }
+        $hash = $hashByPath["$($r.Path)".ToLower()]
+        if ($hash) { & $add 'sha256' $hash 'HIGH process verdict' "$($r.Name) @ $($r.Path)" }
+    }
+    foreach ($r in (Import-CaseCsv 'yara_hits')) {
+        $hash = $hashByPath["$($r.Binary)".ToLower()]
+        if ($hash) { & $add 'sha256' $hash "YARA $($r.Rule)" "$($r.Detail)" }
+    }
+    foreach ($r in (Import-CaseCsv 'beacon_candidates')) {
+        if ("$($r.Severity)" -ne 'high' -or -not "$($r.RemoteIp)") { continue }
+        & $add 'ip' "$($r.RemoteIp)" 'high C2 beacon' "$($r.Process) port $($r.Port), ~$($r.MedianIntervalSec)s interval"
+    }
+    foreach ($r in (Import-CaseCsv 'dns_beacon_candidates')) {
+        if ("$($r.Severity)" -ne 'high' -or -not "$($r.Domain)") { continue }
+        & $add 'domain' "$($r.Domain)" 'high DNS beacon' "$($r.Process), ~$($r.MedianIntervalSec)s interval"
+    }
+    Save-Rows -Name 'ioc_export' -Rows $out.ToArray()
+    if ($out.Count -gt 0) {
+        $an = Join-Path $RawDir 'analysis'
+        New-Item -ItemType Directory -Path $an -Force | Out-Null
+        $txt = New-Object System.Collections.Generic.List[string]
+        $null = $txt.Add("# case IOC export ($Computer / $($script:CurrentCaseID)) - copy into tools\iocs\ (or merge into iocs.txt) to arm future collections")
+        foreach ($r in $out) { $null = $txt.Add("$($r.Value) # $($r.Kind) - $($r.Source): $($r.Detail)") }
+        Set-Content -LiteralPath (Join-Path $an 'ioc_export.txt') -Value $txt.ToArray() -Encoding UTF8
+        Write-CaseLog "    case IOC export: $($out.Count) indicator(s) -> csv\ioc_export.csv + raw\analysis\ioc_export.txt" 'Yellow'
+        Write-CaseLog "      fleet memory: copy ioc_export.txt into tools\iocs\ on your analyst machine - future collections xref it" 'Gray'
+    }
 }
 
 function New-HuntFindings {
@@ -6910,6 +6997,8 @@ function Get-CompromiseVerdict {
     Add-Signal 'IOC hit - known-bad DNS query / historical connection' 2 ($dnsIoc.Count + $netIoc.Count) ((@($dnsIoc | Select-Object -First 3 | ForEach-Object { $_.Query }) + @($netIoc | Select-Object -First 2 | ForEach-Object { $_.RemoteIp })) -join '; ')
     $mftIoc = @(Import-CaseCsv 'ioc_hits_mft')
     Add-Signal 'IOC hit - known-bad filename on disk ($MFT)' 2 @($mftIoc).Count (($mftIoc | Select-Object -First 3 | ForEach-Object { $_.Path }) -join '; ')
+    $hashIoc = @(Import-CaseCsv 'ioc_hits_hash')
+    Add-Signal 'IOC hit - known-bad binary hash in execution history' 2 @($hashIoc).Count (($hashIoc | Select-Object -First 3 | ForEach-Object { "$($_.Process) ($($_.Path))" }) -join '; ')
     Add-Signal 'IOC hit - live system' 3 @($iocLive).Count (($iocLive | Select-Object -First 3 | ForEach-Object { $_.Indicator }) -join '; ')
     Add-Signal 'Sigma detection - critical' $critFloor $hayCrit.Count (($hayCrit | Select-Object -First 3 | ForEach-Object { $_.RuleTitle }) -join '; ')
     Add-Signal 'YARA hit - medium rule' 2 $yaraMed (($yara | Where-Object { "$($_.Severity)" -match '^(?i)medium$' } | Select-Object -First 3 | ForEach-Object { $_.Rule }) -join '; ')
@@ -7088,6 +7177,7 @@ function Invoke-RegenerateOutputs {
     try { New-SigmaRuleLogs } catch { Write-CaseLog "    sigma rule logs failed: $($_.Exception.Message)" 'DarkYellow' }
     try { New-HuntFindings } catch { Write-CaseLog "    hunt findings failed: $($_.Exception.Message)" 'DarkYellow' }
     try { New-IocHits } catch { Write-CaseLog "    IOC xref failed: $($_.Exception.Message)" 'DarkYellow' }
+    try { New-CaseIocExport } catch { Write-CaseLog "    IOC export failed: $($_.Exception.Message)" 'DarkYellow' }
     try { New-EntityCorrelation } catch { Write-CaseLog "    entity correlation failed: $($_.Exception.Message)" 'DarkYellow' }
     try { New-SessionAttribution } catch { Write-CaseLog "    session attribution failed: $($_.Exception.Message)" 'DarkYellow' }
     try { New-ProcessChains } catch { Write-CaseLog "    process lineage failed: $($_.Exception.Message)" 'DarkYellow' }
@@ -7349,7 +7439,6 @@ function Invoke-SetupWizard {
     Write-Host "=== Setup companion tools ===" -ForegroundColor Cyan
     Write-Host "Tools live in tools\ subfolders. Available:" -ForegroundColor Gray
     Write-Host "  winpmem  hayabusa  volatility3  chainsaw  AmcacheParser  RBCmd  MFTECmd  PECmd  LECmd  JLECmd  SBECmd  SQLECmd  loldrivers  yara" -ForegroundColor White
-    Write-Host "  plus tools\sysmon\ophira-sysmon.xml - recommended Sysmon config for full hunt-rule telemetry (deploy yourself, see README 'Deploy Sysmon')" -ForegroundColor Gray
     Write-Host "ENTER = walk through all tools (confirm each download)," 
     Write-Host "or give a comma-separated list (e.g. hayabusa,winpmem)."
     $inp = (Read-Host "Tools [all]").Trim()
@@ -8551,6 +8640,73 @@ function Invoke-FocusCore {
         [void]$h.AppendLine("<div class='meta'>Rebuild: <b>Ophira.ps1 -Mode Focus -ParsePath &lt;case&gt; -ProcessName &lt;indicator&gt;</b> (name, PID, path fragment or hash). Chain CSV: focus\focus_chain.csv - raw hits: focus\focus_hits.csv</div>")
         [void]$h.AppendLine("</body></html>")
         Set-Content -LiteralPath (Join-Path $focusDir 'focus_report.html') -Value $h.ToString() -Encoding UTF8
+    }
+
+    # ---- v2.49 R3: uncapped DOT export for chains bigger than the SVG caps ----
+    # Same layered model (parents -> instances -> children -> artifact chips + injection
+    # edges) but ALL instances/children and up to 25 chips per instance - opens in any
+    # Graphviz/DOT viewer (e.g. https://dreampuf.github.io/GraphvizOnline, xdot).
+    if ($hits.Count -gt 0 -and $instances.Count -gt 0) {
+        $dot = New-Object System.Text.StringBuilder
+        $dotEsc = { param($s) ("$s" -replace '\\', '\\' -replace '"', '\"') }
+        [void]$dot.AppendLine('digraph focus {')
+        [void]$dot.AppendLine('  rankdir=LR; bgcolor="#10141c";')
+        [void]$dot.AppendLine('  node [style=filled, shape=box, fontname="Consolas", fontsize=10, fontcolor="#c5cdda", fillcolor="#1f2a3d", color="#3a5a83"];')
+        [void]$dot.AppendLine('  edge [color="#3a4a63"];')
+        $dParents = @{}
+        $instIds = @{}
+        foreach ($i in $instances) {
+            $nid = "i$($instIds.Count)"
+            $instIds["$($i.Pid)|$($i.Image)".ToLower()] = $nid
+            [void]$dot.AppendLine("  `"$nid`" [label=`"INSTANCE $(& $dotEsc "$(Split-Path "$($i.Image)" -Leaf) (PID $($i.Pid))")`", fillcolor=`"#3a1518`", color=`"#a33`"];")
+            # direct parent only (Lineage[0] is the nearest ancestor; Parent falls back)
+            $pv = ''
+            if ($i.PSObject.Properties['Lineage'] -and @($i.Lineage).Count -gt 0) { $pv = "$(@($i.Lineage)[0])" }
+            if (-not $pv) { $pv = "$($i.Parent)".Trim() }
+            if ($pv -and "$pv" -notmatch '^PPID ') {
+                if (-not $dParents.ContainsKey($pv)) {
+                    $dParents[$pv] = "p$($dParents.Count)"
+                    [void]$dot.AppendLine("  `"$($dParents[$pv])`" [label=`"PARENT $(& $dotEsc $pv)`", fillcolor=`"#253044`"];")
+                }
+                [void]$dot.AppendLine("  `"$($dParents[$pv])`" -> `"$nid`";")
+            }
+        }
+        $childIds = @{}
+        foreach ($pd in $perInst) {
+            $srcId = $instIds["$($pd.Instance.Pid)|$($pd.Instance.Image)".ToLower()]
+            if (-not $srcId) { continue }
+            foreach ($k in $pd.Children) {
+                $ck = "$($k.ProcessId)|$($k.Image)".ToLower()
+                $cid = $null
+                if (-not $childIds.ContainsKey($ck)) {
+                    $cid = "c$($childIds.Count)"
+                    $childIds[$ck] = $cid
+                    [void]$dot.AppendLine("  `"$cid`" [label=`"CHILD $(& $dotEsc "$(Split-Path "$($k.Image)" -Leaf) (PID $($k.ProcessId))")`", fillcolor=`"#33290f`", color=`"#c93`"];")
+                } else { $cid = $childIds[$ck] }
+                [void]$dot.AppendLine("  `"$srcId`" -> `"$cid`";")
+            }
+            $chipN = 0
+            foreach ($c2 in @($pd.CrtIn)) { if ($chipN -ge 25) { break }; [void]$dot.AppendLine("  `"a$srcId`_$chipN`" [label=`"INJECT<- $(& $dotEsc (Split-Path "$($c2.SourceImage)" -Leaf))`", color=`"#a33`"];"); [void]$dot.AppendLine("  `"$srcId`" -> `"a$srcId`_$chipN`"" + ' [color="#a33"];'); $chipN++ }
+            foreach ($c2 in @($pd.CrtOut)) { if ($chipN -ge 25) { break }; [void]$dot.AppendLine("  `"a$srcId`_$chipN`" [label=`"THREAD-> $(& $dotEsc (Split-Path "$($c2.TargetImage)" -Leaf))`"];"); [void]$dot.AppendLine("  `"$srcId`" -> `"a$srcId`_$chipN`";"); $chipN++ }
+            foreach ($p2 in @($pd.Pipes)) { if ($chipN -ge 25) { break }; [void]$dot.AppendLine("  `"a$srcId`_$chipN`" [label=`"PIPE $(& $dotEsc "$($p2.PipeName)")`"];"); [void]$dot.AppendLine("  `"$srcId`" -> `"a$srcId`_$chipN`";"); $chipN++ }
+            foreach ($f2 in @($pd.FileCreate)) { if ($chipN -ge 25) { break }; [void]$dot.AppendLine("  `"a$srcId`_$chipN`" [label=`"DROP $(& $dotEsc (Split-Path "$($f2.TargetFilename)" -Leaf))`"];"); [void]$dot.AppendLine("  `"$srcId`" -> `"a$srcId`_$chipN`";"); $chipN++ }
+            foreach ($b in @($pd.Beacon)) { if ($chipN -ge 25) { break }; [void]$dot.AppendLine("  `"a$srcId`_$chipN`" [label=`"BEACON $(& $dotEsc "$($b.Target)")`"];"); [void]$dot.AppendLine("  `"$srcId`" -> `"a$srcId`_$chipN`";"); $chipN++ }
+            # cross-instance injection edges (both ends tracked)
+            foreach ($c2 in @($pd.CrtOut)) {
+                $tgl = "$($c2.TargetProcessGuid)".ToLower()
+                if (-not $tgl) { continue }
+                $ti = $null
+                foreach ($i5 in $instances) { if ("$($i5.Guid)".ToLower() -eq $tgl) { $ti = $i5; break } }
+                if (-not $ti) { continue }
+                $tn = $instIds["$($ti.Pid)|$($ti.Image)".ToLower()]
+                if ($tn -and $tn -ne $srcId) { [void]$dot.AppendLine("  `"$srcId`" -> `"$tn`" [color=`"#a33`", penwidth=1.5, label=`"inject`"];") }
+            }
+        }
+        [void]$dot.AppendLine('}')
+        try {
+            Set-Content -LiteralPath (Join-Path $focusDir 'focus_graph.dot') -Value $dot.ToString() -Encoding UTF8
+            Write-Host "  Graphviz export -> focus\focus_graph.dot (uncapped - for chains bigger than the SVG view)" -ForegroundColor DarkGray
+        } catch { }
     }
 
     # ---- per-instance detail + graph for the main report embed (v2.45) ----

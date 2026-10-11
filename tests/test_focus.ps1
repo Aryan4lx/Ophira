@@ -177,6 +177,11 @@ Check "pipes: C2-family pipe joined onto the instance, stock pipe excluded" (($h
 Check "graph: INJECT/THREAD/PIPE chips rendered" (($html -match 'INJECT&lt;- rundll32\.exe') -and ($html -match 'THREAD-&gt; cmd\.exe') -and ($html -match 'PIPE \\msagent_f00d'))
 Check "graph: red cross-instance injection edge between tracked instances" ($html -match "stroke='#a33'")
 Check "dossier: injection hits routed to the Process events section" (($html -match 'Process events \(') -and ($html -match 'sysmon_remote_thread'))
+# v2.49 R3: uncapped DOT export
+$dot = ''
+try { $dot = Get-Content -LiteralPath (Join-Path $fDir 'focus_graph.dot') -Raw } catch { }
+Check "dot: digraph written with all 4 instances + injection edges" (($dot -match 'digraph focus \{') -and (@([regex]::Matches($dot, 'INSTANCE ')).Count -eq 4) -and ($dot -match 'INJECT<- rundll32') -and ($dot -match 'label="inject"'))
+Check "dot: benign wkssvc pipe not exported" ($dot -notmatch 'wkssvc')
 
 # v2.45: per-instance detail json for the main report embed
 $fDetail = $null

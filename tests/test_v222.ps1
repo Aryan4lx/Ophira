@@ -1,5 +1,5 @@
 ﻿$repoScript = Join-Path (Split-Path -Parent $PSScriptRoot) "Ophira.ps1"
-# v2.22 - bundled Sysmon config wiring + hunt rule R22 timestamp-forgery checks
+# v2.22 - hunt rule R22 timestamp-forgery checks (+ v2.49: no bundled Sysmon config ships)
 $ErrorActionPreference = 'Stop'
 $src = Get-Content -LiteralPath "$repoScript" -Raw
 . (Join-Path $PSScriptRoot '_casehelpers.ps1')
@@ -88,21 +88,12 @@ Check "R22 v2.44: non-PE (.lnk) $Si skew NOT flagged" (@($r22 | Where-Object { "
 Check "R22 v2.44: same skew on a user-path PE still flags" (@($r22 | Where-Object { "$($_.Entity)" -match 'tampd\.exe' -and "$($_.Evidence)" -match 'day skew' -and "$($_.Evidence)" -match 'predates' }).Count -eq 1)
 
 # ============================================================================
-# PART 2 - bundled Sysmon config + structural wiring
+# PART 2 - structural wiring (the v2.22 bundled config was removed in v2.49 -
+# Ophira never deploys Sysmon; it parses whatever telemetry the host's own config produces)
 # ============================================================================
-$cfgFile = Join-Path (Split-Path -Parent $PSScriptRoot) 'tools\sysmon\ophira-sysmon.xml'
-Check "config: ophira-sysmon.xml shipped in tools\sysmon\" (Test-Path -LiteralPath $cfgFile)
-if (Test-Path -LiteralPath $cfgFile) {
-    $ok = $false
-    try { $cfg = [xml](Get-Content -LiteralPath $cfgFile -Raw); $ok = $null -ne $cfg.Sysmon } catch { }
-    Check "config: parses as valid Sysmon XML" $ok
-    $raw = Get-Content -LiteralPath $cfgFile -Raw
-    Check "config: EID 10 lsass include + source excludes" ($raw -match 'ProcessAccess onmatch="include"' -and $raw -match 'lsass\.exe' -and $raw -match 'SourceImage condition="begin with">C:\\Windows\\System32\\')
-    Check "config: EID 13 hot keys (Run + IFEO + ms-settings)" ($raw -match 'CurrentVersion\\Run' -and $raw -match 'Image File Execution Options' -and $raw -match 'ms-settings')
-    Check "config: DnsQuery kept unfiltered (no System32 exclude)" ($raw -match 'DnsQuery' -and $raw -notmatch '(?m)^\s*<Image condition="begin with">C:\\Windows\\System32\\</Image>\s*</DnsQuery>')
-}
-Check "report: Sysmon config-gap hint wired" ($src -match 'Sysmon config gap' -and $src -match 'sysmon64\.exe -accepteula -i ophira-sysmon\.xml')
-Check "setup: kit inventory mentions the config" ($src -match "tools\\sysmon\\ophira-sysmon\.xml - recommended Sysmon config")
+Check "config: no bundled Sysmon config shipped (removed v2.49)" (-not (Test-Path -LiteralPath (Join-Path (Split-Path -Parent $PSScriptRoot) 'tools\sysmon')))
+Check "report: Sysmon config-gap hint wired (names the gap, no kit file pointer)" ($src -match 'Sysmon config gap' -and $src -match "endpoint's own Sysmon config" -and $src -notmatch 'ophira-sysmon\.xml')
+Check "setup: kit inventory no longer mentions the config" ($src -notmatch "recommended Sysmon config")
 Check "5.5: mft_recent carries CreatedFN (FILE_NAME birth)" ($src -match 'CreatedFN = \$\(if \(\$cCreated30\)')
 Check "hunt: R22 rule emitted" ($src -match "'Timestamp forgery indicators'")
 

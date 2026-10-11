@@ -2,7 +2,7 @@ $repoScript = Join-Path (Split-Path -Parent $PSScriptRoot) "Ophira.ps1"
 # v2.48 - R2 injection/pipe pack: Sysmon EID 8/17/18 parses (sysmon_remote_thread/sysmon_pipes),
 # hunt rules R28 (cross-process injection) + R29 (C2-style named pipe), focus engine
 # INJECT/THREAD/PIPE joins + chips + cross-instance edges, timeline weave, coverage,
-# canary pipe plant, sysmon config blocks.
+# canary pipe plant.
 $ErrorActionPreference = 'Stop'
 $src = Get-Content -LiteralPath "$repoScript" -Raw
 . (Join-Path $PSScriptRoot '_casehelpers.ps1')
@@ -26,9 +26,8 @@ Check "weave: remote thread + pipe rows in the master timeline" (($src -match [r
 Check "coverage: injection/pipe telemetry row" ($src -match "Add-Cov 'Injection/pipe telemetry \(Sysmon 8/17/18\)'")
 Check "verdict: high-rule regex includes R28/R29" (($src -match 'Cross-process injection\|C2-style named pipe') -and ($src -match 'svchost masquerade / injection / C2 pipe'))
 Check "config gap: hint covers EID 8/17/18" (($src -match 'remote-thread \(EID 8\) / named-pipe \(EID 17/18\)') -and ($src -match [regex]::Escape("(Import-CaseCsv 'sysmon_pipes').Count -eq 0")))
-$xmlRaw = Get-Content (Join-Path (Split-Path -Parent $PSScriptRoot) 'tools\sysmon\ophira-sysmon.xml') -Raw
-Check "sysmon xml: CreateRemoteThread + PipeEvent blocks" (($xmlRaw -match '<CreateRemoteThread onmatch="exclude">') -and ($xmlRaw -match '<PipeEvent onmatch="exclude">'))
-Check "sysmon xml: config header bumped to v2.48" ($xmlRaw -match 'configuration \(v2\.48\)')
+# v2.49: the bundled sysmon config was removed (Ophira never deploys Sysmon) - the EID
+# coverage the config used to provide is documented in the README + config-gap hint instead.
 
 # focus engine
 Check "focus: column-specific guid filter for EID 8 joins" (($src -match [regex]::Escape('$guidFilterCol = {')) -and ($src -match [regex]::Escape("& `$guidFilterCol 'sysmon_remote_thread' 'TargetProcessGuid' `$gl")))
