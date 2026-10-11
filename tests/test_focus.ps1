@@ -131,13 +131,18 @@ New-Csv (Join-Path $csv 'prefetch_index.csv') '"Name","Length","CreationTime","L
     '"NOTEPAD.EXE-DEADBEAF.pf","4096","2026-10-05 08:00:00","2026-10-05 09:00:00"'
 )
 New-Csv (Join-Path $csv 'amcache.csv') '"Name","Path","Timestamp","SHA1"' @(
-    '"malware.exe","C:\Users\dev\AppData\Roaming\malware.exe","2026-10-05 14:02:11","AAAA1111"'
+    '"malware.exe","C:\Users\dev\AppData\Roaming\malware.exe","2026-07-01 09:00:00","AAAA1111"'
 )
 New-Csv (Join-Path $csv 'bam_lastexec.csv') '"Source","Sid","Executable","LastWrite"' @(
     '"BAM","S-1-5-21-1000","C:\Users\dev\AppData\Roaming\malware.exe","2026-10-05 14:15:00"'
 )
 New-Csv (Join-Path $csv 'shimcache.csv') '"Entry","LastModified","Path","SourceFile"' @(
     '"10","2026-10-05 14:02:11","C:\Users\dev\AppData\Roaming\malware.exe","SYSTEM.hiv"'
+)
+# v2.51: prefetch run-count fixture for the execution-mismatch correlation note (99 runs vs 4 events)
+New-Csv (Join-Path $csv 'prefetch_parsed.csv') '"SourceFile","ExecutableName","RunCount","LastLaunch"' @(
+    '"C:\Windows\Prefetch\MALWARE.EXE-AB12CD34.pf","MALWARE.EXE","99","2026-10-05 14:19:40"',
+    '"C:\Windows\Prefetch\NOTEPAD.EXE-DEADBEAF.pf","NOTEPAD.EXE","3","2026-10-05 09:00:00"'
 )
 # v2.47: persistence + lineage fixtures (7045 install, run-key autorun, explorer grandparent)
 New-Csv (Join-Path $csv 'system_new_services.csv') '"Time","Service","Binary","Type"' @(
@@ -194,7 +199,8 @@ Check "injection: CrtOut section - threads created in the child cmd" (($html -ma
 Check "pipes: C2-family pipe joined onto the instance, stock pipe excluded" (($html -match 'Named pipes created/connected \(1\)') -and ($html -match 'msagent_f00d') -and ($html -notmatch 'wkssvc'))
 Check "graph: INJECT/THREAD/PIPE chips rendered" (($html -match 'INJECT&lt;- rundll32\.exe') -and ($html -match 'THREAD-&gt; cmd\.exe') -and ($html -match 'PIPE \\msagent_f00d'))
 Check "graph: red TAMPER chip on instance 5620" ($html -match 'TAMPER malware\.exe')
-Check "dossier: execution-artifacts section rendered with the spine sources" (($html -match 'Execution artifacts \(4\)') -and ($html -match 'shimcache \(executed from\)') -and ($html -match 'MALWARE\.EXE-AB12CD34'))
+Check "dossier: execution-artifacts section rendered with the spine sources" (($html -match 'Execution artifacts \(5\)') -and ($html -match 'shimcache \(executed from\)') -and ($html -match 'MALWARE\.EXE-AB12CD34'))
+Check "dossier: correlation notes banner (dormancy)" (($html -match 'Correlation notes') -and ($html -match 'DORMANCY: earliest execution artifact 2026-07-01') -and ($html -match 'EXECUTION MISMATCH'))
 Check "dossier: tamper section for the respawned instance" ($html -match 'Process tampering detected by Sysmon \(1\)')
 Check "graph: red cross-instance injection edge between tracked instances" ($html -match "stroke='#a33'")
 Check "dossier: injection hits routed to the Process events section" (($html -match 'Process events \(') -and ($html -match 'sysmon_remote_thread'))
@@ -217,8 +223,10 @@ Check "detail: CrtIn/CrtOut/Pipes persisted for instance 4812" ((@($i4812.CrtIn)
 $im4812out = @($i4812.CrtOut)[0]
 Check "detail: CrtOut row names the child cmd target" ($im4812out -and "$($im4812out.TargetImage)" -match 'cmd\.exe' -and "$($im4812out.TargetProcessGuid)" -match '7a1f-cccc')
 # v2.50: no-Sysmon execution spine + tamper joins
-Check "exec spine: prefetch/amcache/BAM/shimcache joined onto the instance" ((@($i4812.Exec).Count -ge 4) -and (@($i4812.Exec | Where-Object { "$($_.Kind)" -eq 'prefetch (file)' }).Count -eq 1) -and (@($i4812.Exec | Where-Object { "$($_.Kind)" -eq 'amcache (execution)' }).Count -eq 1) -and (@($i4812.Exec | Where-Object { "$($_.Kind)" -eq 'BAM/DAM (last exec)' }).Count -eq 1) -and (@($i4812.Exec | Where-Object { "$($_.Kind)" -eq 'shimcache (executed from)' }).Count -eq 1))
+Check "exec spine: prefetch/amcache/BAM/shimcache joined onto the instance" ((@($i4812.Exec).Count -ge 5) -and (@($i4812.Exec | Where-Object { "$($_.Kind)" -eq 'prefetch (file)' }).Count -eq 1) -and (@($i4812.Exec | Where-Object { "$($_.Kind)" -eq 'prefetch (parsed)' }).Count -eq 1) -and (@($i4812.Exec | Where-Object { "$($_.Kind)" -eq 'amcache (execution)' }).Count -eq 1) -and (@($i4812.Exec | Where-Object { "$($_.Kind)" -eq 'BAM/DAM (last exec)' }).Count -eq 1) -and (@($i4812.Exec | Where-Object { "$($_.Kind)" -eq 'shimcache (executed from)' }).Count -eq 1))
 Check "exec spine: unrelated notepad prefetch NOT joined" (@($i4812.Exec | Where-Object { "$($_.Detail)" -match 'notepad' }).Count -eq 0)
+# v2.51: dormancy + prefetch-mismatch correlation notes
+Check "corr notes: dormancy (96-day-old amcache) + execution mismatch (99 runs vs 4 events)" ((@($terms.CorrNotes | Where-Object { "$_" -match 'DORMANCY: earliest execution artifact 2026-07-01' }).Count -eq 1) -and (@($terms.CorrNotes | Where-Object { "$_" -match 'EXECUTION MISMATCH: prefetch reports 99 runs - only \d+ process-creation' }).Count -eq 1))
 $im5620t = @($fDetail.Instances | Where-Object { "$($_.Pid)" -eq '5620' })[0]
 Check "tamper: EID 25 joined onto instance 5620" ($im5620t -and @($im5620t.Tamper).Count -eq 1 -and "$($im5620t.Tamper[0].ProcessGuid)" -match '7a1f-bbbb')
 # v2.47: ancestry walk-up, persistence + beacon joins, target/relative split, respawn narration
@@ -289,6 +297,7 @@ Check "report: focus embed renders per-instance sections" (($rep -match 'Instanc
 Check "report: focus embed renders persistence + beacon + lineage + respawn" (($rep -match 'Persistence \(2\)') -and ($rep -match 'C2 beaconing \(1\)') -and ($rep -match 'Arrived via:') -and ($rep -match 'respawned after'))
 Check "report: focus embed renders injection + pipe sections" (($rep -match 'Cross-process injection INTO this instance \(1\)') -and ($rep -match 'Remote threads created in other processes \(1\)') -and ($rep -match 'Named pipes \(1\)') -and ($rep -match 'msagent_f00d'))
 Check "report: focus embed renders tamper + execution-artifact sections" (($rep -match 'Process tampering \(Sysmon EID 25\) \(1\)') -and ($rep -match 'Execution artifacts \(prefetch/amcache/BAM/shimcache\)') -and ($rep -match 'MALWARE\.EXE-AB12CD34'))
+Check "report: focus embed renders the correlation notes" (($rep -match '<b>DORMANCY: earliest execution artifact') -and ($rep -match 'EXECUTION MISMATCH'))
 Check "report: focus embed excludes the benign row" ($rep -notmatch 'benign\.txt')
 
 Write-Host ""

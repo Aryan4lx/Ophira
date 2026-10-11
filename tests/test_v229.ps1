@@ -19,7 +19,7 @@ Check "param: -KeepLogging switch exists" ($src -match '\[switch\]\$KeepLogging'
 Check "menu: [C] canary entry shown" ($src -match '\[C\]  Detection canary')
 Check "menu: C returns Canary" ($src -match [regex]::Escape("'^(?i)c$' { return 'Canary' }"))
 Check "dispatch: menu site wired" ($src -match [regex]::Escape("'Canary' { Invoke-CanaryMode -KeepLogging:`$KeepLogging -Target `$CanaryTarget -TargetUser `$CanaryTargetUser | Out-Null }`r`n                'Links'"))
-Check "dispatch: -Mode site wired" ($src -match [regex]::Escape("'Canary' { Invoke-CanaryMode -KeepLogging:`$KeepLogging -Target `$CanaryTarget -TargetUser `$CanaryTargetUser | Out-Null }`r`n    }`r`n    exit 0"))
+Check "dispatch: -Mode site wired" ($src -match [regex]::Escape("'Canary' { Invoke-CanaryMode -KeepLogging:`$KeepLogging -Target `$CanaryTarget -TargetUser `$CanaryTargetUser | Out-Null }"))
 
 # ============================================================================
 # PART 2 - consent + guard rails

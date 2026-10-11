@@ -1,5 +1,5 @@
 ﻿<#
-Ophira v2.50  -  Windows Incident Response Triage Toolkit
+Ophira v2.51  -  Windows Incident Response Triage Toolkit
 READ-ONLY by design: never modifies the system, only reads and copies data
 into its own output folder. Intended to be handed to a system owner or run
 by a responder during early triage / threat hunting.
@@ -7,7 +7,7 @@ by a responder during early triage / threat hunting.
 
 [CmdletBinding()]
 param(
-    [ValidateSet('Collect', 'Deploy', 'Analyze', 'Setup', 'Links', 'UpdateRules', 'Tune', 'Parse', 'Process', 'Timeline', 'Canary', 'Focus')]
+    [ValidateSet('Collect', 'Deploy', 'Analyze', 'Setup', 'Links', 'UpdateRules', 'Tune', 'Parse', 'Process', 'Timeline', 'Canary', 'Focus', 'Watch', 'SeedIocs')]
     [string]$Mode = 'Collect',
     [string]$CaseID = "",
     [string]$Analyst = "",
@@ -39,10 +39,13 @@ param(
     [switch]$KeepLogging,
     [string]$DeltaPath = '',
     [string[]]$SetupTools,
-    [System.Management.Automation.PSCredential]$Credential
+    [System.Management.Automation.PSCredential]$Credential,
+    [int]$WatchInterval = 15,
+    [string]$SeedValue = '',
+    [switch]$ExitVerdict
 )
 
-$ScriptVersion = "2.50"
+$ScriptVersion = "2.51"
 $ErrorActionPreference = 'Continue'
 $ProgressPreference = 'SilentlyContinue'
 
@@ -1168,6 +1171,22 @@ function Invoke-AnalyzeMode {
         $hs = @($g.Group | Select-Object -ExpandProperty Host -Unique)
         if ($hs.Count -gt 1) { $crossHost += [pscustomobject]@{ Indicator = $g.Name; Hosts = ($hs -join ', '); HostCount = $hs.Count } }
     }
+    # v2.51: fleet hash pivot - one row per binary hash with the hosts it executed on
+    $fleetHash = @{}
+    foreach ($f in ($findings | Where-Object Type -eq 'FileHash')) {
+        $dt = "$($f.Detail)"
+        $hx = ($dt -split ' ')[0]
+        if ($hx -notmatch '^[A-Fa-f0-9]{32,64}$') { continue }
+        if (-not $fleetHash.ContainsKey($hx)) { $fleetHash[$hx] = @{ Hosts = New-Object 'System.Collections.Generic.HashSet[string]'; Name = '' } }
+        $null = $fleetHash[$hx].Hosts.Add($f.Host)
+        if (-not $fleetHash[$hx].Name) { $rest = @($dt -split ' ' | Select-Object -Skip 1) -join ' '; $fleetHash[$hx].Name = ($rest -replace '\s+', ' ').Trim() }
+    }
+    $fleetHashRows = @($fleetHash.GetEnumerator() | ForEach-Object {
+        [pscustomobject]@{ SHA256 = $_.Key; Name = $_.Value.Name; HostCount = $_.Value.Hosts.Count; Hosts = (($_.Value.Hosts.ToArray() | Sort-Object) -join ', '); MultiHost = $(if ($_.Value.Hosts.Count -gt 1) { 'YES - lateral candidate' } else { '' }) }
+    } | Sort-Object HostCount -Descending)
+    $null = $fleetHashRows | Export-Csv -LiteralPath (Join-Path $OutFolder 'fleet_hashes.csv') -NoTypeInformation -Encoding UTF8
+    $mhHash = @($fleetHashRows | Where-Object HostCount -gt 1).Count
+    if ($mhHash -gt 0) { Write-Host "`n  HASH PIVOT: $mhHash binary hash(es) executed on MULTIPLE hosts - lateral-movement candidates -> fleet_hashes.csv" -ForegroundColor Red }
     $proposedTrusted = @()
     if ($signerRows.Count -gt 0 -and $hosts.Count -ge 2) {
         $threshold = [Math]::Max(2, [Math]::Ceiling($hosts.Count * 0.6))
@@ -1331,6 +1350,13 @@ a{color:#8ab4f8}.foot{margin-top:40px;color:#565e6b;font-size:11px}
             $null = $fsb.AppendLine("<tr><td class='path'>$(ConvertTo-HtmlEsc $c.Indicator)</td><td>$(ConvertTo-HtmlEsc $c.Hosts)</td><td><b>$($c.HostCount)</b></td></tr>")
         }
         $null = $fsb.AppendLine("</table>")
+        if ($mhHash -gt 0) {
+            $null = $fsb.AppendLine("<h2>Fleet hash pivot (same binary on multiple hosts - lateral shortlist)</h2><table><tr><th>SHA256</th><th>Name / path</th><th>Hosts</th><th>Host list</th></tr>")
+            foreach ($c in ($fleetHashRows | Where-Object HostCount -gt 1 | Select-Object -First 30)) {
+                $null = $fsb.AppendLine("<tr><td class='path'>$(ConvertTo-HtmlEsc $c.SHA256)</td><td class='path'>$(ConvertTo-HtmlEsc $c.Name)</td><td><b>$($c.HostCount)</b></td><td class='path'>$(ConvertTo-HtmlEsc $c.Hosts)</td></tr>")
+            }
+            $null = $fsb.AppendLine("</table><div class='meta'>Every collected binary hash with its host list: fleet_hashes.csv. Multi-host hashes are the lateral-movement shortlist.</div>")
+        }
     }
     if ($proposedTrusted.Count -gt 0) {
         $null = $fsb.AppendLine("<h2>Fleet baselining - proposed trusted publishers</h2><div class='meta'>Present on >= 60% of hosts, never HIGH. Review proposed_trusted.txt and merge into tools\trusted.txt to reduce false positives.</div><table><tr><th>Publisher</th><th>Hosts</th><th>Sample binaries</th></tr>")
@@ -4445,6 +4471,7 @@ td.clip{max-width:560px;white-space:nowrap;overflow:hidden;text-overflow:ellipsi
 .sbar{margin:8px 0}.sbar input,.sbar select{background:#181b21;border:1px solid #2a2f3a;color:#d7dce3;padding:4px 8px;border-radius:4px;font-size:12px}
 .pgr{margin:6px 0}.pgr button{background:#232833;border:1px solid #333b49;color:#9ec1f0;border-radius:4px;padding:2px 10px;cursor:pointer;margin-left:4px}
 tr.techrow{cursor:pointer}
+@media print{body{background:#fff;color:#111;font-size:11px}.nav,#copied,.sbar,.pgr,button,details{display:none!important}h1,h2{color:#111;border-color:#999}pre.ioc{background:#f4f4f4;color:#111;border-color:#bbb}table{font-size:10px}th{background:#eee;color:#111}tr:nth-child(even){background:#fafafa}.vbanner,.lead,.rec{background:#fafafa}td.clip{white-space:normal;overflow:visible;max-width:none}.meta,.foot{color:#444}a{color:#111;text-decoration:none}}
 </style>
 '@
 
@@ -4708,7 +4735,7 @@ tr.techrow{cursor:pointer}
     foreach ($h in (Import-CaseCsv 'ioc_hits_hash')) { $iocBlock.Add("sha256  $($h.Hash)") }
     $iocUnique = @($iocBlock.ToArray() | Sort-Object -Unique)
     if ($iocUnique.Count -gt 0) {
-        $null = $sb.AppendLine("<h3>Copy-ready indicator list (defanged)</h3><pre class='ioc'>")
+        $null = $sb.AppendLine("<h3>Copy-ready indicator list (defanged) <button onclick='copyIocAll(this)' style='background:#243447;color:#9ec1f0;border:1px solid #3a5a83;border-radius:10px;padding:2px 12px;font-size:12px;cursor:pointer;margin-left:8px'>copy all</button></h3><pre class='ioc' id='iocblock'>")
         foreach ($l in $iocUnique) {
             $dl = "$l" -replace '(?i)http', 'hxxp'
             if ($dl -notmatch '^(?i)sha') { $dl = $dl -replace '\.', '[.]' }
@@ -4719,7 +4746,7 @@ tr.techrow{cursor:pointer}
         $null = $sb.AppendLine("<div class='meta'>No indicators to export.</div>")
     }
     if (Test-CaseCsv 'ioc_export') {
-        $null = $sb.AppendLine("<div class='meta'><b>Fleet memory:</b> this case exported $(@(Import-CaseCsv 'ioc_export').Count) high-confidence indicator(s) to <span style='font-family:Consolas,monospace'>ioc_export.csv</span> + <span style='font-family:Consolas,monospace'>raw\analysis\ioc_export.txt</span> - drop that txt into <span style='font-family:Consolas,monospace'>tools\iocs\</span> and every future collection xrefs them (hash/domain/IP).</div>")
+        $null = $sb.AppendLine("<div class='meta'><b>Fleet memory:</b> this case exported $(@(Import-CaseCsv 'ioc_export').Count) high-confidence indicator(s) to <span style='font-family:Consolas,monospace'>ioc_export.csv</span> + <span style='font-family:Consolas,monospace'>raw\analysis\ioc_export.txt</span> (drop that txt into <span style='font-family:Consolas,monospace'>tools\iocs\</span> - future collections xref them, hash/domain/IP) + a STIX 2.1 bundle (<span style='font-family:Consolas,monospace'>ioc_export_stix.json</span>) for MISP/OpenCTI.</div>")
     }
 
     # ---------- findings by tactic (med+ alerts) ----------
@@ -5289,6 +5316,10 @@ tr.techrow{cursor:pointer}
                 $null = $sb.AppendLine("$($fDetail.GraphSvg)")
                 $null = $sb.AppendLine("<div class='meta'>Chips per instance: INJECT/THREAD (cross-process remote threads), PIPE, drops/deletions, network / DNS / DLLs / file / registry / persistence / beacons. Full-size version: focus\focus_report.html</div>")
             }
+            foreach ($cn3 in @($fDetail.CorrNotes)) {
+                if (-not "$cn3") { continue }
+                $null = $sb.AppendLine("<div class='lead lead-med' style='padding:6px 12px'><b>$(ConvertTo-HtmlEsc $cn3)</b></div>")
+            }
             foreach ($pd2 in @($fDetail.Instances)) {
                 if (-not $pd2) { continue }
                 $hdr2 = "Instance PID $($pd2.Pid)"
@@ -5444,7 +5475,7 @@ tr.techrow{cursor:pointer}
         'ioc_hits_network'                = 'IOC-listed IPs observed in historical connections (feed-attributed)'
         'ioc_hits_mft'                    = 'IOC-listed filenames found on disk ($MFT, exact name match)'
         'ioc_hits_hash'                   = 'IOC-listed binary hashes found in execution history (process_hashes - hits even if the file is gone)'
-        'ioc_export'                      = 'Case indicators exported for fleet memory (HIGH verdicts/YARA/high beacons) - copy raw\analysis\ioc_export.txt into tools\iocs\ to arm future collections'
+        'ioc_export'                      = 'Case indicators exported for fleet memory (HIGH verdicts/YARA/high beacons) - copy raw\analysis\ioc_export.txt into tools\iocs\ to arm future collections (STIX 2.1 bundle next to it for MISP/OpenCTI)'
         'credential_sweep'                = 'Credential exposure: auto-logon, WLAN keys (raw\wifi), DPAPI vault (raw\vault), LSASS dumps on disk'
         'usn_write_bursts'                = 'USN journal: mass file-modification windows (ransomware)'
         'lnk_parsed'                      = 'LNK parse (Recent docs - what files were opened)'
@@ -5531,6 +5562,14 @@ tr.techrow{cursor:pointer}
         var t=e.target.closest?e.target.closest('.clip'):null;
         if(t){t.classList.toggle('open');}
       });
+      function copyIocAll(btn){
+        var p=document.getElementById('iocblock');
+        if(!p)return;
+        var f=p.textContent;
+        if(navigator.clipboard&&navigator.clipboard.writeText){navigator.clipboard.writeText(f);}
+        btn.textContent='copied '+f.length+' chars';
+        setTimeout(function(){btn.textContent='copy all';},1500);
+      }
       function pgRule(id,delta){var p=document.getElementById('p_'+id);p.value=(parseInt(p.value)||1)+delta;renderRule(id);}
       function renderRule(id){
         var rows=RULES[id]||[];
@@ -6212,6 +6251,27 @@ function New-CaseIocExport {
         $null = $txt.Add("# case IOC export ($Computer / $($script:CurrentCaseID)) - copy into tools\iocs\ (or merge into iocs.txt) to arm future collections")
         foreach ($r in $out) { $null = $txt.Add("$($r.Value) # $($r.Kind) - $($r.Source): $($r.Detail)") }
         Set-Content -LiteralPath (Join-Path $an 'ioc_export.txt') -Value $txt.ToArray() -Encoding UTF8
+        # v2.51: STIX 2.1 bundle - the same indicators in the team-tool dialect (MISP/OpenCTI)
+        try {
+            $objects = New-Object System.Collections.Generic.List[object]
+            $created = (Get-Date).ToUniversalTime().ToString('yyyy-MM-ddTHH:mm:ss.fffZ')
+            foreach ($r in $out) {
+                $pat = ''
+                if ($r.Kind -eq 'sha256') { $pat = "[file:hashes.'SHA-256' = '$($r.Value)']" }
+                elseif ($r.Kind -eq 'ip') { $pat = "[ipv4-addr:value = '$($r.Value)']" }
+                else { $pat = "[domain-name:value = '$($r.Value)']" }
+                $null = $objects.Add([ordered]@{
+                    type = 'indicator'; spec_version = '2.1'; id = "indicator--$([guid]::NewGuid())"
+                    created = $created; modified = $created
+                    name = "Ophira $($r.Kind) - $($r.Source)"
+                    description = "$($r.Source): $($r.Detail) (case $($script:CurrentCaseID) / $Computer)"
+                    labels = @('malicious-activity'); pattern = $pat; pattern_type = 'stix'; valid_from = $created
+                })
+            }
+            $bundle = [ordered]@{ type = 'bundle'; id = "bundle--$([guid]::NewGuid())"; objects = $objects.ToArray() }
+            $bundle | ConvertTo-Json -Depth 6 | Set-Content -LiteralPath (Join-Path $an 'ioc_export_stix.json') -Encoding UTF8
+            Write-CaseLog "      STIX 2.1 bundle -> raw\analysis\ioc_export_stix.json (import into MISP/OpenCTI)" 'Gray'
+        } catch { }
         Write-CaseLog "    case IOC export: $($out.Count) indicator(s) -> csv\ioc_export.csv + raw\analysis\ioc_export.txt" 'Yellow'
         Write-CaseLog "      fleet memory: copy ioc_export.txt into tools\iocs\ on your analyst machine - future collections xref it" 'Gray'
     }
@@ -7489,8 +7549,9 @@ function Show-TaskMenu {
         Write-Host "   [7]  Tool links" -ForegroundColor Yellow
         Write-Host "   [8]  Finish a collected case (parse evidence analyst-side)" -ForegroundColor Yellow
         Write-Host "   [9]  Focus on one entity (build its activity chain from a case)" -ForegroundColor Yellow
-        Write-Host "   [C]  Detection canary (self-test the pipeline on this PC)" -ForegroundColor Yellow
         Write-Host "   [T]  Timeline pivot (filter the master timeline to a window)" -ForegroundColor Yellow
+        Write-Host "   [W]  Watch this PC live (rolling diff while a sample detonates)" -ForegroundColor Yellow
+        Write-Host "   [C]  Detection canary (self-test the pipeline on this PC)" -ForegroundColor Yellow
         Write-Host ""
         Write-Host "   [Q]  Quit" -ForegroundColor DarkGray
         Write-Host ""
@@ -7506,8 +7567,9 @@ function Show-TaskMenu {
             '^(?i)7$' { return 'Links' }
             '^(?i)8$' { return 'Parse' }
             '^(?i)9$' { return 'Focus' }
-            '^(?i)c$' { return 'Canary' }
             '^(?i)t$' { return 'Timeline' }
+            '^(?i)w$' { return 'Watch' }
+            '^(?i)c$' { return 'Canary' }
             '^(?i)q$' { return $null }
             default { }
         }
@@ -7905,6 +7967,139 @@ function Invoke-ParseMode {
         Remove-Item $tmp -Recurse -Force -ErrorAction SilentlyContinue
     }
     return $true
+}
+
+function Invoke-SeedIocsMode {
+    # v2.51: arm the fleet feed with one indicator without hand-editing iocs.txt.
+    # Validates the format, dedupes against the existing list, appends with attribution.
+    param([string]$Value)
+    $tDir = Get-ToolsDir
+    if (-not $tDir) { Write-Host "  tools\ not found - run from the kit root" -ForegroundColor Red; return $false }
+    if (-not $Value) { $Value = (Read-Host "  Indicator (hash / IP / domain)").Trim() }
+    $v = "$Value".Trim()
+    $kind = ''
+    if ($v -match '^[a-fA-F0-9]{32,64}$') { $kind = 'hash'; $v = $v.ToUpper() }
+    elseif ($v -match '^(\d{1,3}\.){3}\d{1,3}$') { $kind = 'ip' }
+    elseif ($v -match '^(?=.{4,253}$)[a-z0-9]([a-z0-9\-\.]*[a-z0-9])?\.[a-z]{2,}$') { $kind = 'domain'; $v = $v.ToLower() }
+    if (-not $kind) { Write-Host "  '$v' does not look like a hash / IP / domain" -ForegroundColor Red; return $false }
+    $f = Join-Path $tDir 'iocs.txt'
+    if (Test-Path -LiteralPath $f) {
+        $dup = @(Get-Content -LiteralPath $f | ForEach-Object { ($_ -replace '#.*$', '').Trim() } | Where-Object { $_ -eq $v })
+        if ($dup.Count -gt 0) { Write-Host "  '$v' is already in iocs.txt - nothing to do" -ForegroundColor Yellow; return $true }
+    }
+    Add-Content -LiteralPath $f -Value "$v # seeded $(Get-Date -Format u) by $env:USERNAME ($kind)" -Encoding UTF8
+    Write-Host "  added: $v ($kind) -> $f" -ForegroundColor Green
+    Write-Host "  future collections xref it: flash IOC check, DNS queries, connections, MFT filenames, execution hashes" -ForegroundColor Gray
+    return $true
+}
+
+function Invoke-WatchMode {
+    # v2.51: live detonation monitor - a read-only rolling diff of what changed on THIS PC
+    # since the last tick: new processes, new external connections, new autoruns (Run keys +
+    # auto services), new Defender detections. Analyst-side situational awareness while a
+    # sample detonates; no case is written, the host is only sampled like the volatile phase.
+    param([int]$Interval = 15)
+    if ($Interval -lt 3) { $Interval = 3 }
+    Write-Host ""
+    Write-Host "=== Watch mode - live diff every ${Interval}s (Ctrl+C to stop) ===" -ForegroundColor Cyan
+    if (-not (Test-IsAdmin)) { Write-Host "  not elevated: command lines of other users' processes hidden, connection attribution limited" -ForegroundColor DarkYellow }
+    $defOk = $true
+    try { $null = Get-MpThreatDetection -ErrorAction Stop } catch { $defOk = $false; Write-Host "  Defender detections not readable on this host - that channel is skipped" -ForegroundColor DarkYellow }
+    Write-Host "  tick 1 is the baseline (nothing is 'new' yet) - detonate AFTER it prints" -ForegroundColor Gray
+    Write-Host ""
+    $state = @{ Proc = @{}; Net = @{}; Auto = @{}; DefCount = -1 }
+    $privRe = '^(10\.|192\.168\.|169\.254\.|172\.(1[6-9]|2[0-9]|3[01])\.|127\.|::1$|fe80:|fc|fd|ff)'
+    $runKeys = @(
+        'HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Run',
+        'HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\RunOnce',
+        'HKLM:\SOFTWARE\Wow6432Node\Microsoft\Windows\CurrentVersion\Run',
+        'HKCU:\SOFTWARE\Microsoft\Windows\CurrentVersion\Run',
+        'HKCU:\SOFTWARE\Microsoft\Windows\CurrentVersion\RunOnce'
+    )
+    $stamp = { Get-Date -Format 'HH:mm:ss' }
+    $sample = {
+        $out = @{ Proc = @{}; Net = @{}; Auto = @{}; DefCount = $state.DefCount; ProcRows = @{} }
+        foreach ($p in @(Get-CimInstance Win32_Process -Property ProcessId, Name, CommandLine, ParentProcessId -ErrorAction SilentlyContinue)) {
+            $k = "$($p.ProcessId)"
+            $out.Proc[$k] = $true
+            $out.ProcRows[$k] = $p
+        }
+        $conns = @()
+        try {
+            $conns = @(Get-NetTCPConnection -State Established -ErrorAction Stop | Where-Object { "$($_.RemoteAddress)" -and -not ("$($_.RemoteAddress)" -match $privRe) })
+        } catch {
+            foreach ($l in (& netstat.exe -ano 2>$null)) {
+                if ($l -notmatch '^\s*(TCP)\s+\S+:(\d+)\s+(\S+):(\S+)\s+ESTABLISHED\s+(\d+)') { continue }
+                $rip = $Matches[3]; $rport = $Matches[4]; $opid = $Matches[5]
+                if ($rip -match $privRe) { continue }
+                $conns += [pscustomobject]@{ RemoteAddress = $rip; RemotePort = $rport; OwningProcess = $opid }
+            }
+        }
+        foreach ($c in $conns) {
+            $k = $c.RemoteAddress.ToLower() + ':' + $c.RemotePort + ':' + $c.OwningProcess
+            $out.Net[$k] = $true
+        }
+        foreach ($rk in $runKeys) {
+            if (-not (Test-Path -LiteralPath $rk)) { continue }
+            foreach ($vp in @(Get-ItemProperty -LiteralPath $rk -ErrorAction SilentlyContinue).PSObject.Properties) {
+                if ("$($vp.Name)" -match '^PS') { continue }
+                $out.Auto[("$rk|$($vp.Name)".ToLower())] = "$($vp.Name)=$($vp.Value)"
+            }
+        }
+        foreach ($s in @(Get-CimInstance Win32_Service -Property Name, State, PathName -Filter "StartMode='Auto'" -ErrorAction SilentlyContinue)) {
+            $out.Auto[("svc|$($s.Name)".ToLower())] = "service $($s.Name) [$($s.State)] $($s.PathName)"
+        }
+        if ($defOk) {
+            try { $out.DefCount = @(Get-MpThreatDetection -ErrorAction Stop).Count } catch { }
+        }
+        return $out
+    }
+    try {
+        $tick = 0
+        while ($true) {
+            $tick++
+            $cur = & $sample
+            if ($tick -eq 1) {
+                $state.Proc = $cur.Proc; $state.Net = $cur.Net; $state.Auto = $cur.Auto; $state.DefCount = $cur.DefCount
+                Write-Host ("  baseline: {0} process(es), {1} external connection(s), {2} autorun row(s), Defender detections: {3}" -f $cur.Proc.Count, $cur.Net.Count, $cur.Auto.Count, $cur.DefCount) -ForegroundColor Gray
+            } else {
+                $new = 0
+                foreach ($k in $cur.Proc.Keys) {
+                    if ($state.Proc.ContainsKey($k)) { continue }
+                    $p = $cur.ProcRows[$k]
+                    $parent = ''
+                    try { $pp = Get-CimInstance Win32_Process -Filter "ProcessId=$($p.ParentProcessId)" -Property Name -ErrorAction Stop; if ($pp) { $parent = "$($pp.Name)" } } catch { }
+                    $new++
+                    Write-Host ("  {0} [PROC]   {1} (pid {2}) <- {3} | {4}" -f (& $stamp), $p.Name, $p.ProcessId, $(if ($parent) { $parent } else { "ppid $($p.ParentProcessId)" }), $p.CommandLine) -ForegroundColor Yellow
+                }
+                foreach ($k in $cur.Net.Keys) {
+                    if ($state.Net.ContainsKey($k)) { continue }
+                    $parts = $k -split ':'
+                    $pn = ''
+                    $pkey = $parts[-1]
+                    if ($cur.ProcRows.ContainsKey($pkey)) { $pn = "$($cur.ProcRows[$pkey].Name)" }
+                    $new++
+                    Write-Host ("  {0} [NET]    {1}:{2} <- {3} (pid {4})" -f (& $stamp), ($parts[0..($parts.Count - 3)] -join ':'), $parts[$parts.Count - 2], $(if ($pn) { $pn } else { 'unknown' }), $pkey) -ForegroundColor Cyan
+                }
+                foreach ($k in $cur.Auto.Keys) {
+                    if ($state.Auto.ContainsKey($k)) { continue }
+                    $new++
+                    Write-Host ("  {0} [AUTORUN] {1}" -f (& $stamp), $cur.Auto[$k]) -ForegroundColor Red
+                }
+                if ($cur.DefCount -gt $state.DefCount -and $state.DefCount -ge 0) {
+                    $new++
+                    Write-Host ("  {0} [DEFEND] detection count {1} -> {2}" -f (& $stamp), $state.DefCount, $cur.DefCount) -ForegroundColor Red
+                    try { foreach ($d in @(Get-MpThreatDetection -ErrorAction Stop | Sort-Object InitialDetectionTime -Descending | Select-Object -First 3)) { Write-Host ("            {0}: {1}" -f $d.ProcessName, ($d.ThreatID)) } } catch { }
+                }
+                $state.Proc = $cur.Proc; $state.Net = $cur.Net; $state.Auto = $cur.Auto; $state.DefCount = $cur.DefCount
+                if ($new -eq 0) { Write-Host ("  {0}  tick {1}: nothing new" -f (& $stamp), $tick) -ForegroundColor DarkGray }
+            }
+            Start-Sleep -Seconds $Interval
+        }
+    } finally {
+        Write-Host ""
+        Write-Host "  watch ended after $tick tick(s) - run the collection now to capture everything seen" -ForegroundColor Cyan
+    }
 }
 
 function Invoke-FocusEngine {
@@ -8434,6 +8629,46 @@ function Invoke-FocusCore {
     $byLeaf = @($groups | Group-Object Name | Where-Object { $_.Count -gt 1 })
     foreach ($m in $byLeaf) { $masq += $m.Name }
 
+    # ---- v2.51 correlation notes: dormancy wake-up + prefetch-vs-telemetry mismatch ----
+    $corrNotes = New-Object System.Collections.Generic.List[string]
+    $entBlob = { param($r) $b = ''; foreach ($p9 in $r.PSObject.Properties) { $b += "$($p9.Value) ".ToLower() }; $b }
+    $entMatch = { param($r) $b = & $entBlob $r; foreach ($pt in $paths) { if ($b.Contains($pt)) { return $true } }; foreach ($nm in $names) { if ($nm.Length -ge 4 -and $b.Contains($nm)) { return $true } }; return $false }
+    $execFirst = $null
+    foreach ($src9 in @('amcache', 'bam_lastexec', 'shimcache')) {
+        if (-not $cache.ContainsKey($src9)) { continue }
+        foreach ($r9 in $cache[$src9]) {
+            if (-not (& $entMatch $r9)) { continue }
+            foreach ($cn in @('Timestamp', 'LastWrite', 'LastModified', 'LastWriteTime')) {
+                $p9 = $r9.PSObject.Properties[$cn]
+                if (-not ($p9 -and "$($p9.Value)")) { continue }
+                $t9 = $null; try { $t9 = [datetime]"$($p9.Value)" } catch { }
+                if ($t9 -and ($null -eq $execFirst -or $t9 -lt $execFirst)) { $execFirst = $t9 }
+                break
+            }
+        }
+    }
+    $logFirst = $null
+    foreach ($h9 in $hits) {
+        if (@('sysmon_proc_create', 'security_proc_events', 'processes') -notcontains "$($h9.Source)") { continue }
+        $t9 = $null; try { $t9 = [datetime]"$($h9.Time)" } catch { }
+        if ($t9 -and ($null -eq $logFirst -or $t9 -lt $logFirst)) { $logFirst = $t9 }
+    }
+    if ($execFirst -and $logFirst -and (($logFirst - $execFirst).TotalDays -ge 7)) {
+        $null = $corrNotes.Add("DORMANCY: earliest execution artifact $(if ($execFirst) { $execFirst.ToString('yyyy-MM-dd HH:mm') }) is $([int]($logFirst - $execFirst).TotalDays) days before the first in-window process telemetry ($($logFirst.ToString('yyyy-MM-dd HH:mm'))) - the binary ran long before this window (dormant persistence or an old install waking up)")
+    }
+    $pfRuns = 0
+    if ($cache.ContainsKey('prefetch_parsed')) {
+        foreach ($r9 in $cache['prefetch_parsed']) {
+            if (-not (& $entMatch $r9)) { continue }
+            $p9 = $r9.PSObject.Properties['RunCount']
+            if ($p9 -and "$($p9.Value)" -match '^\d+$' -and [int]$p9.Value -gt $pfRuns) { $pfRuns = [int]$p9.Value }
+        }
+    }
+    $procCreates = @($hits | Where-Object { @('sysmon_proc_create', 'security_proc_events') -contains "$($_.Source)" }).Count
+    if ($pfRuns -ge 5 -and $procCreates -gt 0 -and $pfRuns -gt ($procCreates * 3)) {
+        $null = $corrNotes.Add("EXECUTION MISMATCH: prefetch reports $pfRuns runs - only $procCreates process-creation events in the telemetry window (logging gap, short window, or telemetry tampering - check logging-gaps and the collection range)")
+    }
+
     # ---- write outputs ----------------------------------------------------
     $hits.ToArray() | Export-Csv -LiteralPath (Join-Path $focusDir 'focus_hits.csv') -NoTypeInformation -Encoding UTF8
     $chain.ToArray() | Export-Csv -LiteralPath (Join-Path $focusDir 'focus_chain.csv') -NoTypeInformation -Encoding UTF8
@@ -8453,6 +8688,7 @@ function Invoke-FocusCore {
         SourcesHit = $sourcesHit
         HitCount = $hits.Count
         InstanceCount = $instances.Count
+        CorrNotes = $corrNotes.ToArray()
         Degraded = (-not ($guids.Count -gt 0))
     } | ConvertTo-Json -Depth 5 | Set-Content -LiteralPath (Join-Path $focusDir 'focus_terms.json') -Encoding UTF8
 
@@ -8604,6 +8840,10 @@ function Invoke-FocusCore {
         if (-not ($guids.Count -gt 0)) { [void]$h.AppendLine("<div class='banner info'><span class='warn'>Instance attribution degraded</span> - no ProcessGuid captured in this case (legacy collect or no Sysmon). Per-instance chains below are best-effort.</div>") }
         [void]$h.AppendLine("<div class='banner $hintCls'>$hint - $hintTxt</div>")
         if ($masq.Count -gt 0) { [void]$h.AppendLine("<div class='banner med'><span class='warn'>MASQUERADE WARNING:</span> the name appears at multiple paths - $($(& $esc ($masq -join ', '))). Compare the groups below; only one of them is probably the real OS binary.</div>") }
+        if ($corrNotes.Count -gt 0) {
+            $cnEsc = @($corrNotes | ForEach-Object { & $esc $_ }) -join '<br>'
+            [void]$h.AppendLine("<div class='banner med'><b>Correlation notes</b><br>$cnEsc</div>")
+        }
         if ($perInst.Count -gt 0) {
             [void]$h.AppendLine("<h2>Activity graph</h2>")
             $svg = & $buildGraph
@@ -8899,6 +9139,7 @@ function Invoke-FocusCore {
         Indicator = $Indicator
         GraphSvg = $svg
         Instances = $detailInstances
+        CorrNotes = $corrNotes.ToArray()
     } | ConvertTo-Json -Depth 6 | Set-Content -LiteralPath (Join-Path $focusDir 'focus_instances_detail.json') -Encoding UTF8
 
     # ---- console summary --------------------------------------------------
@@ -8913,6 +9154,7 @@ function Invoke-FocusCore {
         Write-Host ("  [{0}] {1}{2}  hits:{3}" -f $g.Name, $g.Path, $h, $g.HitCount) -ForegroundColor White
     }
     if ($masq.Count -gt 0) { Write-Host "  MASQUERADE WARNING: same name at multiple paths -> $($masq -join ', ')" -ForegroundColor Yellow }
+    foreach ($cn2 in $corrNotes) { Write-Host "  [note] $cn2" -ForegroundColor Yellow }
     $tg = @($instances | Where-Object { $targetKeys.Contains((& $instKey $_)) })
     $rl = @($instances | Where-Object { -not $targetKeys.Contains((& $instKey $_)) })
     Write-Host ("  instances: {0} of the target / {1} relative(s) in the chain" -f $tg.Count, $rl.Count) -ForegroundColor White
@@ -9554,6 +9796,7 @@ if ($bareLaunch -and [Environment]::UserInteractive) {
                 'Focus' { Invoke-FocusEngine | Out-Null }
                 'Process' { Invoke-FocusEngine | Out-Null }
                 'Timeline' { Invoke-TimelineMode | Out-Null }
+                'Watch' { Invoke-WatchMode | Out-Null }
                 'Canary' { Invoke-CanaryMode -KeepLogging:$KeepLogging -Target $CanaryTarget -TargetUser $CanaryTargetUser | Out-Null }
                 'Links' { Show-ToolLinks }
             }
@@ -9582,7 +9825,15 @@ if ($Mode -ne 'Collect') {
         'Process' { Invoke-FocusEngine -Path $ParsePath -Indicator $ProcessName | Out-Null }
         'Focus' { Invoke-FocusEngine -Path $ParsePath -Indicator $ProcessName | Out-Null }
         'Timeline' { Invoke-TimelineMode -Path $ParsePath -Start $TimelineStart -End $TimelineEnd | Out-Null }
+        'Watch' { Invoke-WatchMode -Interval $WatchInterval | Out-Null }
+        'SeedIocs' { Invoke-SeedIocsMode -Value $SeedValue | Out-Null }
         'Canary' { Invoke-CanaryMode -KeepLogging:$KeepLogging -Target $CanaryTarget -TargetUser $CanaryTargetUser | Out-Null }
+    }
+    # v2.51: opt-in verdict exit codes (-ExitVerdict): Parse/Collect regenerate the verdict in-session
+    if ($ExitVerdict -and $script:Verdict) {
+        $rank = 0
+        try { $rank = [int]$script:Verdict.LevelRank } catch { }
+        if ($rank -ge 2) { exit $rank }
     }
     exit 0
 }
@@ -9715,6 +9966,15 @@ if ($script:SimpleUI) {
     Write-Host "Press any key to close..." -ForegroundColor DarkGray
     try { $null = $Host.UI.RawUI.ReadKey('NoEcho,IncludeKeyDown') } catch { }
 }
+
+# v2.51: opt-in verdict exit codes for fleet scripting (-ExitVerdict):
+# 0 = clean/inconclusive, 2 = SUSPICIOUS, 3 = LIKELY COMPROMISED, 4 = COMPROMISED
+if ($ExitVerdict -and $script:Verdict) {
+    $rank = 0
+    try { $rank = [int]$script:Verdict.LevelRank } catch { }
+    if ($rank -ge 2) { exit $rank }
+}
+exit 0
 
 
 
