@@ -1,5 +1,5 @@
 ﻿<#
-Ophira v2.51  -  Windows Incident Response Triage Toolkit
+Ophira v2.52  -  Windows Incident Response Triage Toolkit
 READ-ONLY by design: never modifies the system, only reads and copies data
 into its own output folder. Intended to be handed to a system owner or run
 by a responder during early triage / threat hunting.
@@ -45,7 +45,7 @@ param(
     [switch]$ExitVerdict
 )
 
-$ScriptVersion = "2.51"
+$ScriptVersion = "2.52"
 $ErrorActionPreference = 'Continue'
 $ProgressPreference = 'SilentlyContinue'
 
@@ -3274,14 +3274,25 @@ public class OphiraDump {
                     $ok = $false
                     if ($loaded) { & reg.exe save "HKU\$($p.Sid)" "$out" /y 2>&1 | Out-Null; $ok = ($LASTEXITCODE -eq 0) }
                     if (-not $ok) { try { Copy-Item -LiteralPath $nt -Destination $out -Force -ErrorAction Stop; $ok = $true } catch { } }
-                    if ($ok -and (Test-Path $out) -and ((Get-Item $out).Length -gt 0)) { $saved++ } elseif (Test-Path $out) { Remove-Item $out -Force -ErrorAction SilentlyContinue }
+                    # v2.52: guarded stat - on detonation boxes AV real-time protection sometimes
+                    # quarantines the freshly saved hive between Test-Path and Get-Item (TOCTOU);
+                    # report it instead of crashing the expression
+                    $fi = $null
+                    if ($ok -and (Test-Path -LiteralPath $out)) { $fi = Get-Item -LiteralPath $out -ErrorAction SilentlyContinue }
+                    if ($fi -and $fi.Length -gt 0) { $saved++ }
+                    elseif (Test-Path -LiteralPath $out) { Remove-Item -LiteralPath $out -Force -ErrorAction SilentlyContinue }
+                    elseif ($ok) { Write-CaseLog "    saved hive vanished after save (AV quarantine suspected): $out" 'DarkYellow' }
                 }
                 if (Test-Path -LiteralPath $uc) {
                     $out = Join-Path $dest "$($p.User)_UsrClass.dat"
                     $ok = $false
                     if ($loadedCls) { & reg.exe save "HKU\$($p.Sid)_Classes" "$out" /y 2>&1 | Out-Null; $ok = ($LASTEXITCODE -eq 0) }
                     if (-not $ok) { try { Copy-Item -LiteralPath $uc -Destination $out -Force -ErrorAction Stop; $ok = $true } catch { } }
-                    if ($ok -and (Test-Path $out) -and ((Get-Item $out).Length -gt 0)) { $saved++ } elseif (Test-Path $out) { Remove-Item $out -Force -ErrorAction SilentlyContinue }
+                    $fi = $null
+                    if ($ok -and (Test-Path -LiteralPath $out)) { $fi = Get-Item -LiteralPath $out -ErrorAction SilentlyContinue }
+                    if ($fi -and $fi.Length -gt 0) { $saved++ }
+                    elseif (Test-Path -LiteralPath $out) { Remove-Item -LiteralPath $out -Force -ErrorAction SilentlyContinue }
+                    elseif ($ok) { Write-CaseLog "    saved hive vanished after save (AV quarantine suspected): $out" 'DarkYellow' }
                 }
             }
             Write-CaseLog "    saved $saved user hive files to raw\registry\users\" 'Gray'
@@ -4563,7 +4574,7 @@ tr.techrow{cursor:pointer}
             $entByPath = @{}
             foreach ($e2 in @(Import-CaseCsv 'entities_binaries')) { $entByPath["$($e2.Path)".ToLower()] = $e2 }
             $ftAll = $null
-            try { $ftAll = Get-Content -LiteralPath (Join-Path (Join-Path (Split-Path -Parent $CsvDir) 'focus') 'focus_terms.json') -Raw | ConvertFrom-Json } catch { }
+            try { $ftAll = Get-Content -LiteralPath (Join-Path (Join-Path (Split-Path -Parent $CsvDir) 'focus') 'focus_terms.json') -Raw -ErrorAction Stop | ConvertFrom-Json } catch { }
             $n2 = 0
             foreach ($ld in $leads) {
                 $n2++
@@ -5274,7 +5285,7 @@ tr.techrow{cursor:pointer}
     $focusDirP = Join-Path (Split-Path -Parent $CsvDir) 'focus'
     if (Test-Path -LiteralPath (Join-Path $focusDirP 'focus_terms.json')) {
         $ft = $null
-        try { $ft = Get-Content -LiteralPath (Join-Path $focusDirP 'focus_terms.json') -Raw | ConvertFrom-Json } catch { }
+        try { $ft = Get-Content -LiteralPath (Join-Path $focusDirP 'focus_terms.json') -Raw -ErrorAction Stop | ConvertFrom-Json } catch { }
         if ($ft) {
             $fHits = @()
             try { $fHits = @(Import-Csv -LiteralPath (Join-Path $focusDirP 'focus_hits.csv') -ErrorAction Stop) } catch { }
@@ -5310,7 +5321,7 @@ tr.techrow{cursor:pointer}
             # v2.45: the full correlation story embedded - activity graph + per-instance joins
             # (from focus_instances_detail.json, written by the focus engine core)
             $fDetail = $null
-            try { $fDetail = Get-Content -LiteralPath (Join-Path $focusDirP 'focus_instances_detail.json') -Raw | ConvertFrom-Json } catch { }
+            try { $fDetail = Get-Content -LiteralPath (Join-Path $focusDirP 'focus_instances_detail.json') -Raw -ErrorAction Stop | ConvertFrom-Json } catch { }
             if ($fDetail -and "$($fDetail.GraphSvg)") {
                 $null = $sb.AppendLine("<h3>Activity graph (parents -> instances -> children -> what they did)</h3>")
                 $null = $sb.AppendLine("$($fDetail.GraphSvg)")
@@ -7293,7 +7304,7 @@ function Get-CaseNarrative {
         $ftPath = Join-Path (Split-Path -Parent $CsvDir) 'focus\focus_terms.json'
         if (Test-Path -LiteralPath $ftPath) {
             $ft2 = $null
-            try { $ft2 = Get-Content -LiteralPath $ftPath -Raw | ConvertFrom-Json } catch { }
+            try { $ft2 = Get-Content -LiteralPath $ftPath -Raw -ErrorAction Stop | ConvertFrom-Json } catch { }
             if ($ft2) {
                 $L.Add("FOCUSED ANALYSIS: a focus dossier was built for '$($ft2.Indicator)' - $($ft2.HitCount) evidence row(s) across $($ft2.SourcesHit.PSObject.Properties.Count) artifact source(s), $($ft2.InstanceCount) instance(s), $($ft2.Rounds) expansion round(s). Full activity chain and per-instance detail: focus\focus_report.html")
                 $L.Add("")
