@@ -252,7 +252,7 @@ $terms3 = $null
 try { $terms3 = Get-Content -LiteralPath (Join-Path $case2 'focus\focus_terms.json') -Raw | ConvertFrom-Json } catch { }
 Check "degraded: no-GUID case flags attribution as limited" ($ok3 -and $terms3 -and $terms3.Degraded)
 
-# empty indicator fails cleanly
+# empty indicator fails cleanly (v2.53: nothing written - an existing dossier stays intact)
 $ok4 = Invoke-FocusEngine -Path $case -Indicator 'zzz-nothing-matches-xyz'
 Check "empty result: engine still succeeds with zero-hit outputs" ($ok4 -eq $true)
 
@@ -299,6 +299,40 @@ Check "report: focus embed renders injection + pipe sections" (($rep -match 'Cro
 Check "report: focus embed renders tamper + execution-artifact sections" (($rep -match 'Process tampering \(Sysmon EID 25\) \(1\)') -and ($rep -match 'Execution artifacts \(prefetch/amcache/BAM/shimcache\)') -and ($rep -match 'MALWARE\.EXE-AB12CD34'))
 Check "report: focus embed renders the correlation notes" (($rep -match '<b>DORMANCY: earliest execution artifact') -and ($rep -match 'EXECUTION MISMATCH'))
 Check "report: focus embed excludes the benign row" ($rep -notmatch 'benign\.txt')
+
+# ============================================================================
+# v2.53: port/IP seeds, zero-hit no-clobber, perf path, auto-focus fallback, front screen
+# ============================================================================
+Check "seeds: port columns + ip:port + bare-number dual seed wired" (($src -match [regex]::Escape('$portCols = ''^(?i)(DestPort|DestinationPort|RemotePort|LocalPort|SourcePort|Port)$''')) -and ($src -match [regex]::Escape('$ips.Add($Matches[1]); $ports.Add($Matches[2])')) -and ($src -match [regex]::Escape('if ([int64]$ind -ge 1 -and [int64]$ind -le 65535) { $ports.Add($ind) }')))
+Check "seeds: port check inside matchRow on port-named columns" ($src -match [regex]::Escape('foreach ($pr in $ports) { if ($vl -eq $pr) { return "port $pr" } }'))
+Check "perf: per-round alternation regex over cached row blobs" (($src -match 'blobCache') -and ($src -match '\$quickRe = New-Object System\.Text\.RegularExpressions\.Regex') -and ($src -match [regex]::Escape('if (-not $quickRe.IsMatch($bl[$ri])) { continue }')))
+Check "perf: large-CSV skip + load progress + hit cap + instance cap" (($src -match [regex]::Escape('$f.Length -gt 40MB')) -and ($src -match [regex]::Escape('$hits.Count -ge 5000')) -and ($src -match [regex]::Escape('$instances.Count -lt 400')))
+Check "zero-hit: guidance + no-clobber guard before the write section" (($src -match 'No evidence found for') -and ($src -match [regex]::Escape('any existing dossier is intact')))
+Check "guard seed: OS-infra name warning prints before the scan" ($src -match [regex]::Escape("is an OS infrastructure name - it matches every instance"))
+Check "auto-focus: hunt-rule Entity fallback seeds the strongest high finding" ($src.Contains("`$hf = @(Import-CaseCsv 'hunt_findings' | Where-Object { `"`$(`$_.Severity)`" -eq 'high' -and"))
+Check "auto-focus: beacon fallback seeds Process else RemoteIp:Port" (($src.Contains("`$bc = @(Import-CaseCsv 'beacon_candidates' | Sort-Object { switch (") -and $src.Contains('$seed = "$($bc[0].RemoteIp):$($bc[0].Port)"')))
+Check "auto-focus: DNS beacon domain fallback wired" ($src.Contains("`$db = @(Import-CaseCsv 'dns_beacon_candidates' | Sort-Object { switch ("))
+Check "front screen: [1] Run -> SimpleUI relaunch, [2] Advanced -> task menu" (($src -match [regex]::Escape("`$front = Show-RoleGate")) -and ($src -match [regex]::Escape("if (`$front -eq 'run') {")) -and ($src -match [regex]::Escape("`$chosenTask = Show-TaskMenu")))
+Check "report: clip cells wrap (no 560px chop) + visible show-all toggle" ((-not ($src -match [regex]::Escape('td.clip{max-width:560px')) -and ($src -match [regex]::Escape('td.clip{cursor:copy}')) -and ($src -match [regex]::Escape("b.className='swall'"))))
+Check "chainsaw: shimcache run carries the required -r regexfile" (($src -match [regex]::Escape("'-r', $scPat")) -and (Test-Path (Join-Path (Split-Path -Parent $PSScriptRoot) 'tools\endpoint\chainsaw\shimcache_patterns.txt')))
+Check "chainsaw: amcache-enrichment failure retries shimcache-only" ($src -match [regex]::Escape('retrying shimcache-only'))
+
+# port seed through the real core: port 443 matches the sysmon_network fixture rows
+$ok5 = Invoke-FocusEngine -Path $case -Indicator '443'
+$hits5 = @(); try { $hits5 = @(Import-Csv -LiteralPath (Join-Path $case 'focus\focus_hits.csv') -ErrorAction Stop) } catch { }
+Check "port seed: 443 pulls the C2 connection rows into the dossier" ($ok5 -and @($hits5 | Where-Object Source -eq 'sysmon_network').Count -ge 2)
+$terms5 = $null; try { $terms5 = Get-Content -LiteralPath (Join-Path $case 'focus\focus_terms.json') -Raw | ConvertFrom-Json } catch { }
+Check "port seed: expansion pulled the process + IP into the chain" ($terms5 -and "$($terms5.Indicator)" -eq '443')
+
+# ip:port seed through the real core
+$ok6 = Invoke-FocusEngine -Path $case -Indicator '185.199.10.7:443'
+$hits6 = @(); try { $hits6 = @(Import-Csv -LiteralPath (Join-Path $case 'focus\focus_hits.csv') -ErrorAction Stop) } catch { }
+Check "ip:port seed: the C2 endpoint resolves to the beaconing process" ($ok6 -and @($hits6 | Where-Object Source -eq 'sysmon_network').Count -ge 2)
+
+# zero-hit never clobbers an existing dossier (the empty-result run above DID overwrite in v2.52)
+$null = Invoke-FocusEngine -Path $case -Indicator 'zzz-nothing-matches-xyz'
+$terms7 = $null; try { $terms7 = Get-Content -LiteralPath (Join-Path $case 'focus\focus_terms.json') -Raw | ConvertFrom-Json } catch { }
+Check "zero-hit: empty result leaves the previous dossier intact" ($terms7 -and "$($terms7.Indicator)" -eq '185.199.10.7:443')
 
 Write-Host ""
 Write-Host "RESULT: $pass passed, $fail failed" -ForegroundColor $(if ($fail -eq 0) { 'Green' } else { 'Red' })

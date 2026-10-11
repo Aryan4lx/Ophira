@@ -1,5 +1,5 @@
 ﻿<#
-Ophira v2.52  -  Windows Incident Response Triage Toolkit
+Ophira v2.53  -  Windows Incident Response Triage Toolkit
 READ-ONLY by design: never modifies the system, only reads and copies data
 into its own output folder. Intended to be handed to a system owner or run
 by a responder during early triage / threat hunting.
@@ -45,7 +45,7 @@ param(
     [switch]$ExitVerdict
 )
 
-$ScriptVersion = "2.52"
+$ScriptVersion = "2.53"
 $ErrorActionPreference = 'Continue'
 $ProgressPreference = 'SilentlyContinue'
 
@@ -682,7 +682,7 @@ function Show-ToolLinks {
         [pscustomobject]@{ Tool = 'LECmd (EZ)'; Url = 'https://ericzimmerman.github.io/'; Use = 'module 8.5 LNK parse (Recent docs)' }
         [pscustomobject]@{ Tool = 'JLECmd (EZ)'; Url = 'https://ericzimmerman.github.io/'; Use = 'module 8.5 Jump List parse' }
         [pscustomobject]@{ Tool = 'SBECmd (EZ)'; Url = 'https://ericzimmerman.github.io/'; Use = 'module 8.8 ShellBags (folder browsing history)' }
-        [pscustomobject]@{ Tool = 'RECmd (EZ)'; Url = 'https://ericzimmerman.github.io/'; Use = 'Parse mode: batch registry deep-dive over saved hives (bundled batch: tools\recmd\ophira-registry.bn)' }
+        [pscustomobject]@{ Tool = 'RECmd (EZ)'; Url = 'https://ericzimmerman.github.io/'; Use = 'Parse mode: batch registry deep-dive over saved hives (bundled batch: tools\recmd\ophira-registry.reb)' }
         [pscustomobject]@{ Tool = 'EvtxECmd (EZ)'; Url = 'https://ericzimmerman.github.io/'; Use = 'Parse mode: FULL evtx->CSV conversion into csv\evtx_ecmd (timeframe deep-dives beyond the EID-filtered parses)' }
         [pscustomobject]@{ Tool = 'SQLECmd (EZ, .NET 9)'; Url = 'https://ericzimmerman.github.io/'; Use = 'module 8.7 browser SQLite parse (History/Downloads)' }
         [pscustomobject]@{ Tool = 'LOLDrivers datasets'; Url = 'https://github.com/magicsword-io/LOLDrivers'; Use = 'module 8.10 malicious/vulnerable driver hash lists into tools\loldrivers' }
@@ -2903,7 +2903,18 @@ $script:Modules = @(
             $amArgs = @()
             if (Test-Path $amc) { $amArgs = @('-a', $amc) }
             Write-CaseLog "    chainsaw: shimcache/amcache execution timeline..." 'Cyan'
-            $null = Invoke-NativeTool -ExePath $cs.FullName -ToolArgs (@('analyse', 'shimcache', $sys) + $amArgs + @('-o', $out))
+            # v2.53: chainsaw requires -r with insertion-time patterns (known-good installers whose
+            # timestamps legitimately match insertion) - without it the analysis warns and emits nothing
+            $scPat = Join-Path $cs.DirectoryName 'shimcache_patterns.txt'
+            $patArgs = @()
+            if (Test-Path -LiteralPath $scPat) { $patArgs = @('-r', $scPat) }
+            $null = Invoke-NativeTool -ExePath $cs.FullName -ToolArgs (@('analyse', 'shimcache', $sys) + $amArgs + $patArgs + @('-o', $out))
+            if (-not (Test-Path $out) -and $amArgs.Count -gt 0) {
+                # chainsaw aborts the amcache-enriched run when the Amcache hive has entries it
+                # cannot resolve (observed on real hives) - retry shimcache-only, same coverage
+                Write-CaseLog "    chainsaw: amcache enrichment aborted (unresolvable amcache entry) - retrying shimcache-only" 'DarkYellow'
+                $null = Invoke-NativeTool -ExePath $cs.FullName -ToolArgs (@('analyse', 'shimcache', $sys) + $patArgs + @('-o', $out))
+            }
             if (Test-Path $out) {
                 $n = @(Get-Content -LiteralPath $out | Select-Object -Skip 1).Count
                 Write-CaseLog "    execution timeline: $n entries in csv\execution_timeline.csv" 'Gray'
@@ -3663,7 +3674,7 @@ public class OphiraDump {
             foreach ($dr in $drvRows) {
                 if ($checked -ge 600) { break }
                 $p = "$($dr.PathName)" -replace '^\\{1,2}\?\?\\', ''
-                if (-not $p -or -not (Test-Path -LiteralPath $p -PathType Leaf)) { continue }
+        if (-not $p -or -not (Test-Path -LiteralPath $p -PathType Leaf -ErrorAction SilentlyContinue)) { continue }
                 $hash = $null
                 try { $hash = (Get-FileHash -LiteralPath $p -Algorithm SHA256 -ErrorAction Stop).Hash.ToLower() } catch { continue }
                 $checked++
@@ -4476,13 +4487,14 @@ a{color:#8ab4f8} .foot{margin-top:40px;color:#565e6b;font-size:11px}
 pre.ioc{background:#181b21;border:1px solid #2a2f3a;border-radius:8px;padding:12px;font-family:Consolas,monospace;font-size:12px;white-space:pre-wrap;word-break:break-all}
 .rec{background:#181b21;border-left:4px solid #8ab4f8;border-radius:6px;padding:10px 14px;margin:8px 0}
 details{margin:6px 0}summary{cursor:pointer;color:#8ab4f8;font-size:13px}
-td.clip{max-width:560px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;cursor:copy}
-.clip.open{white-space:normal;word-break:break-all;max-width:none}
+td.clip{cursor:copy}
+.clip.open{word-break:break-all}
+.swall{background:#232833;border:1px solid #333b49;color:#9ec1f0;border-radius:4px;padding:1px 8px;cursor:pointer;font-size:11px;margin-top:3px}
 #copied{position:fixed;bottom:14px;right:14px;background:#1d3a26;color:#7ee2a8;padding:8px 14px;border-radius:6px;display:none;z-index:99;font-size:12px;font-weight:700}
 .sbar{margin:8px 0}.sbar input,.sbar select{background:#181b21;border:1px solid #2a2f3a;color:#d7dce3;padding:4px 8px;border-radius:4px;font-size:12px}
 .pgr{margin:6px 0}.pgr button{background:#232833;border:1px solid #333b49;color:#9ec1f0;border-radius:4px;padding:2px 10px;cursor:pointer;margin-left:4px}
 tr.techrow{cursor:pointer}
-@media print{body{background:#fff;color:#111;font-size:11px}.nav,#copied,.sbar,.pgr,button,details{display:none!important}h1,h2{color:#111;border-color:#999}pre.ioc{background:#f4f4f4;color:#111;border-color:#bbb}table{font-size:10px}th{background:#eee;color:#111}tr:nth-child(even){background:#fafafa}.vbanner,.lead,.rec{background:#fafafa}td.clip{white-space:normal;overflow:visible;max-width:none}.meta,.foot{color:#444}a{color:#111;text-decoration:none}}
+@media print{body{background:#fff;color:#111;font-size:11px}.nav,#copied,.sbar,.pgr,button,details{display:none!important}h1,h2{color:#111;border-color:#999}pre.ioc{background:#f4f4f4;color:#111;border-color:#bbb}table{font-size:10px}th{background:#eee;color:#111}tr:nth-child(even){background:#fafafa}.vbanner,.lead,.rec{background:#fafafa}.meta,.foot{color:#444}a{color:#111;text-decoration:none}.swall{display:none!important}}
 </style>
 '@
 
@@ -4874,7 +4886,7 @@ tr.techrow{cursor:pointer}
             if (-not $txt) { $txt = ($c.PSObject.Properties | ForEach-Object { "$($_.Value)" }) -join ' ' }
             $txtShow = if ($txt.Length -gt 400) { $txt.Substring(0, 400) + '...' } else { $txt }
             $txtAttr = (ConvertTo-HtmlEsc $txt) -replace '"', '&quot;'
-            $null = $sb.AppendLine("<tr><td>$(ConvertTo-HtmlEsc $t)</td><td>$(ConvertTo-HtmlEsc $src)</td><td class='path clip' title='click = copy raw' data-full=""$txtAttr"">$(ConvertTo-HtmlEsc $txtShow)</td></tr>")
+            $null = $sb.AppendLine("<tr><td>$(ConvertTo-HtmlEsc $t)</td><td>$(ConvertTo-HtmlEsc $src)</td><td class='path clip' title='click = copy raw - show all expands' data-full=""$txtAttr"">$(ConvertTo-HtmlEsc $txtShow)</td></tr>")
         }
         $null = $sb.AppendLine("</table><div class='meta'>First $($psCmds.Count) recovered commands (hayabusa extract-base64 over the exported PowerShell event logs). Source: csv\ps_decoded_commands.csv</div>")
     }
@@ -5595,7 +5607,7 @@ tr.techrow{cursor:pointer}
         }
         var pages=Math.max(1,Math.ceil(f.length/per)); if(pg>pages)pg=pages; if(pg<1)pg=1;
         var pe=document.getElementById('p_'+id); if(pe)pe.value=pg;
-        var h='<table><tr><th>Time</th><th>Computer</th><th>EID</th><th>Level</th><th>Event details - click = copy raw, double-click = expand</th></tr>';
+        var h='<table><tr><th>Time</th><th>Computer</th><th>EID</th><th>Level</th><th>Event details - click = copy raw, show all = full text</th></tr>';
         for(i=(pg-1)*per;i<Math.min(pg*per,f.length);i++){var r2=f[i];
           var prev=r2.d.length>300?r2.d.substring(0,300)+'...':r2.d;
           h+='<tr><td>'+esc(r2.t)+'</td><td>'+esc(r2.c)+'</td><td>'+esc(r2.e)+'</td><td class="'+esc(r2.lc)+'">'+esc(r2.l)+'</td><td class="clip path" data-full="'+attr(r2.d)+'" title="click = copy raw">'+esc(prev)+'</td></tr>';
@@ -5606,6 +5618,16 @@ tr.techrow{cursor:pointer}
           +'<button onclick="pgRule(\''+id+'\',-1)">prev</button><button onclick="pgRule(\''+id+'\',1)">next</button></div>'+h;}
       }
       Object.keys(RULES).forEach(function(k){renderRule(k);});
+      // v2.53: visible show-all toggle on every truncated cell (full text rides data-full)
+      document.querySelectorAll('td.clip[data-full]').forEach(function(t){
+        var f=t.getAttribute('data-full')||'';
+        if(f.length>t.textContent.length){
+          var br=document.createElement('br'),b=document.createElement('button');
+          b.className='swall';b.textContent='show all';
+          b.addEventListener('click',function(e){e.stopPropagation();t.textContent=f;t.classList.add('open');});
+          t.appendChild(br);t.appendChild(b);
+        }
+      });
       </script>
 "@)
     $null = $sb.AppendLine("<div class='foot'>Generated $(Get-Date -Format u) by Ophira v$ScriptVersion - all verdicts are correlation heuristics; verify against raw CSV/evtx evidence before acting.</div>")
@@ -7369,6 +7391,29 @@ function Invoke-RegenerateOutputs {
                 $il = @(Import-CaseCsv 'flash_ioc_hits' | Where-Object { "$($_.Indicator)" } | Select-Object -First 1)
                 if ($il) { $seed = "$($il[0].Indicator)"; $seedWhy = 'live IOC hit' }
             }
+            # v2.53: verdict-driven fallbacks - a case that fired on hunt rules or beaconing
+            # (no HIGH process / YARA / IOC) used to ship with NO correlation story at all.
+            # Seed the strongest remaining signal so the report always carries the graph.
+            if (-not $seed) {
+                $hf = @(Import-CaseCsv 'hunt_findings' | Where-Object { "$($_.Severity)" -eq 'high' -and "$($_.Entity)" -match '(?i)\.(exe|sys|dll)$' } | Select-Object -First 1)
+                if ($hf) {
+                    $seed = "$($hf[0].Entity)"
+                    if ($seed.Contains('\')) { try { $seed = (Split-Path $seed -Leaf) } catch { } }
+                    $seedWhy = "hunt rule '$($hf[0].Rule)'"
+                }
+            }
+            if (-not $seed) {
+                $bc = @(Import-CaseCsv 'beacon_candidates' | Sort-Object { switch ("$($_.Severity)") { 'high' { 0 } 'medium' { 1 } default { 2 } } } | Select-Object -First 1)
+                if ($bc) {
+                    if ("$($bc[0].Process)") { $seed = "$($bc[0].Process)"; try { $seed = (Split-Path $seed -Leaf) } catch { } }
+                    elseif ("$($bc[0].RemoteIp)") { $seed = "$($bc[0].RemoteIp):$($bc[0].Port)" }
+                    if ($seed) { $seedWhy = "C2 beacon candidate ($($bc[0].Severity))" }
+                }
+            }
+            if (-not $seed) {
+                $db = @(Import-CaseCsv 'dns_beacon_candidates' | Sort-Object { switch ("$($_.Severity)") { 'high' { 0 } 'medium' { 1 } default { 2 } } } | Select-Object -First 1)
+                if ($db -and "$($db[0].Domain)") { $seed = "$($db[0].Domain)"; $seedWhy = "DNS beacon candidate ($($db[0].Severity))" }
+            }
             if ($seed) {
                 Write-CaseLog "    auto-focus: $seedWhy on '$seed' -> building the dossier (focus\focus_report.html)" 'Cyan'
                 Invoke-FocusCore -Indicator $seed -Meta ([pscustomobject]@{ Computer = "$Computer"; CaseID = "$($script:CurrentCaseID)" }) | Out-Null
@@ -7510,8 +7555,11 @@ function New-Package {
 }
 
 function Show-RoleGate {
-    if ($script:OphiraRole -eq 'responder') { return 'responder' }
-    if ($script:OphiraRole -eq 'owner') { return 'owner' }
+    # v2.53 front screen: two choices, not a role quiz. [1] Run = the full guided
+    # collection (the owner-handoff experience); [2] Advanced mode = the responder menu.
+    # ROLE= in ophira.config.txt still short-circuits (owner -> run, responder -> advanced).
+    if ($script:OphiraRole -eq 'responder') { return 'advanced' }
+    if ($script:OphiraRole -eq 'owner') { return 'run' }
     while ($true) {
         Clear-Host
         Write-Host "================================================================" -ForegroundColor Cyan
@@ -7524,19 +7572,25 @@ function Show-RoleGate {
         Write-Host "  READ-ONLY: collects evidence, never changes the system" -ForegroundColor DarkGray
         Write-Host "----------------------------------------------------------------" -ForegroundColor Cyan
         Write-Host ""
-        Write-Host "  Who is using this tool?" -ForegroundColor White
+        Write-Host "  What do you want to do?" -ForegroundColor White
         Write-Host ""
-        Write-Host "   [1]  IR team" -ForegroundColor Yellow
-        Write-Host "        Full menu: collect, push & run on remote PCs, analyze." -ForegroundColor DarkGray
+        Write-Host "   [1]  Run - check this PC now" -ForegroundColor Yellow
+        Write-Host "        Collects everything automatically (about 5 minutes)," -ForegroundColor DarkGray
+        Write-Host "        then shows the result and where the report is." -ForegroundColor DarkGray
+        Write-Host "        Send the result file to the IR team - they read the report." -ForegroundColor DarkGray
         Write-Host ""
-        Write-Host "   [2]  User" -ForegroundColor Yellow
-        Write-Host "        Guided automatic collection - nothing to decide." -ForegroundColor DarkGray
+        Write-Host "   [2]  Advanced mode" -ForegroundColor Yellow
+        Write-Host "        Full menu: remote PCs, fleet analyze, focus engine, parsing," -ForegroundColor DarkGray
+        Write-Host "        timeline, live watch, canary, tools." -ForegroundColor DarkGray
+        Write-Host ""
+        Write-Host "   [Q]  Quit" -ForegroundColor DarkGray
         Write-Host ""
         Write-Host "----------------------------------------------------------------" -ForegroundColor DarkGray
-        $inp = Read-Host "  Choose 1 or 2"
+        $inp = Read-Host "  Choose 1, 2 or Q"
         switch -Regex ($inp) {
-            '^1$' { return 'responder' }
-            '^2$' { return 'owner' }
+            '^(?i)1$' { return 'run' }
+            '^(?i)2$' { return 'advanced' }
+            '^(?i)q$' { exit 0 }
             default { }
         }
     }
@@ -7913,12 +7967,13 @@ function Invoke-ParseMode {
             Invoke-BrowserIocXref
         }
     }
-    # RECmd batch registry deep-dive over saved hives (v2.25: bundled ophira-registry.bn)
+    # RECmd batch registry deep-dive over saved hives (v2.25; v2.53: .reb format - RECmd 2.x
+    # rejects the old flat .bn batches with a YAML syntax error, so the deep-dive was silently dead)
     $regDir2 = Join-Path $script:RawDir 'registry'
     if (Test-Path $regDir2) {
         $reExe = & $findTool 'RECmd*.exe'
         $bn = $null
-        try { $bn = Join-Path (Get-KitRoot) 'tools\recmd\ophira-registry.bn' } catch { }
+        try { $bn = Join-Path (Get-KitRoot) 'tools\recmd\ophira-registry.reb' } catch { }
         if ($reExe -and $bn -and (Test-Path $bn) -and -not (Test-CaseCsv 'registry_recmd')) {
             Write-Host "  RECmd: batch registry deep-dive..." -ForegroundColor Cyan
             $outDir = Join-Path $script:CsvDir 'recmd_out'
@@ -7931,7 +7986,14 @@ function Invoke-ParseMode {
             foreach ($f2 in @(Get-ChildItem -Path $outDir -Filter '*.csv' -File -ErrorAction SilentlyContinue)) {
                 try { $rows2 = @(Import-Csv -LiteralPath $f2.FullName -ErrorAction Stop) } catch { continue }
                 foreach ($r2 in $rows2) {
-                    $all += [pscustomobject]@{ Hive = $f2.BaseName; KeyPath = "$($r2.'Key Path')"; ValueName = "$($r2.'Value Name')"; ValueType = "$($r2.'Value Type')"; Value = ("$($r2.'Value')" -replace '\s+', ' '); LastWrite = "$($r2.'Last Write Timestamp')" }
+                    # v2.53: RECmd 2.x renamed the output columns (KeyPath/ValueName/ValueType/
+                    # ValueData/LastWriteTimestamp - the 1.x names had spaces); accept both
+                    $kp2 = "$($r2.'Key Path')"; if (-not $kp2) { $kp2 = "$($r2.KeyPath)" }
+                    $vn2 = "$($r2.'Value Name')"; if (-not $vn2) { $vn2 = "$($r2.ValueName)" }
+                    $vt2 = "$($r2.'Value Type')"; if (-not $vt2) { $vt2 = "$($r2.ValueType)" }
+                    $vd2 = "$($r2.'Value')"; if (-not $vd2) { $vd2 = "$($r2.ValueData)" }
+                    $lw2 = "$($r2.'Last Write Timestamp')"; if (-not $lw2) { $lw2 = "$($r2.LastWriteTimestamp)" }
+                    $all += [pscustomobject]@{ Hive = $f2.BaseName; KeyPath = $kp2; ValueName = $vn2; ValueType = $vt2; Value = ($vd2 -replace '\s+', ' '); LastWrite = $lw2 }
                 }
             }
             Save-Rows -Name 'registry_recmd' -Rows $all
@@ -8130,7 +8192,7 @@ function Invoke-FocusEngine {
     if (-not $Path) { $Path = (Read-Host "  Case folder or OPHIRA_*.zip path").Trim(' "') }
     $meta = Open-CaseSession -Path $Path
     if (-not $meta) { return $false }
-    if (-not $Indicator) { $Indicator = (Read-Host "  Process name, PID, path fragment or hash").Trim() }
+    if (-not $Indicator) { $Indicator = (Read-Host "  Name, PID, path, hash, IP, ip:port or port").Trim() }
     if (-not $Indicator) { Write-Host "  no indicator given" -ForegroundColor Red; return $false }
     return (Invoke-FocusCore -Indicator $Indicator -Meta ([pscustomobject]@{ Computer = "$($meta.Computer)"; CaseID = "$($meta.CaseID)" }))
 }
@@ -8158,6 +8220,7 @@ function Invoke-FocusCore {
     $hashCols = '^(?i)(SHA256|SHA1|MD5|Hashes|Hash)$'
     $pidCols = '^(?i)(PID|PPID|ProcessId|NewProcessId|ParentProcessId|CreatorPid)$'
     $ipCols = '^(?i)(DestIp|DestinationIp|SourceIp|RemoteIp|IpAddress|IP)$'
+    $portCols = '^(?i)(DestPort|DestinationPort|RemotePort|LocalPort|SourcePort|Port)$'
     $guidRe = '^(?i)ProcessGuid$'
 
     # ---- seed terms -------------------------------------------------------
@@ -8167,12 +8230,21 @@ function Invoke-FocusCore {
     $pids = New-Object System.Collections.Generic.List[string]
     $guids = New-Object System.Collections.Generic.List[string]
     $ips = New-Object System.Collections.Generic.List[string]
+    $ports = New-Object System.Collections.Generic.List[string]
     $ind = "$Indicator".Trim().ToLower()
     if ($ind -match '^[a-f0-9]{32}$|^[a-f0-9]{40}$|^[a-f0-9]{64}$') {
         $hashes.Add($ind)
+    } elseif ($ind -match '^(\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}):(\d{1,5})$') {
+        # v2.53: ip:port seed - the "I know the C2 endpoint, whose machine talked to it" pivot
+        $ips.Add($Matches[1]); $ports.Add($Matches[2])
+    } elseif ($ind -match '^\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}$') {
+        $ips.Add($ind)
     } elseif ($ind -match '^\d{1,10}$') {
+        # v2.53: a bare number is a PID, a port, or both - seed as all candidates
+        # (whichever has data in this case wins; the other simply matches nothing)
         $pids.Add($ind)
         $pids.Add(('0x{0:x}' -f ([int64]$ind)))
+        if ([int64]$ind -ge 1 -and [int64]$ind -le 65535) { $ports.Add($ind) }
     } elseif ($ind.Contains('\')) {
         $paths.Add((("$ind" -replace '(?i)^\\device\\harddiskvolume\d+', 'C:' -replace '/', '\').ToLower()))
     } else {
@@ -8207,6 +8279,13 @@ function Invoke-FocusCore {
         if ($x -match '^(0\.0\.0\.0|255\.255\.255\.255|22[4-9]\.|2[3-5]\d\.)') { return }
         if (-not $ips.Contains($x) -and $ips.Count -lt 20) { $ips.Add($x) }
     }
+    $addPort = {
+        param([string]$v)
+        $x = "$v".Trim()
+        if ($x -notmatch '^\d{1,5}$') { return }
+        if ([int]$x -lt 1 -or [int]$x -gt 65535) { return }
+        if (-not $ports.Contains($x) -and $ports.Count -lt 10) { $ports.Add($x) }
+    }
 
     # hash seed -> resolve to the binary's path/name so one hash pulls the whole story
     foreach ($hn in @('process_hashes.csv', 'entities_binaries.csv', 'amcache.csv')) {
@@ -8238,6 +8317,16 @@ function Invoke-FocusCore {
         }
     }
 
+    # OS-infra seed warning: a name like svchost.exe matches every service host that ever
+    # ran - valid, but the dossier drowns. Say so up front instead of looking broken.
+    if ($names.Count -gt 0 -and $paths.Count -eq 0 -and $hashes.Count -eq 0 -and $pids.Count -eq 0 -and $ips.Count -eq 0 -and $ports.Count -eq 0) {
+        foreach ($nm0 in $names) {
+            if ("$nm0" -match $guard) {
+                Write-Host "  note: '$nm0' is an OS infrastructure name - it matches every instance of that host. The scan continues, but for one specific instance seed with its PID, full path or SHA256 instead." -ForegroundColor Yellow
+            }
+        }
+    }
+
     # ---- iterative scan ---------------------------------------------------
     $files = @(Get-ChildItem -LiteralPath $script:CsvDir -Filter '*.csv' -File -Recurse -ErrorAction SilentlyContinue |
         Where-Object { @('sigma_rules', 'evtx_ecmd', 'recmd_out') -notcontains $_.Directory.Name -and $_.BaseName -notmatch '^(focus_|process_pivot|supertimeline|parse_needed)' } | Sort-Object Name)
@@ -8259,6 +8348,9 @@ function Invoke-FocusCore {
             if ("$($p.Name)" -match $pidCols) {
                 foreach ($pd in $pids) { if ($vl -eq $pd) { return "pid $pd" } }
             }
+            if ("$($p.Name)" -match $portCols) {
+                foreach ($pr in $ports) { if ($vl -eq $pr) { return "port $pr" } }
+            }
             foreach ($pn in $names) { if ($vl.Contains($pn)) { return "name $pn" } }
             foreach ($pt in $paths) { if ($vl.Contains($pt)) { return "path $pt" } }
             foreach ($ip in $ips) { if ($vl -eq $ip) { return "ip $ip" } }
@@ -8266,20 +8358,53 @@ function Invoke-FocusCore {
         return $null
     }
 
+    # v2.53: pre-lowercased row blobs per file - built once at load, the round loop only
+    # regex-matches them (building blobs + calling matchRow per row every round is what made
+    # the engine look hung on real-size cases)
+    $blobCache = @{}
+    $scanSkipped = New-Object System.Collections.Generic.List[string]
     for ($round = 1; $round -le 4; $round++) {
-        $termCount = $names.Count + $paths.Count + $hashes.Count
+        $termCount = $names.Count + $paths.Count + $hashes.Count + $ports.Count + $pids.Count
         if ($termCount -eq 0) { break }
+        # one alternation regex over all current terms; PIDs/ports ride \b-boundaries -
+        # over-matched rows are re-checked exactly inside matchRow (column-exact)
+        $qp = New-Object System.Collections.Generic.List[string]
+        foreach ($t in $names) { $qp.Add([regex]::Escape($t)) }
+        foreach ($t in $paths) { $qp.Add([regex]::Escape($t)) }
+        foreach ($t in $hashes) { $qp.Add([regex]::Escape($t)) }
+        foreach ($t in $ips) { $qp.Add([regex]::Escape($t)) }
+        foreach ($lst in @($pids, $ports)) {
+            if ($lst.Count -gt 0) { $qp.Add('\b(' + ((@($lst) | ForEach-Object { [regex]::Escape("$_") }) -join '|') + ')\b') }
+        }
+        if ($qp.Count -eq 0) { break }
+        $quickRe = New-Object System.Text.RegularExpressions.Regex(($qp.ToArray() -join '|'), ([System.Text.RegularExpressions.RegexOptions]::IgnoreCase -bor [System.Text.RegularExpressions.RegexOptions]::Compiled))
         $newHits = 0
         foreach ($f in $files) {
             if (-not $cache.ContainsKey($f.BaseName)) {
                 $rr = @()
-                try { $rr = @(Import-Csv -LiteralPath $f.FullName -ErrorAction Stop) } catch { }
+                if ($f.Length -gt 40MB) {
+                    $scanSkipped.Add("$($f.BaseName) ($([math]::Round($f.Length / 1MB)) MB - too large for the focus scan; query it directly or use the supertimeline)")
+                } else {
+                    if ($f.Length -gt 1MB) { Write-Host "  loading $($f.Name) ($([math]::Round($f.Length / 1KB)) KB)..." -ForegroundColor DarkGray }
+                    try { $rr = @(Import-Csv -LiteralPath $f.FullName -ErrorAction Stop) } catch { }
+                }
                 $cache[$f.BaseName] = $rr
+                $bb = New-Object 'System.Collections.Generic.List[string]'
+                foreach ($r in $rr) {
+                    $b = ''
+                    foreach ($p in $r.PSObject.Properties) { $v = "$($p.Value)"; if ($v) { $b += $v; $b += ' ' } }
+                    $bb.Add($b.ToLower())
+                }
+                $blobCache[$f.BaseName] = $bb.ToArray()
             }
+            if ($hits.Count -ge 5000) { break }
             $rr = $cache[$f.BaseName]
             if ($rr.Count -eq 0) { continue }
             $src = $f.BaseName
-            foreach ($r in $rr) {
+            $bl = $blobCache[$f.BaseName]
+            for ($ri = 0; $ri -lt $rr.Count; $ri++) {
+                if (-not $quickRe.IsMatch($bl[$ri])) { continue }
+                $r = $rr[$ri]
                 $on = & $matchRow $r
                 if (-not $on) { continue }
                 # expansion: pull new entity terms out of the matched row
@@ -8291,6 +8416,7 @@ function Invoke-FocusCore {
                     if ($nm -match $pathCols) { & $addPath $v }
                     if ($nm -match $nameCols) { & $addName $v }
                     if ($nm -match $ipCols) { & $addIp $v }
+                    if ($nm -match $portCols) { & $addPort $v }
                 }
                 # instance record from the identity sources
                 if ($src -eq 'processes' -or $src -eq 'sysmon_proc_create' -or $src -eq 'security_proc_events') {
@@ -8308,9 +8434,9 @@ function Invoke-FocusCore {
                     $iPidN = $iPid
                     if ("$iPidN" -match '^0x([0-9a-fA-F]+)$') { try { $iPidN = "$([convert]::ToInt64($Matches[1], 16))" } catch { } }
                     $ik = "$iPidN|$iImg".ToLower()
-                    if (($iPid -or $iGuid) -and $instKeys.Add($ik)) {
+                    if (($iPid -or $iGuid) -and $instKeys.Add($ik) -and $instances.Count -lt 400) {
                         $instances.Add([pscustomobject]@{ Pid = $iPid; Guid = $iGuid; Started = $iStart; Image = $iImg; Parent = $iParent; User = $iUser; Source = $src })
-                    } elseif ($instances.Count -gt 0) {
+                    } elseif ($instances.Count -gt 0 -and $instances.Count -lt 400) {
                         # same instance seen in another source -> enrich the existing row
                         # (sysmon rows carry guid/user/parent, the live snapshot carries PPID)
                         foreach ($ex in $instances) {
@@ -8342,12 +8468,16 @@ function Invoke-FocusCore {
                     $hits.Add([pscustomobject]@{ Indicator = $Indicator; Source = $src; Time = $t; MatchedOn = $on; Detail = $detail })
                     $sourcesHit[$src] = [int]$sourcesHit[$src] + 1
                     $newHits++
+                    if ($hits.Count -ge 5000) { break }
                 }
             }
+            if ($hits.Count -ge 5000) { break }
         }
-        Write-Host ("  round {0}: {1} name / {2} path / {3} hash / {4} ip terms -> {5} new hit(s), {6} instance(s)" -f $round, $names.Count, $paths.Count, $hashes.Count, $ips.Count, $newHits, $instances.Count) -ForegroundColor DarkGray
-        if ($newHits -eq 0 -and $names.Count + $paths.Count + $hashes.Count -eq $termCount) { break }
+        Write-Host ("  round {0}: {1} name / {2} path / {3} hash / {4} ip / {5} port terms -> {6} new hit(s), {7} instance(s)" -f $round, $names.Count, $paths.Count, $hashes.Count, $ips.Count, $ports.Count, $newHits, $instances.Count) -ForegroundColor DarkGray
+        if ($newHits -eq 0 -and ($names.Count + $paths.Count + $hashes.Count + $ports.Count + $pids.Count) -eq $termCount) { break }
     }
+    foreach ($sk in $scanSkipped) { Write-Host "  skipped: $sk" -ForegroundColor DarkGray }
+    if ($hits.Count -ge 5000) { Write-Host "  hit cap reached (5000 rows) - dossier truncated; refine the seed (PID, full path or hash) for a tighter one" -ForegroundColor Yellow }
 
     # ---- per-instance detail (ProcessGuid joins into the structured Sysmon CSVs; PID fallback) ----
     # Everything ONE instance did: children, network, DNS, loaded DLLs, file-time changes, registry.
@@ -8678,6 +8808,25 @@ function Invoke-FocusCore {
     $procCreates = @($hits | Where-Object { @('sysmon_proc_create', 'security_proc_events') -contains "$($_.Source)" }).Count
     if ($pfRuns -ge 5 -and $procCreates -gt 0 -and $pfRuns -gt ($procCreates * 3)) {
         $null = $corrNotes.Add("EXECUTION MISMATCH: prefetch reports $pfRuns runs - only $procCreates process-creation events in the telemetry window (logging gap, short window, or telemetry tampering - check logging-gaps and the collection range)")
+    }
+
+    # ---- zero-hit UX (v2.53): guidance instead of silently writing an empty dossier ----
+    # An empty dossier used to overwrite any existing one AND rendered a dead Focus section
+    # in the main report - the "option 9 doesn't work" experience.
+    if ($hits.Count -eq 0) {
+        Write-Host ""
+        Write-Host "No evidence found for '$Indicator' in this case." -ForegroundColor Yellow
+        Write-Host "  the engine matches: name fragments, path fragments, SHA1/SHA256/MD5, PIDs, IPs, ip:port and ports" -ForegroundColor Gray
+        Write-Host "  try instead: the binary's full path, its hash (csv\...\process_hashes.csv), or the remote ip:port it talked to" -ForegroundColor Gray
+        foreach ($bc in @('beacon_candidates', 'dns_beacon_candidates')) {
+            if (-not $cache.ContainsKey($bc)) { continue }
+            foreach ($b2 in @($cache[$bc] | Select-Object -First 3)) {
+                if ($bc -eq 'beacon_candidates') { Write-Host "  beacon in this case: $($b2.Process) -> $($b2.RemoteIp):$($b2.Port) (severity $($b2.Severity)) - try seeding that" -ForegroundColor DarkCyan }
+                else { Write-Host "  DNS beacon in this case: $($b2.Domain) (severity $($b2.Severity)) - try seeding that domain" -ForegroundColor DarkCyan }
+            }
+        }
+        Write-Host "  nothing was written - any existing dossier is intact" -ForegroundColor DarkGray
+        return $true
     }
 
     # ---- write outputs ----------------------------------------------------
@@ -9045,7 +9194,7 @@ function Invoke-FocusCore {
             }
             [void]$h.AppendLine("</table>")
         }
-        [void]$h.AppendLine("<div class='meta'>Rebuild: <b>Ophira.ps1 -Mode Focus -ParsePath &lt;case&gt; -ProcessName &lt;indicator&gt;</b> (name, PID, path fragment or hash). Chain CSV: focus\focus_chain.csv - raw hits: focus\focus_hits.csv</div>")
+        [void]$h.AppendLine("<div class='meta'>Rebuild: <b>Ophira.ps1 -Mode Focus -ParsePath &lt;case&gt; -ProcessName &lt;indicator&gt;</b> (name, PID, path, hash, IP, ip:port or port). Chain CSV: focus\focus_chain.csv - raw hits: focus\focus_hits.csv</div>")
         [void]$h.AppendLine("</body></html>")
         Set-Content -LiteralPath (Join-Path $focusDir 'focus_report.html') -Value $h.ToString() -Encoding UTF8
     }
@@ -9064,9 +9213,13 @@ function Invoke-FocusCore {
         $dParents = @{}
         $instIds = @{}
         foreach ($i in $instances) {
+            $imgL2 = "$($i.Image)"
+            $leaf2 = $imgL2
+            if ($leaf2) { try { $lf3 = (Split-Path $leaf2 -Leaf); if ($lf3) { $leaf2 = $lf3 } } catch { } }
+            if (-not $leaf2) { $leaf2 = '(unknown image)' }
             $nid = "i$($instIds.Count)"
             $instIds["$($i.Pid)|$($i.Image)".ToLower()] = $nid
-            [void]$dot.AppendLine("  `"$nid`" [label=`"INSTANCE $(& $dotEsc "$(Split-Path "$($i.Image)" -Leaf) (PID $($i.Pid))")`", fillcolor=`"#3a1518`", color=`"#a33`"];")
+            [void]$dot.AppendLine("  `"$nid`" [label=`"INSTANCE $(& $dotEsc "$leaf2 (PID $($i.Pid))")`", fillcolor=`"#3a1518`", color=`"#a33`"];")
             # direct parent only (Lineage[0] is the nearest ancestor; Parent falls back)
             $pv = ''
             if ($i.PSObject.Properties['Lineage'] -and @($i.Lineage).Count -gt 0) { $pv = "$(@($i.Lineage)[0])" }
@@ -9155,10 +9308,6 @@ function Invoke-FocusCore {
 
     # ---- console summary --------------------------------------------------
     Write-Host ""
-    if ($hits.Count -eq 0) {
-        Write-Host "No evidence found for '$Indicator' in this case." -ForegroundColor Yellow
-        return $true
-    }
     Write-Host "FOCUS '$Indicator' - $($hits.Count) evidence row(s) across $($sourcesHit.Keys.Count) artifact(s), $($groups.Count) entity group(s), $($instances.Count) instance(s):" -ForegroundColor Cyan
     foreach ($g in $groups) {
         $h = if ($g.Hash) { " sha256:$($g.Hash.Substring(0, [Math]::Min(16, $g.Hash.Length)))..." } else { '' }
@@ -9785,8 +9934,8 @@ function Invoke-AnalyzeWizard {
 
 $bareLaunch = ($Mode -eq 'Collect' -and -not $PSBoundParameters.ContainsKey('Mode') -and -not $NoMenu -and -not $script:SimpleUI)
 if ($bareLaunch -and [Environment]::UserInteractive) {
-    $role = Show-RoleGate
-    if ($role -eq 'owner') {
+    $front = Show-RoleGate
+    if ($front -eq 'run') {
         $script:SimpleUI = $true
         $script:ExtraRelaunchArgs += @('-SimpleUI')
     } else {

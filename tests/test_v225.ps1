@@ -101,7 +101,7 @@ function Invoke-NativeTool {
 }
 $okP = Invoke-ParseMode -Path $case2
 Check "parse: mode returns success" ($okP -eq $true)
-Check "parse: RECmd ran with bundled batch against SYSTEM.hiv" (@($script:nativeCalls | Where-Object { $_ -match '^RECmd\.exe\|--bn .*ophira-registry\.bn -f .*SYSTEM\.hiv' }).Count -eq 1)
+Check "parse: RECmd ran with bundled batch against SYSTEM.hiv" (@($script:nativeCalls | Where-Object { $_ -match '^RECmd\.exe\|--bn .*ophira-registry\.reb -f .*SYSTEM\.hiv' }).Count -eq 1)
 Check "parse: EvtxECmd converted Security.evtx" (@($script:nativeCalls | Where-Object { $_ -match '^EvtxECmd\.exe\|-f .*Security\.evtx --csv' }).Count -eq 1)
 Check "parse: evtx_ecmd folder created" (Test-Path (Join-Path $csv2 'evtx_ecmd\Security.csv'))
 $rr = $savedRows['registry_recmd']
@@ -113,13 +113,15 @@ Check "parse: registry_recmd mapped (Hive/KeyPath/ValueName/Value columns)" (@($
 Check "params: -Mode Timeline + window params wired" ($src -match "'Process', 'Timeline'" -and $src -match '\$TimelineStart' -and $src -match '\$TimelineEnd')
 Check "dispatch: Timeline mode reachable from menu and -Mode" (($src -match "return 'Timeline'") -and ($src -match "Invoke-TimelineMode -Path"))
 Check "setup catalog: RECmd + EvtxECmd entries" ($src -match "Name = 'RECmd';.*ericzimmermanstools" -and $src -match "Name = 'EvtxECmd';.*ericzimmermanstools.*Target = 'analyst'")
-$bnFile = Join-Path (Split-Path -Parent $PSScriptRoot) 'tools\recmd\ophira-registry.bn'
-Check "batch: ophira-registry.bn bundled" (Test-Path $bnFile)
+$bnFile = Join-Path (Split-Path -Parent $PSScriptRoot) 'tools\recmd\ophira-registry.reb'
+Check "batch: ophira-registry.reb bundled (RECmd 2.x .reb format)" (Test-Path $bnFile)
+Check "batch: old flat .bn removed (RECmd 2.x rejects it)" (-not (Test-Path (Join-Path (Split-Path -Parent $PSScriptRoot) 'tools\recmd\ophira-registry.bn')))
 if (Test-Path $bnFile) {
     $bnText = Get-Content -LiteralPath $bnFile
-    $keys = @($bnText | Where-Object { $_ -match '^(Software|NTUSER|UsrClass|ControlSet\d*|Select)[\\,]' })
-    Check "batch: >=25 explicit key lines across all hive roots" ($keys.Count -ge 25)
+    $keys = @($bnText | Where-Object { $_ -match '^\s*KeyPath: ' })
+    Check "batch: >=25 explicit KeyPath entries" ($keys.Count -ge 25)
     Check "batch: covers persistence + lateral + execution surfaces" ((($keys -join ' ') -match 'Run') -and (($keys -join ' ') -match 'Terminal Server Client') -and (($keys -join ' ') -match 'USBSTOR'))
+    Check "batch: mandatory .reb fields present" (($bnText -join "`n") -match 'Description:' -and ($bnText -join "`n") -match 'HiveType:' -and ($bnText -join "`n") -match 'Recursive:')
 }
 Check "evidence index: registry_recmd documented" ($src -match "'registry_recmd'")
 Check "report: evtx_ecmd mentioned in case meta" ($src -match 'csv\\evtx_ecmd')

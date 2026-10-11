@@ -12,11 +12,12 @@ function Check([string]$label, [bool]$ok) {
 }
 
 # ============================================================================
-# PART 1 - role gate + owner-facing wording
+# PART 1 - front screen (v2.53: [1] Run / [2] Advanced mode) + owner-facing wording
 # ============================================================================
-Check "role gate: [1] IR team" ($src -match '\[1\]  IR team')
-Check "role gate: [2] User" ($src -match '\[2\]  User')
-Check "role gate: old wording gone" ($src -notmatch 'security / incident response team' -and $src -notmatch 'asked me to run this')
+Check "front screen: [1] Run - check this PC now" ($src -match '\[1\]  Run - check this PC now')
+Check "front screen: [2] Advanced mode" ($src -match '\[2\]  Advanced mode')
+Check "front screen: ROLE= config still short-circuits" (($src -split "`n" | Where-Object { $_.Contains("return 'advanced'") -or $_.Contains("return 'run'") }).Count -ge 2)
+Check "role gate: old wording gone" ($src -notmatch 'security / incident response team' -and $src -notmatch 'asked me to run this' -and $src -notmatch 'Who is using this tool')
 Check "owner path: every security-team reference is now IR team" (($src -split "`n" | Where-Object { $_ -match 'security team' }).Count -eq 0)
 Check "owner path: IR team wording present (5 sites)" (($src -split "`n" | Where-Object { $_ -match 'IR team' }).Count -ge 5)
 

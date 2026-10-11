@@ -15,3 +15,4 @@ dbbfd9f3-9508-478b-887e-03ddb9236909,informational # 'Suspicious Service Path' -
 cc429813-21db-4019-b520-2f19648e1ef1,informational # 'Suspicious Service Name' - same FP class (vendor service naming)
 a1be9170-2ada-e8bb-285c-3e1ff336189e,informational # 'Antivirus - Relevant File Paths Alerts Signature' - generic AV-path rule, real detections keep their own Defender channel rules
 7616e857-8e41-4976-bc21-811d122b9fc9,medium # 'Explicit Logon Attempt (Susp Proc)' - 196 hits on a clean admin workstation (every deploy/WinRM remote powershell is a 4648); real Mimikatz-style abuse still shows as medium, hunt rules R8-R27 carry detection weight
+73be1519-4648-4ed7-b305-605504afc242,informational # 'Potentially Malicious PwSh' - fires on EVERY 4104 script block Windows' heuristic marks Warning (426 hits on a deploy-heavy box); dedicated PS rules (Malicious PS Keywords, Suspicious PS) keep their levels
