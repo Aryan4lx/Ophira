@@ -121,6 +121,24 @@ New-Csv (Join-Path $csv 'sysmon_pipes.csv') '"Time","EventId","Image","PipeName"
     '"2026-10-05 14:02:50.000","17","C:\Users\dev\AppData\Roaming\malware.exe","\msagent_f00d","CreatePipe","FT\dev","4812","{7a1f-aaaa}"',
     '"2026-10-05 14:02:51.000","17","C:\Windows\System32\svchost.exe","\wkssvc","CreatePipe","LOCAL SYSTEM","500","{7777-7777}"'
 )
+# v2.50: EID 25 tamper fixture (on the respawned instance 5620 so 4812's chip cap keeps NET)
+New-Csv (Join-Path $csv 'sysmon_proc_tamper.csv') '"Time","Image","Type","FileVersion","Description","Product","User","ProcessId","ProcessGuid"' @(
+    '"2026-10-05 14:20:10.000","C:\Users\dev\AppData\Roaming\malware.exe","1","","","","FT\dev","5620","{7a1f-bbbb}"'
+)
+# v2.50: no-Sysmon execution-spine fixtures (prefetch/amcache/BAM/shimcache, no guid)
+New-Csv (Join-Path $csv 'prefetch_index.csv') '"Name","Length","CreationTime","LastWriteTime"' @(
+    '"MALWARE.EXE-AB12CD34.pf","20480","2026-10-05 14:02:12","2026-10-05 14:19:40"',
+    '"NOTEPAD.EXE-DEADBEAF.pf","4096","2026-10-05 08:00:00","2026-10-05 09:00:00"'
+)
+New-Csv (Join-Path $csv 'amcache.csv') '"Name","Path","Timestamp","SHA1"' @(
+    '"malware.exe","C:\Users\dev\AppData\Roaming\malware.exe","2026-10-05 14:02:11","AAAA1111"'
+)
+New-Csv (Join-Path $csv 'bam_lastexec.csv') '"Source","Sid","Executable","LastWrite"' @(
+    '"BAM","S-1-5-21-1000","C:\Users\dev\AppData\Roaming\malware.exe","2026-10-05 14:15:00"'
+)
+New-Csv (Join-Path $csv 'shimcache.csv') '"Entry","LastModified","Path","SourceFile"' @(
+    '"10","2026-10-05 14:02:11","C:\Users\dev\AppData\Roaming\malware.exe","SYSTEM.hiv"'
+)
 # v2.47: persistence + lineage fixtures (7045 install, run-key autorun, explorer grandparent)
 New-Csv (Join-Path $csv 'system_new_services.csv') '"Time","Service","Binary","Type"' @(
     '"2026-10-05 14:05:00.000","MalwareSvc","C:\Users\dev\AppData\Roaming\malware.exe","NewService"'
@@ -175,12 +193,16 @@ Check "injection: CrtIn section - rundll32 injected INTO instance 4812" (($html 
 Check "injection: CrtOut section - threads created in the child cmd" (($html -match 'Remote threads this instance created in OTHER processes \(1\)') -and ($html -match 'LoadLibraryA'))
 Check "pipes: C2-family pipe joined onto the instance, stock pipe excluded" (($html -match 'Named pipes created/connected \(1\)') -and ($html -match 'msagent_f00d') -and ($html -notmatch 'wkssvc'))
 Check "graph: INJECT/THREAD/PIPE chips rendered" (($html -match 'INJECT&lt;- rundll32\.exe') -and ($html -match 'THREAD-&gt; cmd\.exe') -and ($html -match 'PIPE \\msagent_f00d'))
+Check "graph: red TAMPER chip on instance 5620" ($html -match 'TAMPER malware\.exe')
+Check "dossier: execution-artifacts section rendered with the spine sources" (($html -match 'Execution artifacts \(4\)') -and ($html -match 'shimcache \(executed from\)') -and ($html -match 'MALWARE\.EXE-AB12CD34'))
+Check "dossier: tamper section for the respawned instance" ($html -match 'Process tampering detected by Sysmon \(1\)')
 Check "graph: red cross-instance injection edge between tracked instances" ($html -match "stroke='#a33'")
 Check "dossier: injection hits routed to the Process events section" (($html -match 'Process events \(') -and ($html -match 'sysmon_remote_thread'))
 # v2.49 R3: uncapped DOT export
 $dot = ''
 try { $dot = Get-Content -LiteralPath (Join-Path $fDir 'focus_graph.dot') -Raw } catch { }
 Check "dot: digraph written with all 4 instances + injection edges" (($dot -match 'digraph focus \{') -and (@([regex]::Matches($dot, 'INSTANCE ')).Count -eq 4) -and ($dot -match 'INJECT<- rundll32') -and ($dot -match 'label="inject"'))
+Check "dot: TAMPER chip exported red" ($dot -match 'TAMPER malware\.exe')
 Check "dot: benign wkssvc pipe not exported" ($dot -notmatch 'wkssvc')
 
 # v2.45: per-instance detail json for the main report embed
@@ -194,6 +216,11 @@ Check "detail: benign notepad drop NOT in instance sections" (@($i4812.FileCreat
 Check "detail: CrtIn/CrtOut/Pipes persisted for instance 4812" ((@($i4812.CrtIn).Count -eq 1) -and (@($i4812.CrtOut).Count -eq 1) -and (@($i4812.Pipes).Count -eq 1))
 $im4812out = @($i4812.CrtOut)[0]
 Check "detail: CrtOut row names the child cmd target" ($im4812out -and "$($im4812out.TargetImage)" -match 'cmd\.exe' -and "$($im4812out.TargetProcessGuid)" -match '7a1f-cccc')
+# v2.50: no-Sysmon execution spine + tamper joins
+Check "exec spine: prefetch/amcache/BAM/shimcache joined onto the instance" ((@($i4812.Exec).Count -ge 4) -and (@($i4812.Exec | Where-Object { "$($_.Kind)" -eq 'prefetch (file)' }).Count -eq 1) -and (@($i4812.Exec | Where-Object { "$($_.Kind)" -eq 'amcache (execution)' }).Count -eq 1) -and (@($i4812.Exec | Where-Object { "$($_.Kind)" -eq 'BAM/DAM (last exec)' }).Count -eq 1) -and (@($i4812.Exec | Where-Object { "$($_.Kind)" -eq 'shimcache (executed from)' }).Count -eq 1))
+Check "exec spine: unrelated notepad prefetch NOT joined" (@($i4812.Exec | Where-Object { "$($_.Detail)" -match 'notepad' }).Count -eq 0)
+$im5620t = @($fDetail.Instances | Where-Object { "$($_.Pid)" -eq '5620' })[0]
+Check "tamper: EID 25 joined onto instance 5620" ($im5620t -and @($im5620t.Tamper).Count -eq 1 -and "$($im5620t.Tamper[0].ProcessGuid)" -match '7a1f-bbbb')
 # v2.47: ancestry walk-up, persistence + beacon joins, target/relative split, respawn narration
 Check "lineage: instance 4812 walks up to explorer then winlogon (2 hops)" ((@($i4812.Lineage).Count -ge 2) -and (@($i4812.Lineage) -join '|') -match 'explorer\.exe' -and (@($i4812.Lineage) -join '|') -match 'winlogon\.exe')
 Check "persistence: 7045 install + run-key autorun joined onto the instance" ((@($i4812.Persist).Count -ge 2) -and (@($i4812.Persist | ForEach-Object { $_.Kind }) -contains 'service install (7045)') -and (@($i4812.Persist | ForEach-Object { $_.Kind }) -contains 'autorun (run key)'))
@@ -261,6 +288,7 @@ Check "report: focus embed renders the activity graph inline" ($rep -match 'Acti
 Check "report: focus embed renders per-instance sections" (($rep -match 'Instance PID 4812[^<]*everything it did') -and ($rep -match 'Files dropped \(1\)') -and ($rep -match 'payload\.dll') -and ($rep -match 'anti-forensics'))
 Check "report: focus embed renders persistence + beacon + lineage + respawn" (($rep -match 'Persistence \(2\)') -and ($rep -match 'C2 beaconing \(1\)') -and ($rep -match 'Arrived via:') -and ($rep -match 'respawned after'))
 Check "report: focus embed renders injection + pipe sections" (($rep -match 'Cross-process injection INTO this instance \(1\)') -and ($rep -match 'Remote threads created in other processes \(1\)') -and ($rep -match 'Named pipes \(1\)') -and ($rep -match 'msagent_f00d'))
+Check "report: focus embed renders tamper + execution-artifact sections" (($rep -match 'Process tampering \(Sysmon EID 25\) \(1\)') -and ($rep -match 'Execution artifacts \(prefetch/amcache/BAM/shimcache\)') -and ($rep -match 'MALWARE\.EXE-AB12CD34'))
 Check "report: focus embed excludes the benign row" ($rep -notmatch 'benign\.txt')
 
 Write-Host ""

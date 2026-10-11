@@ -1,5 +1,5 @@
 ﻿<#
-Ophira v2.49  -  Windows Incident Response Triage Toolkit
+Ophira v2.50  -  Windows Incident Response Triage Toolkit
 READ-ONLY by design: never modifies the system, only reads and copies data
 into its own output folder. Intended to be handed to a system owner or run
 by a responder during early triage / threat hunting.
@@ -42,7 +42,7 @@ param(
     [System.Management.Automation.PSCredential]$Credential
 )
 
-$ScriptVersion = "2.49"
+$ScriptVersion = "2.50"
 $ErrorActionPreference = 'Continue'
 $ProgressPreference = 'SilentlyContinue'
 
@@ -195,6 +195,8 @@ $script:CsvCatMap = @{
     'sysmon_file_time' = 'logs'; 'sysmon_proc_create' = 'logs'
     'sysmon_file_create' = 'logs'; 'sysmon_file_delete' = 'logs'
     'sysmon_remote_thread' = 'logs'; 'sysmon_pipes' = 'logs'
+    'sysmon_proc_tamper' = 'logs'; 'sysmon_raw_access' = 'logs'; 'sysmon_wmi' = 'logs'
+    'shimcache' = 'artifacts'
     'rdp_localsession' = 'logs'; 'rdp_connections' = 'logs'; 'system_events' = 'logs'; 'system_new_services' = 'logs'
     'hayabusa_timeline' = 'logs'; 'hayabusa_report' = 'logs'; 'logon_summary' = 'logs'
     'ps_decoded_commands' = 'logs'; 'yara_hits' = 'logs'; 'yara_scanned' = 'logs'
@@ -704,6 +706,7 @@ function Invoke-SetupMode {
         [pscustomobject]@{ Name = 'LECmd';       Direct = 'https://download.ericzimmermanstools.com/LECmd.zip'; Zip = $true; Target = 'endpoint' }
         [pscustomobject]@{ Name = 'JLECmd';      Direct = 'https://download.ericzimmermanstools.com/JLECmd.zip'; Zip = $true; Target = 'endpoint' }
         [pscustomobject]@{ Name = 'SBECmd';      Direct = 'https://download.ericzimmermanstools.com/SBECmd.zip'; Zip = $true; Target = 'endpoint' }
+        [pscustomobject]@{ Name = 'AppCompatParser'; Direct = 'https://download.ericzimmermanstools.com/AppCompatParser.zip'; Zip = $true; Target = 'endpoint' }
         [pscustomobject]@{ Name = 'SQLECmd';     Direct = 'https://download.ericzimmermanstools.com/net9/SQLECmd.zip'; Zip = $true; Target = 'analyst' }
         [pscustomobject]@{ Name = 'RECmd';       Direct = 'https://download.ericzimmermanstools.com/RECmd.zip'; Zip = $true; Target = 'endpoint' }
         [pscustomobject]@{ Name = 'EvtxECmd';    Direct = 'https://download.ericzimmermanstools.com/EvtxECmd.zip'; Zip = $true; Target = 'analyst' }
@@ -1714,6 +1717,7 @@ function Get-ParseNeeds {
         @{ Artifact = 'shellbags.csv';          Parser = 'SBECmd';        Net = 'net4'; Input = 'live C:\Users';        Live = $true }
         @{ Artifact = 'mft_recent.csv';         Parser = 'MFTECmd';       Net = 'net4'; Input = 'live volume (admin)';  Live = $true }
         @{ Artifact = 'recentfilecache.csv';    Parser = 'AppCompatParser'; Net = 'net4'; Input = 'extras\appcompat';   Live = $false }
+        @{ Artifact = 'shimcache.csv';          Parser = 'AppCompatParser'; Net = 'net4'; Input = 'registry\SYSTEM.hiv'; Live = $false }
     )
     $rows = @()
     foreach ($c in $caps) {
@@ -2422,7 +2426,7 @@ $script:Modules = @(
         Run = {
             if (-not (Get-SysmonState)) { Write-CaseLog "    Sysmon not present - skipping" 'DarkGray'; return }
             $start = Get-LogStart
-            $ids = @(1, 2, 3, 5, 6, 7, 8, 10, 11, 12, 13, 15, 17, 18, 20, 21, 22, 23, 25)
+            $ids = @(1, 2, 3, 5, 6, 7, 8, 9, 10, 11, 12, 13, 15, 16, 17, 18, 19, 20, 21, 22, 23, 25, 26)
             $ev = Get-FilteredEvents -LogName 'Microsoft-Windows-Sysmon/Operational' -Ids $ids -Start $start
             Save-Rows -Name 'sysmon_events' -Rows $ev
             $net = @()
@@ -2489,14 +2493,15 @@ $script:Modules = @(
             # v2.27: EID 1 process create - OriginalFileName vs Image feeds the renamed-LOLBIN at-rest rule
             $pc = Get-EventDataRows -LogName 'Microsoft-Windows-Sysmon/Operational' -Id @(1) -Start $start -Cap 5000 -Fields ([ordered]@{ Image = 'Image'; OriginalFileName = 'OriginalFileName'; CommandLine = 'CommandLine'; User = 'User'; ProcessId = 'ProcessId'; ProcessGuid = 'ProcessGuid'; ParentImage = 'ParentImage'; ParentProcessGuid = 'ParentProcessGuid' })
             Save-Rows -Name 'sysmon_proc_create' -Rows $pc
-            # v2.43: EID 11 file create + EID 23 file delete w/ overwrite - the per-instance
+            # v2.43: EID 11 file create + EID 23/26 file delete (26 = FileDeleteDetected, the
+            # no-archive variant hosts emit instead of 23) - the per-instance
             # "what files did this process drop / clean up" sources (ProcessGuid joins into Focus)
             $fc = Get-EventDataRows -LogName 'Microsoft-Windows-Sysmon/Operational' -Id @(11) -Start $start -Cap 5000 -Fields ([ordered]@{ Image = 'Image'; TargetFilename = 'TargetFilename'; CreationUtcTime = 'CreationUtcTime'; ProcessId = 'ProcessId'; ProcessGuid = 'ProcessGuid'; Hashes = 'Hashes' })
             Save-Rows -Name 'sysmon_file_create' -Rows $fc
             if ($fc.Count -ge 5000) { Write-CaseLog "    EID 11 file creates: capped at 5000 - busy box or noisy filter" 'DarkGray' }
-            $fdel = Get-EventDataRows -LogName 'Microsoft-Windows-Sysmon/Operational' -Id @(23) -Start $start -Cap 2000 -Fields ([ordered]@{ Image = 'Image'; TargetFilename = 'TargetFilename'; ProcessId = 'ProcessId'; ProcessGuid = 'ProcessGuid'; Hashes = 'Hashes'; Archived = 'Archived' })
+            $fdel = Get-EventDataRows -LogName 'Microsoft-Windows-Sysmon/Operational' -Id @(23, 26) -Start $start -Cap 2000 -Fields ([ordered]@{ Image = 'Image'; TargetFilename = 'TargetFilename'; ProcessId = 'ProcessId'; ProcessGuid = 'ProcessGuid'; Hashes = 'Hashes'; Archived = 'Archived' })
             Save-Rows -Name 'sysmon_file_delete' -Rows $fdel
-            if ($fdel.Count -gt 0) { Write-CaseLog "    EID 23 file deletions: $($fdel.Count) (anti-forensics / cleanup evidence)" 'Yellow' }
+            if ($fdel.Count -gt 0) { Write-CaseLog "    EID 23/26 file deletions: $($fdel.Count) (anti-forensics / cleanup evidence)" 'Yellow' }
             # v2.48: EID 8 CreateRemoteThread - the cross-process injection edge (R28, Focus INJECT)
             $crt = Get-EventDataRows -LogName 'Microsoft-Windows-Sysmon/Operational' -Id @(8) -Start $start -Cap 2000 -Fields ([ordered]@{ SourceImage = 'SourceImage'; TargetImage = 'TargetImage'; SourceProcessGuid = 'SourceProcessGuid'; TargetProcessGuid = 'TargetProcessGuid'; NewThreadId = 'NewThreadId'; StartModule = 'StartModule'; StartFunction = 'StartFunction'; User = 'User' })
             Save-Rows -Name 'sysmon_remote_thread' -Rows $crt
@@ -2506,6 +2511,21 @@ $script:Modules = @(
             $pipe = Get-EventDataRows -LogName 'Microsoft-Windows-Sysmon/Operational' -Id @(17, 18) -Start $start -Cap 2000 -Fields ([ordered]@{ Image = 'Image'; PipeName = 'PipeName'; EventType = 'EventType'; User = 'User'; ProcessId = 'ProcessId'; ProcessGuid = 'ProcessGuid' })
             Save-Rows -Name 'sysmon_pipes' -Rows $pipe
             if ($pipe.Count -gt 0) { Write-CaseLog "    EID 17/18 named pipes: $($pipe.Count)" 'Gray' }
+            # v2.50: EID 25 ProcessTampering - Sysmon itself flags hollowing/herpaderp image swaps
+            # (near-zero FP: no heuristics involved) -> R30, Focus TAMPER chip
+            $tam = Get-EventDataRows -LogName 'Microsoft-Windows-Sysmon/Operational' -Id @(25) -Start $start -Cap 1000 -Fields ([ordered]@{ Image = 'Image'; Type = 'Type'; FileVersion = 'FileVersion'; Description = 'Description'; Product = 'Product'; User = 'User'; ProcessId = 'ProcessId'; ProcessGuid = 'ProcessGuid' })
+            Save-Rows -Name 'sysmon_proc_tamper' -Rows $tam
+            if ($tam.Count -gt 0) { Write-CaseLog "    EID 25 process tampering: $($tam.Count) (image swap / hollowing detected by Sysmon)" 'Red' }
+            # v2.50: EID 9 RawAccessRead - raw volume reads via \\.\ = credential theft from locked
+            # hives / anti-forensics -> R31
+            $raw = Get-EventDataRows -LogName 'Microsoft-Windows-Sysmon/Operational' -Id @(9) -Start $start -Cap 1000 -Fields ([ordered]@{ Image = 'Image'; Device = 'Device'; User = 'User'; ProcessId = 'ProcessId'; ProcessGuid = 'ProcessGuid' })
+            Save-Rows -Name 'sysmon_raw_access' -Rows $raw
+            if ($raw.Count -gt 0) { Write-CaseLog "    EID 9 raw volume access: $($raw.Count) (direct \\.\ reads - credential-theft / anti-forensics lead)" 'Yellow' }
+            # v2.50: EID 19/20/21 WMI filter/consumer/binding - permanent subscription persistence
+            # (the classic APT mechanism) -> R32, per-instance persistence join
+            $wmi = Get-EventDataRows -LogName 'Microsoft-Windows-Sysmon/Operational' -Id @(19, 20, 21) -Start $start -Cap 1000 -Fields ([ordered]@{ Image = 'Image'; Name = 'Name'; Query = 'Query'; Destination = 'Destination'; Consumer = 'Consumer'; Filter = 'Filter'; User = 'User'; ProcessId = 'ProcessId'; ProcessGuid = 'ProcessGuid' })
+            Save-Rows -Name 'sysmon_wmi' -Rows $wmi
+            if ($wmi.Count -gt 0) { Write-CaseLog "    EID 19/20/21 WMI subscriptions: $($wmi.Count) (permanent event persistence)" 'Yellow' }
             Export-Evtx -LogName 'Microsoft-Windows-Sysmon/Operational' -FileName 'Sysmon_Operational.evtx'
         } }
     [pscustomobject]@{ Id = '4.4'; Cat = 'LOGS'; Name = 'RDP logs (LocalSessionManager + ConnectionManager)'; Default = $true; Quick = $false;
@@ -5282,6 +5302,9 @@ tr.techrow{cursor:pointer}
                     @('Cross-process injection INTO this instance', 'CrtIn', @('Time', 'Injected by', 'Start function'), { param($x) @("$($x.Time)", "$($x.SourceImage)", "$($x.StartFunction)") }),
                     @('Remote threads created in other processes', 'CrtOut', @('Time', 'Target process', 'Start function'), { param($x) @("$($x.Time)", "$($x.TargetImage)", "$($x.StartFunction)") }),
                     @('Named pipes', 'Pipes', @('Event', 'Time', 'Pipe'), { param($x) @($(if ("$($x.EventId)" -eq '17') { 'created' } elseif ("$($x.EventId)" -eq '18') { 'connected' } else { "$($x.EventType)" }), "$($x.Time)", "$($x.PipeName)") }),
+                    @('Process tampering (Sysmon EID 25)', 'Tamper', @('Time', 'Process', 'New image info'), { param($x) @("$($x.Time)", "$($x.Image)", "type=$($x.Type) fileVersion=$($x.FileVersion)") }),
+                    @('Direct volume access', 'RawDisk', @('Time', 'Device'), { param($x) @("$($x.Time)", "$($x.Device)") }),
+                    @('Execution artifacts (prefetch/amcache/BAM/shimcache)', 'Exec', @('Time', 'Artifact', 'Detail'), { param($x) @("$($x.Time)", "$($x.Kind)", "$($x.Detail)") }),
                     @('Persistence', 'Persist', @('Time', 'Mechanism', 'Detail'), { param($x) @("$($x.Time)", "$($x.Kind)", "$($x.Detail)") }),
                     @('C2 beaconing', 'Beacon', @('Kind', 'Destination', 'Pattern'), { param($x) @("$($x.Kind)", "$($x.Target)", "$($x.Detail)") }),
                     @('Network connections', 'Net', @('Time', 'Destination', 'Process'), { param($x) @("$($x.Time)", "$($x.DestIp):$($x.DestPort)", "$($x.Image)") }),
@@ -5321,7 +5344,7 @@ tr.techrow{cursor:pointer}
         $recs.Add("Hardening: $($pb.Check) - $($pb.Detail)")
     }
     if (-not $Sysmon) {
-        $recs.Add('Deploy Sysmon with a community configuration (e.g. SwiftOnSecurity) to gain process/network/image-load telemetry needed for ATT&CK-level detection.')
+        $recs.Add('No Sysmon on this host - the conclusion is built from the execution-artifact spine (prefetch, amcache, BAM/DAM, shimcache, 4688, USN/$MFT, Defender history), and per-instance joins (network/DLL/file/registry/injection) are limited. Ophira never installs anything; if the Sysmon owner adds Sysmon with a broad community configuration, the next collection gains full process-precise telemetry.')
     }
     if (-not (Test-Path (Join-Path $RawDir 'evtx'))) {
         $recs.Add('Event logs were not exported (module 4.x skipped or access denied) - rerun elevated with the Standard preset for Sigma/ATT&CK coverage.')
@@ -5450,6 +5473,10 @@ tr.techrow{cursor:pointer}
         'sysmon_file_delete'              = 'Sysmon EID 23 file deletions - anti-forensics / cleanup evidence per process'
         'sysmon_remote_thread'            = 'Sysmon EID 8 remote threads - who injected into whom (R28 + Focus INJECT edges)'
         'sysmon_pipes'                    = 'Sysmon EID 17/18 named pipes created/connected - C2-style pipe channels (R29)'
+        'sysmon_proc_tamper'              = 'Sysmon EID 25 process tampering - the OS itself flagged hollowing/image swap (R30)'
+        'sysmon_raw_access'               = 'Sysmon EID 9 raw volume reads via \\.\ - locked-hive credential theft / anti-forensics (R31)'
+        'sysmon_wmi'                      = 'Sysmon EID 19/20/21 WMI filter/consumer/binding registrations - permanent event persistence (R32)'
+        'shimcache'                       = 'Shimcache/AppCompatCache (SYSTEM hive via AppCompatParser) - executed-from evidence that survives prefetch/amcache deletion (the no-Sysmon spine)'
         'defender_config_events'          = 'Defender 5001/5007 - real-time protection disabled / exclusion changes (tamper)'
         'security_kerberos'               = 'Kerberos events (DC: 4768/4769/4771/4776) - Kerberoasting/spray/AS-REP data source'
         'security_ds_access'              = 'Directory-service access (DC: 4662/5136) - DCSync + AD object changes'
@@ -5595,6 +5622,8 @@ function New-SuperTimeline {
     & $weave 'sysmon_file_delete' 1000 { param($r) @("$($r.Time)", 'file deleted (Sysmon 23)', (& $leaf $r.Image), (& $leaf $r.TargetFilename), 'deleted by process - anti-forensics / cleanup lead') }
     & $weave 'sysmon_remote_thread' 2000 { param($r) @("$($r.Time)", 'remote thread (Sysmon 8)', (& $leaf $r.SourceImage), (& $leaf $r.TargetImage), "$(& $leaf $r.SourceImage) injected a remote thread into $(& $leaf $r.TargetImage) - cross-process injection lead") }
     & $weave 'sysmon_pipes' 1000 { param($r) @("$($r.Time)", "pipe $(if ("$($r.EventId)" -eq '17') { 'created' } else { 'connected' }) (Sysmon $($r.EventId))", (& $leaf $r.Image), ("$($r.PipeName)"), "named pipe $($r.PipeName)") }
+    & $weave 'sysmon_proc_tamper' 1000 { param($r) @("$($r.Time)", 'process tampering (Sysmon 25)', (& $leaf $r.Image), (& $leaf $r.Image), "image swapped in memory - hollowing/herpaderp detected by Sysmon (R30)") }
+    & $weave 'sysmon_raw_access' 500 { param($r) @("$($r.Time)", 'raw volume access (Sysmon 9)', (& $leaf $r.Image), ("$($r.Device)"), "raw \\.\ read - locked-hive credential theft / anti-forensics lead (R31)") }
     # execution evidence
     $exec = Import-CaseCsv 'execution_timeline'
     if ($exec.Count -gt 0) {
@@ -6724,6 +6753,56 @@ function New-HuntFindings {
         }
     }
 
+    # ---------- R30: process image tampering (Sysmon EID 25 - hollowing / herpaderp) ----------
+    # Sysmon fires this itself on an in-memory image swap: near-zero FP, no heuristics.
+    $r30N = 0
+    foreach ($r in (Import-CaseCsv 'sysmon_proc_tamper')) {
+        $r30N++
+        & $find 'Process image tampering (hollowing)' 'high' "$($r.Image)" "Sysmon EID 25 at $($r.Time): image of $(& { param($i) try { Split-Path $i -Leaf } catch { $i } } $r.Image) (pid $($r.ProcessId)) was swapped in memory$(if ("$($r.Type)") { " (type $($r.Type))" }) - classic hollowing/herpaderp" 'T1055.012'
+        if ($r30N -ge 20) { break }
+    }
+
+    # ---------- R31: direct volume access (Sysmon EID 9 RawAccessRead) ----------
+    # Raw \\.\ reads bypass file auditing: locked-hive credential theft (SAM/NTDS) or anti-forensics.
+    $r31Seen = @{}
+    foreach ($r in (Import-CaseCsv 'sysmon_raw_access')) {
+        $img = "$($r.Image)"
+        if (-not $img) { continue }
+        $key = "$img|$($r.Device)".ToLower()
+        if ($r31Seen.ContainsKey($key)) { continue }
+        $r31Seen[$key] = $true
+        if ($r31Seen.Count -gt 20) { break }
+        if (Test-IsUserWritablePath $img) {
+            & $find 'Direct volume access (raw \\.\ read)' 'high' $img "$($r.Time): $img read $($r.Device) raw - locked-hive credential theft / anti-forensics lead" 'T1006'
+        } else {
+            & $find 'Direct volume access (raw \\.\ read)' 'medium' $img "$($r.Time): $img read $($r.Device) raw - verify expectation (backup/AV tools do this legitimately)" 'T1006'
+        }
+    }
+
+    # ---------- R32: WMI permanent event subscription (Sysmon EID 19/20/21) ----------
+    # Filter+consumer+binding registration = the classic APT persistence; deduped per name.
+    $r32Seen = @{}
+    foreach ($r in (Import-CaseCsv 'sysmon_wmi')) {
+        $nm = if ("$($r.Name)") { "$($r.Name)" } elseif ("$($r.Consumer)") { "$($r.Consumer)" } else { "$($r.Filter)" }
+        if (-not $nm) { continue }
+        $key = $nm.ToLower()
+        if ($r32Seen.ContainsKey($key)) { continue }
+        $r32Seen[$key] = $true
+        if ($r32Seen.Count -gt 20) { break }
+        $detail = "$($r.Time): WMI subscription '$nm' registered by $($r.Image)"
+        if ("$($r.Query)") { $detail += " | filter query: $($r.Query)" }
+        if ("$($r.Destination)") { $detail += " | consumer dest: $($r.Destination)" }
+        & $find 'WMI event subscription persistence' 'high' $nm "$detail - verify the consumer payload (legit software uses this rarely)" 'T1546.003'
+    }
+
+    # ---------- R33: Sysmon configuration change (EID 16 - cannot be filtered) ----------
+    # Someone retuning/disabling Sysmon mid-incident is anti-forensics; the raw CSV carries it.
+    foreach ($r in (Import-CaseCsv 'sysmon_events')) {
+        if ("$($r.Id)" -ne '16') { continue }
+        & $find 'Sysmon configuration changed' 'high' 'Sysmon' "$($r.TimeCreated): Sysmon service configuration change observed - anti-forensics tell (T1562.001); compare the copied config snapshot in raw\context with the endpoint's expectations" 'T1562.001'
+        break
+    }
+
     Save-Rows -Name 'hunt_findings' -Rows $out.ToArray()
     $hi = @($out | Where-Object { $_.Severity -eq 'high' }).Count
     if ($out.Count -gt 0) {
@@ -6976,7 +7055,7 @@ function Get-CompromiseVerdict {
     $dnsMed = @($dnsBeacons | Where-Object { "$($_.Severity)" -match '^(?i)medium$' }).Count
     $lolMal = @($lol | Where-Object { $_.Status -eq 'malicious' }).Count
     $hunt = Import-CaseCsv 'hunt_findings'
-    $huntHi = @($hunt | Where-Object { "$($_.Severity)" -eq 'high' -and "$($_.Rule)" -match 'Renamed LOLBin|side-load|Downloaded then executed|LSASS access|Office app spawned|proxy-execution|Admin-share staging|Defender (real-time|exclusion)|DCSync|Password spray|Web server spawned|Remote-access tunnel|ServiceDll tamper|authorized_keys|Svchost masquerade|Cross-process injection|C2-style named pipe' })
+    $huntHi = @($hunt | Where-Object { "$($_.Severity)" -eq 'high' -and "$($_.Rule)" -match 'Renamed LOLBin|side-load|Downloaded then executed|LSASS access|Office app spawned|proxy-execution|Admin-share staging|Defender (real-time|exclusion)|DCSync|Password spray|Web server spawned|Remote-access tunnel|ServiceDll tamper|authorized_keys|Svchost masquerade|Cross-process injection|C2-style named pipe|image tampering|Direct volume access|WMI event subscription' })
     $usnBurstN = @($usnBursts).Count
     $rExt = ((@($usnBursts) | Where-Object { "$($_.RansomExt)" } | ForEach-Object { "$($_.RansomExt)" } | Sort-Object -Unique) -join ',')
     # ponytail: COM hijacks + StartupApproved excluded from the signal (per-user COM has many legit users, e.g. Teams/OneDrive); they stay report-visible
@@ -6987,7 +7066,7 @@ function Get-CompromiseVerdict {
     Add-Signal 'C2 beaconing - highly regular callbacks' 3 $beaconHi (($beacons | Where-Object { "$($_.Severity)" -match '^(?i)high$' } | Select-Object -First 3 | ForEach-Object { "$($_.Process) -> $($_.RemoteIp):$($_.Port) every ~$($_.MedianIntervalSec)s" }) -join '; ')
     Add-Signal 'C2 DNS beaconing - highly regular domain queries' 3 $dnsHi (($dnsBeacons | Where-Object { "$($_.Severity)" -match '^(?i)high$' } | Select-Object -First 3 | ForEach-Object { "$($_.Process) -> $($_.Domain) every ~$($_.MedianIntervalSec)s" }) -join '; ')
     Add-Signal 'Known-malicious driver on disk (LOLDrivers)' 2 $lolMal (($lol | Where-Object { $_.Status -eq 'malicious' } | Select-Object -First 3 | ForEach-Object { "$($_.Name): $($_.Path)" }) -join '; ')
-    Add-Signal 'Hunt technique - renamed binary / side-load / download-exec / LSASS access / Office chain / proxy-exec / share staging / Defender tamper / DCSync / spray / webshell / tunnel / RDP hijack / SSH keys / svchost masquerade / injection / C2 pipe' 2 $huntHi.Count (($huntHi | Select-Object -First 3 | ForEach-Object { $_.Rule }) -join '; ')
+    Add-Signal 'Hunt technique - renamed binary / side-load / download-exec / LSASS access / Office chain / proxy-exec / share staging / Defender tamper / DCSync / spray / webshell / tunnel / RDP hijack / SSH keys / svchost masquerade / injection / C2 pipe / hollowing / raw volume / WMI persistence' 2 $huntHi.Count (($huntHi | Select-Object -First 3 | ForEach-Object { $_.Rule }) -join '; ')
     Add-Signal 'Ransomware-like mass file modification (USN journal)' 3 $usnBurstN ((($usnBursts | Select-Object -First 3 | ForEach-Object { "$($_.WindowStart): $($_.WriteEvents) writes / $($_.DistinctFiles) files" }) -join '; ') + $(if ($rExt) { " - RANSOM EXTENSIONS: $rExt" }))
     Add-Signal 'Uncommon persistence mechanism (IFEO/AppInit/Winlogon/netsh/LSA)' 2 $asepHotN (($asep | Where-Object { $_.Flags -match 'user-path|nondefault' -and "$($_.Category)" -notmatch 'ComHijack|StartupApproved' } | Select-Object -First 3 | ForEach-Object { "$($_.Category): $($_.Name) = $($_.Value)" }) -join '; ')
     Add-Signal 'Memory malfind indicators (injected code regions)' 2 @($memMf).Count (($memMf | Select-Object -First 3 | ForEach-Object { "$($_.Process)($($_.PID))" }) -join '; ')
@@ -7038,6 +7117,7 @@ function Get-CompromiseVerdict {
     Add-Cov 'Remote access sweep (tunnels/RA tools/SSH keys)' (Test-CaseCsv 'remote_access') 2
     Add-Cov 'Structured telemetry (4688 / Sysmon 2-13)' ((Test-CaseCsv 'security_proc_events') -or (Test-CaseCsv 'sysmon_process_access') -or (Test-CaseCsv 'sysmon_file_create')) 3
     Add-Cov 'Injection/pipe telemetry (Sysmon 8/17/18)' ((Test-CaseCsv 'sysmon_remote_thread') -or (Test-CaseCsv 'sysmon_pipes')) 2
+    Add-Cov 'Execution artifact spine (prefetch/amcache/BAM/shimcache)' ((Test-CaseCsv 'prefetch_index') -or (Test-CaseCsv 'amcache') -or (Test-CaseCsv 'bam_lastexec') -or (Test-CaseCsv 'shimcache')) 3
     Add-Cov 'Kerberos/DS telemetry (DC role)' ((Test-CaseCsv 'security_kerberos') -or (Test-CaseCsv 'security_ds_access')) 3
     Add-Cov 'Web telemetry (IIS)' (Test-CaseCsv 'iis_requests') 2
     Add-Cov 'Session attribution + process lineage' ((Test-CaseCsv 'session_activity') -or (Test-CaseCsv 'process_chains')) 2
@@ -7727,6 +7807,19 @@ function Invoke-ParseMode {
         $jlOut = Get-CaseCsvFullPath 'jumplist_parsed'
         & $runTool (& $findTool 'JLECmd*.exe') @('-d', $jlDst, '--csv', (Split-Path $jlOut -Parent), '--csvf', 'jumplist_parsed.csv') 'JLECmd: jump lists'
     }
+    # v2.50: shimcache (AppCompatCache in the collected SYSTEM hive) - "executed from" evidence
+    # that survives prefetch/amcache deletion; the no-Sysmon spine's deepest artifact
+    $sysHiv = Join-Path (Join-Path $script:RawDir 'registry') 'SYSTEM.hiv'
+    if ((Test-Path $sysHiv) -and -not (Test-CaseCsv 'shimcache')) {
+        $shOut = Get-CaseCsvFullPath 'shimcache'
+        & $runTool (& $findTool 'AppCompatParser*.exe') @('-f', $sysHiv, '--csv', (Split-Path $shOut -Parent), '--csvf', 'shimcache.csv') 'AppCompatParser: shimcache (SYSTEM hive)'
+    }
+    # RecentFileCache (raw-copied by 8.13, never parsed before v2.50)
+    $rfcSrc = Join-Path (Join-Path $script:RawDir 'extras') 'appcompat\RecentFileCache.bcf'
+    if ((Test-Path $rfcSrc) -and -not (Test-CaseCsv 'recentfilecache')) {
+        $rfcOut = Get-CaseCsvFullPath 'recentfilecache'
+        & $runTool (& $findTool 'AppCompatParser*.exe') @('-f', $rfcSrc, '--csv', (Split-Path $rfcOut -Parent), '--csvf', 'recentfilecache.csv') 'AppCompatParser: RecentFileCache'
+    }
     $brDst = Join-Path $script:RawDir 'browser'
     if ((Test-Path $brDst) -and -not (Test-CaseCsv 'browser_history')) {
         $sqlExe = & $findTool 'SQLECmd*.exe'
@@ -8083,13 +8176,20 @@ function Invoke-FocusCore {
         $leafL = ''
         try { $leafL = (Split-Path $imgL -Leaf) } catch { }
         $persistJoin = {
-            @('services', 'system_new_services', 'scheduled_tasks', 'security_task_install', 'autoruns_runkeys', 'autoruns_startup_folders') | ForEach-Object {
+            @('services', 'system_new_services', 'scheduled_tasks', 'security_task_install', 'autoruns_runkeys', 'autoruns_startup_folders', 'sysmon_wmi') | ForEach-Object {
                 $srcName = $_
                 if (-not $cache.ContainsKey($srcName)) { return }
                 foreach ($r in $cache[$srcName]) {
                     $blob = ''
                     foreach ($p2 in $r.PSObject.Properties) { $blob += "$($p2.Value) ".ToLower() }
-                    if (-not $blob.Contains($imgL) -and (-not $leafL -or -not $blob.Contains($leafL))) { continue }
+                    # v2.50: WMI subscription rows join by guid (the registering process), not by image blob
+                    $wmiRow = ($srcName -eq 'sysmon_wmi')
+                    if ($wmiRow) {
+                        $rgl = "$($r.ProcessGuid)".ToLower()
+                        if (-not $gl -or -not $rgl -or $rgl -ne $gl) {
+                            if (-not $leafL -or "$($r.Image)".ToLower() -notmatch [regex]::Escape($leafL)) { continue }
+                        }
+                    } elseif (-not $blob.Contains($imgL) -and (-not $leafL -or -not $blob.Contains($leafL))) { continue }
                     $kind = switch ($srcName) {
                         'services' { 'service (live)' }
                         'system_new_services' { 'service install (7045)' }
@@ -8097,6 +8197,7 @@ function Invoke-FocusCore {
                         'security_task_install' { 'task install (4698)' }
                         'autoruns_runkeys' { 'autorun (run key)' }
                         'autoruns_startup_folders' { 'autorun (startup folder)' }
+                        'sysmon_wmi' { 'WMI event subscription' }
                         default { $srcName }
                     }
                     $tm = ''
@@ -8120,6 +8221,33 @@ function Invoke-FocusCore {
                 }
             }
         }
+        $execJoin = {
+            # v2.50 no-Sysmon spine: prefetch/amcache/BAM/shimcache matched by image-or-leaf -
+            # "when else did this binary run" evidence that needs no ProcessGuid, so the dossier
+            # still builds a per-instance execution story on hosts without Sysmon
+            @('prefetch_index', 'prefetch_parsed', 'amcache', 'bam_lastexec', 'shimcache') | ForEach-Object {
+                $srcName = $_
+                if (-not $cache.ContainsKey($srcName)) { return }
+                foreach ($r in $cache[$srcName]) {
+                    $blob = ''
+                    foreach ($p2 in $r.PSObject.Properties) { $blob += "$($p2.Value) ".ToLower() }
+                    if (-not $blob.Contains($imgL) -and (-not $leafL -or -not $blob.Contains($leafL))) { continue }
+                    $kind = switch ($srcName) {
+                        'prefetch_index' { 'prefetch (file)' }
+                        'prefetch_parsed' { 'prefetch (parsed)' }
+                        'amcache' { 'amcache (execution)' }
+                        'bam_lastexec' { 'BAM/DAM (last exec)' }
+                        'shimcache' { 'shimcache (executed from)' }
+                        default { $srcName }
+                    }
+                    $tm = ''
+                    foreach ($pn2 in @('LastLaunch', 'LastWrite', 'Timestamp', 'LastModified', 'LastWriteTime', 'CreationTime', 'KeyTimeStamp', 'Time')) { $p3 = $r.PSObject.Properties[$pn2]; if ($p3 -and "$($p3.Value)") { $tm = "$($p3.Value)"; break } }
+                    $detail = ($r.PSObject.Properties | Where-Object { "$($_.Value)" -and "$($_.Name)" -ne 'Time' } | ForEach-Object { "$($_.Name)=$($_.Value)" }) -join ' | '
+                    if ($detail.Length -gt 300) { $detail = $detail.Substring(0, 300) + '...' }
+                    [pscustomobject]@{ Time = $tm; Kind = $kind; Source = $srcName; Detail = $detail }
+                }
+            }
+        }
         # @() wrappers: & scriptblock unrolls single-element results -> .Count must stay an int
         $det = [pscustomobject]@{
             Instance = $i
@@ -8136,8 +8264,11 @@ function Invoke-FocusCore {
             CrtIn = @(& $guidFilterCol 'sysmon_remote_thread' 'TargetProcessGuid' $gl)
             CrtOut = @(& $guidFilterCol 'sysmon_remote_thread' 'SourceProcessGuid' $gl)
             Pipes = @(& $guidFilter 'sysmon_pipes' $gl $pl)
+            Tamper = @(& $guidFilter 'sysmon_proc_tamper' $gl $pl)
+            RawDisk = @(& $guidFilter 'sysmon_raw_access' $gl $pl)
+            Exec = @(& $execJoin)
         }
-        if ($det.Children.Count -gt 0 -or $det.Net.Count -gt 0 -or $det.Dns.Count -gt 0 -or $det.Dll.Count -gt 0 -or $det.Reg.Count -gt 0 -or $det.File.Count -gt 0 -or $det.FileCreate.Count -gt 0 -or $det.FileDelete.Count -gt 0 -or $det.Persist.Count -gt 0 -or $det.Beacon.Count -gt 0 -or $det.CrtIn.Count -gt 0 -or $det.CrtOut.Count -gt 0 -or $det.Pipes.Count -gt 0) {
+        if ($det.Children.Count -gt 0 -or $det.Net.Count -gt 0 -or $det.Dns.Count -gt 0 -or $det.Dll.Count -gt 0 -or $det.Reg.Count -gt 0 -or $det.File.Count -gt 0 -or $det.FileCreate.Count -gt 0 -or $det.FileDelete.Count -gt 0 -or $det.Persist.Count -gt 0 -or $det.Beacon.Count -gt 0 -or $det.CrtIn.Count -gt 0 -or $det.CrtOut.Count -gt 0 -or $det.Pipes.Count -gt 0 -or $det.Tamper.Count -gt 0 -or $det.RawDisk.Count -gt 0 -or $det.Exec.Count -gt 0) {
             $perInst.Add($det)
         }
     }
@@ -8381,6 +8512,11 @@ function Invoke-FocusCore {
             }
             if (-not $srcInst) { continue }
             $chips = New-Object System.Collections.Generic.List[string]
+            foreach ($t5 in @($pd.Tamper | Select-Object -First 1)) {
+                $cl = ''
+                try { $cl = (Split-Path "$($t5.Image)" -Leaf) } catch { $cl = "$($t5.Image)" }
+                $chips.Add("TAMPER $(& $clip $cl 24)")
+            }
             foreach ($c2 in @($pd.CrtIn | Select-Object -First 2)) {
                 $cl = ''
                 try { $cl = (Split-Path "$($c2.SourceImage)" -Leaf) } catch { $cl = "$($c2.SourceImage)" }
@@ -8406,7 +8542,7 @@ function Invoke-FocusCore {
                 if ($n2 -ge 8) { break }
                 $nid = "a:$($pd.Instance.Pid):$n2"
                 $chipStroke = '#3a5a83'
-                if ($chip -match '^INJECT') { $chipStroke = '#a33' }
+                if ($chip -match '^(INJECT|TAMPER)') { $chipStroke = '#a33' }
                 $nodes.Add([pscustomobject]@{ Id = $nid; X = $XA; Y = $yA; W = 300; H = 24; Label = (& $clip $chip 40); Sub = ''; Fill = '#1f2a3d'; Stroke = $chipStroke })
                 $edges.Add(@{ F = $srcInst; T = $nid })
                 $yA += 30
@@ -8472,7 +8608,7 @@ function Invoke-FocusCore {
             [void]$h.AppendLine("<h2>Activity graph</h2>")
             $svg = & $buildGraph
             [void]$h.AppendLine($svg)
-            [void]$h.AppendLine("<div class='meta'>Left to right: parent processes -> the focused instances (red) -> child processes they spawned (amber) -> what each instance did (chips: INJECT<- remote threads into the instance / THREAD-> threads it created in others / PIPE / drops / network / DNS / DLL / file / registry / persistence / beacons). Red edges between instances = cross-process injection. Per-instance detail tables below the instance list. Degraded cases (no ProcessGuid) show fewer joins.</div>")
+            [void]$h.AppendLine("<div class='meta'>Left to right: parent processes -> the focused instances (red) -> child processes they spawned (amber) -> what each instance did (chips: TAMPER (Sysmon-detected hollowing) / INJECT<- remote threads into the instance / THREAD-> threads it created in others / PIPE / drops / network / DNS / DLL / file / registry / persistence / beacons). Red edges between instances = cross-process injection. Per-instance detail tables below the instance list. Degraded cases (no ProcessGuid) show fewer joins; execution artifacts (prefetch/amcache/BAM/shimcache) join on every case.</div>")
         }
         if ($groups.Count -gt 0) {
             [void]$h.AppendLine("<h2>Entity groups (path + hash keyed)</h2><table><tr><th>Name</th><th>Path</th><th>SHA256</th><th>Hits</th><th>First seen</th><th>Last seen</th></tr>")
@@ -8516,6 +8652,20 @@ function Invoke-FocusCore {
                 [void]$h.AppendLine("<h4>Child processes ($($pd.Children.Count))</h4><table><tr><th>Time</th><th>Child</th><th>PID</th><th>User</th><th>CommandLine</th></tr>")
                 foreach ($x in @($pd.Children | Select-Object -First 25)) {
                     [void]$h.AppendLine("<tr><td>$(& $esc $x.Time)</td><td class='path'>$(& $esc $x.Image)</td><td>$(& $esc $x.ProcessId)</td><td>$(& $esc $x.User)</td><td>$(& $esc $x.CommandLine)</td></tr>")
+                }
+                [void]$h.AppendLine("</table>")
+            }
+            if ($pd.Tamper.Count -gt 0) {
+                [void]$h.AppendLine("<h4>Process tampering detected by Sysmon ($($pd.Tamper.Count)) - image swap / hollowing (R30)</h4><table><tr><th>Time</th><th>Process</th><th>New image info</th></tr>")
+                foreach ($x in @($pd.Tamper | Select-Object -First 25)) {
+                    [void]$h.AppendLine("<tr><td>$(& $esc $x.Time)</td><td class='path'>$(& $esc $x.Image)</td><td>$(& $esc ("type=$($x.Type) fileVersion=$($x.FileVersion) product=$($x.Product)"))</td></tr>")
+                }
+                [void]$h.AppendLine("</table>")
+            }
+            if ($pd.RawDisk.Count -gt 0) {
+                [void]$h.AppendLine("<h4>Direct volume access ($($pd.RawDisk.Count)) - raw \\.\ reads (R31)</h4><table><tr><th>Time</th><th>Device</th></tr>")
+                foreach ($x in @($pd.RawDisk | Select-Object -First 25)) {
+                    [void]$h.AppendLine("<tr><td>$(& $esc $x.Time)</td><td class='path'>$(& $esc $x.Device)</td></tr>")
                 }
                 [void]$h.AppendLine("</table>")
             }
@@ -8604,6 +8754,13 @@ function Invoke-FocusCore {
                 }
                 [void]$h.AppendLine("</table>")
             }
+            if ($pd.Exec.Count -gt 0) {
+                [void]$h.AppendLine("<h4>Execution artifacts ($($pd.Exec.Count)) - prefetch/amcache/BAM/shimcache: when else this binary ran (the no-Sysmon spine)</h4><table><tr><th>Time</th><th>Artifact</th><th>Detail</th></tr>")
+                foreach ($x in @($pd.Exec | Select-Object -First 25)) {
+                    [void]$h.AppendLine("<tr><td>$(& $esc $x.Time)</td><td>$(& $esc $x.Kind)</td><td class='path'>$(& $esc $x.Detail)</td></tr>")
+                }
+                [void]$h.AppendLine("</table>")
+            }
         }
         if ($chain.Count -gt 0) {
             [void]$h.AppendLine("<h2>Activity chain (master timeline filtered to the entity set, oldest first)</h2><table><tr><th>Timestamp</th><th>Source</th><th>Type</th><th>Actor</th><th>Entity</th><th>Detail</th></tr>")
@@ -8616,9 +8773,9 @@ function Invoke-FocusCore {
             @{ Title = 'Detection surface'; Re = '^(yara_hits|defender_threats|flash_ioc_hits|ioc_hits_|memory_malfind|hayabusa_timeline|flash_process_scored|hunt_findings|loldrivers_hits)' },
             @{ Title = 'Network activity'; Re = '^(sysmon_network|sysmon_dns|connections|dns_cache|net_active_probes|firewall|beacon_candidates|dns_beacon_candidates)' },
             @{ Title = 'DLLs and image loads'; Re = '^(sysmon_image_load|sysmon_process_access)' },
-            @{ Title = 'Files and execution history'; Re = '^(sysmon_file_time|sysmon_file_create|sysmon_file_delete|mft_recent|usn_write_bursts|prefetch|amcache|userassist|bam_lastexec|execution_timeline|recyclebin|recentfilecache|lnk_parsed|jumplist)' },
+            @{ Title = 'Files and execution history'; Re = '^(sysmon_file_time|sysmon_file_create|sysmon_file_delete|mft_recent|usn_write_bursts|prefetch|amcache|userassist|bam_lastexec|execution_timeline|recyclebin|recentfilecache|shimcache|lnk_parsed|jumplist)' },
             @{ Title = 'Registry and persistence'; Re = '^(sysmon_registry|registry_recmd|asep_sweep|autoruns|services|scheduled_tasks|wmi_|security_task_install|startup_info)' },
-            @{ Title = 'Process events'; Re = '^(security_proc_events|sysmon_proc_create|processes|process_hashes|process_chains|entities_binaries|sysmon_events|sysmon_remote_thread|sysmon_pipes)' },
+            @{ Title = 'Process events'; Re = '^(security_proc_events|sysmon_proc_create|processes|process_hashes|process_chains|entities_binaries|sysmon_events|sysmon_remote_thread|sysmon_pipes|sysmon_proc_tamper|sysmon_raw_access|sysmon_wmi)' },
             @{ Title = 'Accounts and sessions'; Re = '^(security_auth|security_kerberos|security_ds_|session_activity|logon_sessions|saved_credentials)' },
             @{ Title = 'Other evidence'; Re = '' }
         )
@@ -8686,6 +8843,7 @@ function Invoke-FocusCore {
                 [void]$dot.AppendLine("  `"$srcId`" -> `"$cid`";")
             }
             $chipN = 0
+            foreach ($t5 in @($pd.Tamper)) { if ($chipN -ge 25) { break }; [void]$dot.AppendLine("  `"a$srcId`_$chipN`" [label=`"TAMPER $(& $dotEsc (Split-Path "$($t5.Image)" -Leaf))`", color=`"#a33`"];"); [void]$dot.AppendLine("  `"$srcId`" -> `"a$srcId`_$chipN`"" + ' [color="#a33"];'); $chipN++ }
             foreach ($c2 in @($pd.CrtIn)) { if ($chipN -ge 25) { break }; [void]$dot.AppendLine("  `"a$srcId`_$chipN`" [label=`"INJECT<- $(& $dotEsc (Split-Path "$($c2.SourceImage)" -Leaf))`", color=`"#a33`"];"); [void]$dot.AppendLine("  `"$srcId`" -> `"a$srcId`_$chipN`"" + ' [color="#a33"];'); $chipN++ }
             foreach ($c2 in @($pd.CrtOut)) { if ($chipN -ge 25) { break }; [void]$dot.AppendLine("  `"a$srcId`_$chipN`" [label=`"THREAD-> $(& $dotEsc (Split-Path "$($c2.TargetImage)" -Leaf))`"];"); [void]$dot.AppendLine("  `"$srcId`" -> `"a$srcId`_$chipN`";"); $chipN++ }
             foreach ($p2 in @($pd.Pipes)) { if ($chipN -ge 25) { break }; [void]$dot.AppendLine("  `"a$srcId`_$chipN`" [label=`"PIPE $(& $dotEsc "$($p2.PipeName)")`"];"); [void]$dot.AppendLine("  `"$srcId`" -> `"a$srcId`_$chipN`";"); $chipN++ }
@@ -8732,6 +8890,9 @@ function Invoke-FocusCore {
             CrtIn = @($_.CrtIn | Select-Object -First 25)
             CrtOut = @($_.CrtOut | Select-Object -First 25)
             Pipes = @($_.Pipes | Select-Object -First 25)
+            Tamper = @($_.Tamper | Select-Object -First 25)
+            RawDisk = @($_.RawDisk | Select-Object -First 25)
+            Exec = @($_.Exec | Select-Object -First 25)
         }
     })
     @{
@@ -8770,7 +8931,7 @@ function Invoke-FocusCore {
     if (-not ($guids.Count -gt 0)) {
         Write-Host "  note: no ProcessGuid in this case (legacy/no-Sysmon collect) - per-instance attribution is limited" -ForegroundColor DarkYellow
     }
-    if ($perInst.Count -gt 0) { Write-Host ("  per-instance detail joined for {0} instance(s): children / injection / pipes / network / DNS / DLLs / file / registry / persistence / beacons" -f $perInst.Count) -ForegroundColor Gray }
+    if ($perInst.Count -gt 0) { Write-Host ("  per-instance detail joined for {0} instance(s): children / tamper / injection / pipes / network / DNS / DLLs / file / registry / persistence / beacons / execution artifacts (no-Sysmon spine)" -f $perInst.Count) -ForegroundColor Gray }
     Write-Host ""
     Write-Host "Dossier -> focus\focus_report.html  (chain: focus\focus_chain.csv, hits: focus\focus_hits.csv)" -ForegroundColor Green
     return $true

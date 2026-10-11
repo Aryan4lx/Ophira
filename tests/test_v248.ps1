@@ -17,7 +17,7 @@ $stamp = Get-Date -Format 'HHmmss'
 # ============================================================================
 # PART 1 - static wiring
 # ============================================================================
-Check "collect: EID id list includes 17/18" ($src -match [regex]::Escape('$ids = @(1, 2, 3, 5, 6, 7, 8, 10, 11, 12, 13, 15, 17, 18, 20, 21, 22, 23, 25)'))
+Check "collect: EID id list includes 17/18" ($src -match [regex]::Escape('17, 18, 19, 20, 21, 22, 23, 25, 26)'))
 Check "collect: EID 8 parse saved as sysmon_remote_thread" (($src -match [regex]::Escape("Save-Rows -Name 'sysmon_remote_thread' -Rows")) -and ($src -match [regex]::Escape("SourceProcessGuid = 'SourceProcessGuid'; TargetProcessGuid = 'TargetProcessGuid'")))
 Check "collect: EID 17/18 parse saved as sysmon_pipes" (($src -match [regex]::Escape('-Id @(17, 18)')) -and ($src -match [regex]::Escape("Save-Rows -Name 'sysmon_pipes' -Rows")))
 Check "sortment: both new CSVs mapped to logs" (($src -match [regex]::Escape("'sysmon_remote_thread' = 'logs'")) -and ($src -match [regex]::Escape("'sysmon_pipes' = 'logs'")))
@@ -33,11 +33,11 @@ Check "config gap: hint covers EID 8/17/18" (($src -match 'remote-thread \(EID 8
 Check "focus: column-specific guid filter for EID 8 joins" (($src -match [regex]::Escape('$guidFilterCol = {')) -and ($src -match [regex]::Escape("& `$guidFilterCol 'sysmon_remote_thread' 'TargetProcessGuid' `$gl")))
 Check "focus: CrtIn/CrtOut/Pipes in the per-instance detail" ((($src -match [regex]::Escape("CrtIn = @(& `$guidFilterCol 'sysmon_remote_thread' 'TargetProcessGuid' `$gl)"))) -and ($src -match [regex]::Escape("CrtOut = @(& `$guidFilterCol 'sysmon_remote_thread' 'SourceProcessGuid' `$gl)")) -and ($src -match [regex]::Escape("Pipes = @(& `$guidFilter 'sysmon_pipes' `$gl `$pl)")))
 Check "focus: INJECT/THREAD/PIPE graph chips" (($src.Contains('"INJECT<- $(')) -and ($src.Contains('"THREAD-> $(')) -and ($src.Contains('"PIPE $(')))
-Check "focus: INJECT chips + injection edges render red" (($src -match [regex]::Escape("if (`$chip -match '^INJECT') { `$chipStroke = '#a33' }")) -and ($src -match [regex]::Escape("`$edges.Add(@{ F = `$srcInst; T = `$tn; Stroke = '#a33' })")))
+Check "focus: INJECT chips + injection edges render red" (($src -match [regex]::Escape("if (`$chip -match '^(INJECT|TAMPER)') { `$chipStroke = '#a33' }")) -and ($src -match [regex]::Escape("`$edges.Add(@{ F = `$srcInst; T = `$tn; Stroke = '#a33' })")))
 Check "focus: dossier sections for injection in/out + pipes" ((($src -match 'Cross-process injection INTO this instance')) -and ($src -match 'Remote threads this instance created in OTHER processes') -and ($src -match 'Named pipes created/connected'))
 Check "focus: detail json persists CrtIn/CrtOut/Pipes" ((($src -match [regex]::Escape('CrtIn = @($_.CrtIn | Select-Object -First 25)'))) -and ($src -match [regex]::Escape('CrtOut = @($_.CrtOut | Select-Object -First 25)')) -and ($src -match [regex]::Escape('Pipes = @($_.Pipes | Select-Object -First 25)')))
 Check "report: embed sections include injection + pipes" (($src -match [regex]::Escape("@('Cross-process injection INTO this instance', 'CrtIn'")) -and ($src -match [regex]::Escape("@('Named pipes', 'Pipes'")))
-Check "dossier: secMap routes the new sources to Process events" ($src -match [regex]::Escape('sysmon_events|sysmon_remote_thread|sysmon_pipes)'))
+Check "dossier: secMap routes the new sources to Process events" ($src -match [regex]::Escape('sysmon_events|sysmon_remote_thread|sysmon_pipes|sysmon_proc_tamper|sysmon_raw_access|sysmon_wmi)'))
 
 # canary
 Check "canary: pipe plant (canary_msagent_f00d created + connected)" (($src -match "NamedPipeServerStream\('canary_msagent_f00d'") -and ($src -match "NamedPipeClientStream\('\.', 'canary_msagent_f00d'"))

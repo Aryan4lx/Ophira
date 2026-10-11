@@ -148,7 +148,7 @@ Check "config window: end before start rejected loudly" ("$err3" -match 'after')
 # ============================================================================
 Check "A0c: EID 11 file-create parse saved" ($src -match [regex]::Escape("Save-Rows -Name 'sysmon_file_create' -Rows"))
 Check "A0c: EID 23 file-delete parse saved" ($src -match [regex]::Escape("Save-Rows -Name 'sysmon_file_delete' -Rows"))
-Check "A0c: both carry ProcessGuid for focus joins" (($src -match [regex]::Escape('-Id @(11)')) -and ($src -match [regex]::Escape('-Id @(23)')) -and ($src -match [regex]::Escape("ProcessGuid = 'ProcessGuid'; Hashes = 'Hashes'")))
+Check "A0c: both carry ProcessGuid for focus joins" (($src -match [regex]::Escape('-Id @(11)')) -and ($src -match [regex]::Escape('-Id @(23, 26)')) -and ($src -match [regex]::Escape("ProcessGuid = 'ProcessGuid'; Hashes = 'Hashes'")))
 Check "A0c: focus per-instance joins + dossier sections + DROP chips" (($src -match [regex]::Escape("FileCreate = @(& `$guidFilter 'sysmon_file_create' `$gl `$pl)")) -and ($src -match 'Files created \(') -and ($src -match 'Files deleted \(') -and ($src -match [regex]::Escape('"DROP $(& $clip')))
 Check "A0c: file create/delete woven into the master timeline" (($src -match [regex]::Escape("weave 'sysmon_file_create'")) -and ($src -match [regex]::Escape("weave 'sysmon_file_delete'")))
 Check "A0c: sortment map + evidence index cover the new CSVs" (($src -match [regex]::Escape("'sysmon_file_create' = 'logs'")) -and ($src -match [regex]::Escape("'sysmon_file_create'              = ")))
