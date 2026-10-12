@@ -1,5 +1,5 @@
 ﻿<#
-Ophira v2.53  -  Windows Incident Response Triage Toolkit
+Ophira v2.54  -  Windows Incident Response Triage Toolkit
 READ-ONLY by design: never modifies the system, only reads and copies data
 into its own output folder. Intended to be handed to a system owner or run
 by a responder during early triage / threat hunting.
@@ -45,7 +45,7 @@ param(
     [switch]$ExitVerdict
 )
 
-$ScriptVersion = "2.53"
+$ScriptVersion = "2.54"
 $ErrorActionPreference = 'Continue'
 $ProgressPreference = 'SilentlyContinue'
 
@@ -1604,41 +1604,54 @@ function Get-UserProfileList {
     return $rows
 }
 
-function ConvertTo-Rot13 {    param([string]$s)
+function ConvertTo-Rot13 {
+    # v2.54: true ROT13 - the old version only rotated lowercase, so the uppercase letters of
+    # encoded UserAssist names stayed garbled in every userassist.csv ever written
+    param([string]$s)
     ($s.ToCharArray() | ForEach-Object {
-        $c = [int]$_; $l = $c -band 0x20
-        if ((($c -bor $l) -ge 97) -and (($c -bor $l) -le 122)) {
-            [char]((($c -band 0x1f) + 12) % 26 + 1 + 96 -bor $l)
-        } else { $_ }
+        $c = [int]$_
+        if ($c -ge 65 -and $c -le 90) { [char](65 + (($c - 65 + 13) % 26)) }
+        elseif ($c -ge 97 -and $c -le 122) { [char](97 + (($c - 97 + 13) % 26)) }
+        else { $_ }
     }) -join ''
 }
 
 function Get-UserAssistRows {
+    # v2.54: enumerate the UserAssist GUID subkeys dynamically - the old hardcoded Win7-era
+    # GUID list was brace-less and never matched the real {guid} keys, so this was always empty
     $rows = @()
     try {
-        $uaGuids = @('CEBFF5CD-ACE2-4F4F-9178-9926F41749EA', 'F4E57C4B-2036-45F0-A9AB-443BCFE33D9F', 'A3D5339B-DEB5-46E8-AAB2-6C05EA7D1FA5', 'B267E3AD-A825-4F92-B35C-9FBF72F7E4D6', 'F2A1CB5A-E3AB-4A3B-9DDC-DF1D2F65C0E1')
+        $uaKind = @{
+            '{CEBFF5CD-ACE2-4F4F-9178-9926F41749EA}' = 'executable'
+            '{9E04CAB2-CC14-11DF-BB8C-A2F1DED72085}' = 'executable'
+            '{F4E57C4B-2036-45F0-A9AB-443BCFE33D9F}' = 'shortcut'
+            '{A3D53349-6E61-4557-8FC7-0028EDCEEBF6}' = 'shortcut'
+            '{F2A1CB5A-E3AB-4A3B-9DDC-DF1D2F65C0E1}' = 'muicache'
+            '{B267E3AD-A825-4F92-B35C-9FBF72F7E4D6}' = 'muicache'
+        }
         $sids = Get-ChildItem 'Registry::HKEY_USERS' -ErrorAction SilentlyContinue | Where-Object { $_.PSChildName -match '^S-1-5-21-' }
         foreach ($sid in $sids) {
             $user = $sid.PSChildName
-            foreach ($g in $uaGuids) {
-                $k = "Registry::HKEY_USERS\$user\Software\Microsoft\Windows\CurrentVersion\Explorer\UserAssist\$g\Count"
-                if (Test-Path $k) {
-                    $prop = Get-ItemProperty -Path $k -ErrorAction SilentlyContinue
-                    if ($prop) {
-                        foreach ($p in ($prop.PSObject.Properties | Where-Object { $_.Name -notmatch '^PS' })) {
-                            $name = ConvertTo-Rot13 $p.Name
-                            $count = ''; $last = ''
-                            try {
-                                $v = $p.Value
-                                if ($v -is [byte[]] -and $v.Length -ge 68) {
-                                    $count = [BitConverter]::ToInt32($v, 4)
-                                    $ft = [BitConverter]::ToInt64($v, 60)
-                                    if ($ft -gt 0) { $last = [DateTime]::FromFileTime($ft) }
-                                }
-                            } catch { }
-                            $rows += [pscustomobject]@{ User = $user; Guid = $g; Entry = $name; RunCount = $count; LastRun = $last }
+            $uaRoot = "Registry::HKEY_USERS\$user\Software\Microsoft\Windows\CurrentVersion\Explorer\UserAssist"
+            if (-not (Test-Path $uaRoot)) { continue }
+            foreach ($g in @(Get-ChildItem $uaRoot -ErrorAction SilentlyContinue)) {
+                $k = "$($g.PSPath)\Count"
+                if (-not (Test-Path $k)) { continue }
+                $kind = $uaKind[$g.PSChildName]; if (-not $kind) { $kind = 'other' }
+                $prop = Get-ItemProperty -Path $k -ErrorAction SilentlyContinue
+                if (-not $prop) { continue }
+                foreach ($p in ($prop.PSObject.Properties | Where-Object { $_.Name -notmatch '^PS' })) {
+                    $name = ConvertTo-Rot13 "$($p.Name)"
+                    $count = ''; $last = ''
+                    try {
+                        $v = $p.Value
+                        if ($v -is [byte[]] -and $v.Length -ge 68) {
+                            $count = [BitConverter]::ToInt32($v, 4)
+                            $ft = [BitConverter]::ToInt64($v, 60)
+                            if ($ft -gt 0) { $last = [DateTime]::FromFileTime($ft) }
                         }
-                    }
+                    } catch { }
+                    $rows += [pscustomobject]@{ User = $user; Guid = $g.PSChildName; Kind = $kind; Entry = $name; RunCount = $count; LastRun = $last }
                 }
             }
         }
@@ -3568,15 +3581,49 @@ public class OphiraDump {
             if (-not $tDir) { Write-CaseLog "    no tools\ - skipping" 'DarkGray'; return }
             $sbe = Get-ChildItem -Path $tDir -Recurse -Filter 'SBECmd*.exe' -ErrorAction SilentlyContinue | Select-Object -First 1
             if (-not $sbe) { Write-CaseLog "    SBECmd not in tools\ - skipping (run Setup)" 'DarkGray'; return }
-            Write-CaseLog "    SBECmd: parsing ShellBags for all user profiles..." 'Cyan'
-            $null = Invoke-NativeTool -ExePath $sbe.FullName -ToolArgs @('-d', "$env:SystemDrive\Users", '--csv', $CsvDir)
-            $f = Get-ChildItem -Path $CsvDir -Filter 'shellbags*.csv' -File -ErrorAction SilentlyContinue | Select-Object -First 1
-            if ($f) {
-                $rows = @(Import-Csv -LiteralPath $f.FullName -ErrorAction SilentlyContinue)
-                Save-Rows -Name 'shellbags' -Rows $rows
-                Remove-Item -LiteralPath $f.FullName -Force -ErrorAction SilentlyContinue
-                Write-CaseLog "    shellbags: $($rows.Count) folder-access entries -> csv\shellbags.csv" 'Gray'
-            } else { Write-CaseLog "    SBECmd produced no output (not elevated? no profiles?)" 'DarkYellow' }
+            # v2.54: parse the case's own saved hives (module 8.2) + staged live hives for uncovered
+            # users only. The old recursive `-d C:\Users` swept EVERY .DAT under user profiles - stale
+            # case copies in Temp included - and SBECmd's per-hive output names never matched the
+            # shellbags*.csv expectation, so shellbags.csv never built and raw tool outputs leaked
+            # into csv\ (showing as empty NTUSER rows in the evidence index).
+            $savedDir = Join-Path $RawDir 'registry\users'
+            $tmp = Join-Path ([IO.Path]::GetTempPath()) ("ophira_sbe_" + (Get-Date -Format 'HHmmss'))
+            New-Item -ItemType Directory -Path $tmp -Force | Out-Null
+            $runs = @()
+            $coveredUsers = New-Object 'System.Collections.Generic.HashSet[string]'
+            if (Test-Path $savedDir) {
+                $runs += $savedDir
+                foreach ($f in @(Get-ChildItem -LiteralPath $savedDir -File -ErrorAction SilentlyContinue | Where-Object { $_.Name -match '(?i)ntuser|usrclass' })) {
+                    $null = $coveredUsers.Add((($f.BaseName -replace '(?i)_(ntuser\.dat|usrclass\.dat)$', '')).ToLower())
+                }
+            }
+            $stage = Join-Path $tmp 'stage'
+            New-Item -ItemType Directory -Path $stage -Force | Out-Null
+            foreach ($p in @(Get-ChildItem -Path "$env:SystemDrive\Users\*\NTUSER.DAT", "$env:SystemDrive\Users\*\AppData\Local\Microsoft\Windows\UsrClass.dat" -Force -ErrorAction SilentlyContinue)) {
+                $u2 = $p.Directory.Name
+                if ("$($p.Name)" -match '(?i)usrclass') { try { $u2 = $p.Directory.Parent.Parent.Parent.Parent.Name } catch { } }
+                if ($coveredUsers.Contains("$u2".ToLower())) { continue }
+                try { Copy-Item -LiteralPath $p.FullName -Destination (Join-Path $stage $p.Name) -Force -ErrorAction Stop } catch { }
+            }
+            if (@(Get-ChildItem -LiteralPath $stage -File -ErrorAction SilentlyContinue).Count -gt 0) { $runs += $stage }
+            if ($runs.Count -eq 0) { Remove-Item -LiteralPath $tmp -Recurse -Force -ErrorAction SilentlyContinue; Write-CaseLog "    no user hives available (module 8.2 saves them first)" 'DarkGray'; return }
+            Write-CaseLog "    SBECmd: parsing ShellBags from $($runs.Count) hive source(s)..." 'Cyan'
+            $ri = 0
+            foreach ($r2 in $runs) {
+                $ri++
+                # per-run output dir: --dedupe always names the file Deduplicated.csv, a second
+                # run would overwrite the first run's results
+                $null = Invoke-NativeTool -ExePath $sbe.FullName -ToolArgs @('-d', $r2, '--csv', "$tmp\r$ri", '--dedupe')
+            }
+            # merge ALL outputs regardless of SBECmd's per-hive naming
+            $rows = @()
+            foreach ($o in @(Get-ChildItem -LiteralPath $tmp -Filter '*.csv' -File -Recurse -ErrorAction SilentlyContinue)) {
+                $rows += @(Import-Csv -LiteralPath $o.FullName -ErrorAction SilentlyContinue)
+            }
+            Remove-Item -LiteralPath $tmp -Recurse -Force -ErrorAction SilentlyContinue
+            Save-Rows -Name 'shellbags' -Rows $rows
+            if ($rows.Count -gt 0) { Write-CaseLog "    shellbags: $($rows.Count) folder-access entries -> csv\shellbags.csv" 'Gray' }
+            else { Write-CaseLog "    SBECmd produced no output (not elevated? no profiles?)" 'DarkYellow' }
         } }
     [pscustomobject]@{ Id = '8.9'; Cat = 'CONTEXT'; Name = 'Security posture audit (LSA, SMBv1, RDP, PS logging, UAC, Defender, BitLocker)'; Default = $true; Quick = $true;
         Run = {
@@ -5475,6 +5522,9 @@ tr.techrow{cursor:pointer}
         'bits_jobs'                       = 'BITS transfer jobs (stealth downloads)'
         'domain_info'                     = 'Domain role + logged user'
         'hayabusa_timeline'               = 'Sigma detection timeline with ATT&CK tags'
+        'hayabusa_report'                 = 'hayabusa full report copy (all levels - the timeline keeps level>=low only)'
+        'logon_summary*'                  = 'hayabusa logon summary - successful/failed logons per account (RDP reuse + spray patterns)'
+        'amcache_*'                       = 'Amcache raw sub-parse (device containers/PnP, drive binaries, driver packages, shortcuts, unassociated file entries)'
         'yara_hits'                       = 'YARA rule matches on collected binaries'
         'yara_scanned'                    = 'Which files were YARA-scanned'
         'beacon_candidates'               = 'Periodic outbound patterns (C2 beaconing)'
@@ -5487,6 +5537,7 @@ tr.techrow{cursor:pointer}
         'ioc_hits_amcache'                = 'Amcache SHA1 x IOC list hits (historical execution)'
         'prefetch_index'                  = 'Prefetch files copied (index)'
         'prefetch_parsed'                 = 'Prefetch parse: run counts + last run times'
+        'prefetch_parsed_Timeline'        = 'Prefetch parsed - timeline projection (one row per run time)'
         'userassist'                      = 'UserAssist GUI programs executed per user'
         'mft_recent'                      = 'MFT: recently created / user-path executables (both birth attributes: $Si Created + FILE_NAME CreatedFN - R22 timestamp-forgery checks)'
         'application_events'              = 'Application log: app crashes (1000/1001/1002) + MSI installs (1033/11707/11724) - crashed attacker tools'
@@ -5559,7 +5610,12 @@ tr.techrow{cursor:pointer}
             if ($first -and $first -notmatch '^#') { $rows = @(Get-Content -LiteralPath $f.FullName | Select-Object -Skip 1).Count }
         } catch { }
         $base = $f.BaseName
-        $d = if ($desc.ContainsKey($base)) { $desc[$base] } elseif ($base -match '^jumplist_parsed') { $desc['jumplist_parsed*'] } else { '' }
+        $d = if ($desc.ContainsKey($base)) { $desc[$base] } else { '' }
+        if (-not $d) {
+            # v2.54: wildcard map keys (logon_summary*, amcache_*, jumplist_parsed*...) - raw
+            # tool-output names otherwise render with an empty "what it is" cell
+            foreach ($k in $desc.Keys) { if ($k.EndsWith('*') -and $base.StartsWith($k.TrimEnd('*'))) { $d = $desc[$k]; break } }
+        }
         $rel = $f.FullName.Substring($CsvDir.Length).TrimStart('\')
         $null = $sb.AppendLine("<tr><td>csv\$(ConvertTo-HtmlEsc $rel)</td><td>$rows</td><td>$(ConvertTo-HtmlEsc $d)</td></tr>")
     }
