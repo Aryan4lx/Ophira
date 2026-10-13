@@ -293,7 +293,7 @@ Check "report: lead links into the focus correlation story" ($rep -match "full c
 Check "report: do-now block for the verdict rank" ($rep -match 'Do now:')
 Check "report: signals clickable to their sections" ($rep -match 'click a signal to jump')
 Check "report: focus embed renders the activity graph inline" ($rep -match 'Activity graph \(parents -> instances -> children -> what they did\)')
-Check "report: focus embed renders per-instance sections" (($rep -match 'Instance PID 4812[^<]*everything it did') -and ($rep -match 'Files dropped \(1\)') -and ($rep -match 'payload\.dll') -and ($rep -match 'anti-forensics'))
+Check "report: focus embed renders per-instance sections" (($rep -match 'Instance PID 4812.*?everything it did') -and ($rep -match 'Files dropped \(1\)') -and ($rep -match 'payload\.dll') -and ($rep -match 'anti-forensics'))
 Check "report: focus embed renders persistence + beacon + lineage + respawn" (($rep -match 'Persistence \(2\)') -and ($rep -match 'C2 beaconing \(1\)') -and ($rep -match 'Arrived via:') -and ($rep -match 'respawned after'))
 Check "report: focus embed renders injection + pipe sections" (($rep -match 'Cross-process injection INTO this instance \(1\)') -and ($rep -match 'Remote threads created in other processes \(1\)') -and ($rep -match 'Named pipes \(1\)') -and ($rep -match 'msagent_f00d'))
 Check "report: focus embed renders tamper + execution-artifact sections" (($rep -match 'Process tampering \(Sysmon EID 25\) \(1\)') -and ($rep -match 'Execution artifacts \(prefetch/amcache/BAM/shimcache\)') -and ($rep -match 'MALWARE\.EXE-AB12CD34'))

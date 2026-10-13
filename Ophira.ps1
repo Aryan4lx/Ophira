@@ -1,5 +1,5 @@
 ﻿<#
-Ophira v2.55  -  Windows Incident Response Triage Toolkit
+Ophira v2.56  -  Windows Incident Response Triage Toolkit
 READ-ONLY by design: never modifies the system, only reads and copies data
 into its own output folder. Intended to be handed to a system owner or run
 by a responder during early triage / threat hunting.
@@ -45,7 +45,7 @@ param(
     [switch]$ExitVerdict
 )
 
-$ScriptVersion = "2.55"
+$ScriptVersion = "2.56"
 $ErrorActionPreference = 'Continue'
 $ProgressPreference = 'SilentlyContinue'
 
@@ -4551,6 +4551,41 @@ function New-VtLink {
     return $lbl
 }
 
+function Get-SectionAnchorForSource {
+    # v2.56: maps an artifact/source name to the report section that shows its evidence,
+    # so entity cards and evidence rows can link "this row came from X" straight to X.
+    param([string]$Source)
+    switch -Regex ("$Source") {
+        '^(hayabusa|sigma)'                            { 'sigma'; break }
+        '^yara'                                        { 'yara'; break }
+        '^(beacon_candidates|dns_beacon_candidates)'   { 'beacons'; break }
+        '^(hunt_findings)'                             { 'hunt'; break }
+        '^(ioc_hits|flash_ioc_hits)'                   { 'ioc'; break }
+        '^(flash_process_scored|processes|process_hashes|sysmon_proc_create|sysmon_proc_tamper)' { 'processes'; break }
+        '^(security_auth|bruteforce|rdp_|logon)'       { 'logons'; break }
+        '^(autoruns|asep|services|scheduled_tasks|wmi_|sysmon_wmi|registry)' { 'persistence'; break }
+        '^(mft_recent|usn_write_bursts|prefetch|shellbags|sysmon_file)' { 'filesystem'; break }
+        '^(flash_public_connections|connections|sysmon_network|srum_|net_)' { 'network'; break }
+        '^(sysmon_dns|dns_)'                           { 'beacons'; break }
+        '^(loldrivers|drivers)'                        { 'drivers'; break }
+        '^(supertimeline|execution_timeline|shimcache|amcache|bam|userassist|recentfilecache)' { 'timeline'; break }
+        '^(entities_|memory_)'                         { 'snapshot'; break }
+        default { '' }
+    }
+}
+
+function ConvertTo-CaseFileLink {
+    # v2.56: render a case file path as a clickable file:// link (falls back to plain
+    # text when the file does not exist - a report may be copied off the analyst box).
+    param([string]$Path, [string]$Text = '')
+    $txt = if ($Text) { $Text } else { $Path }
+    if (-not "$Path" -or -not (Test-Path -LiteralPath $Path)) { return (ConvertTo-HtmlEsc $txt) }
+    $href = ''
+    try { $href = ([Uri]"$Path").AbsoluteUri } catch { }
+    if (-not $href) { return (ConvertTo-HtmlEsc $txt) }
+    return "<a href='$href'>$(ConvertTo-HtmlEsc $txt)</a>"
+}
+
 function Get-LvlRank {
     # Top-level (was nested in New-HtmlReport): also used by New-SigmaRuleLogs and fleet reporting.
     param([string]$l)
@@ -5325,11 +5360,22 @@ tr.techrow{cursor:pointer}
     # ---------- network ----------
     $null = $sb.AppendLine("<a name='network'></a><h2>Public connections (live)</h2>")
     if ($pubConns.Count -gt 0) {
-        $null = $sb.AppendLine("<table><tr><th>Remote</th><th>Provider</th><th>State</th><th>PID</th><th>Process</th><th></th></tr>")
-        foreach ($c in ($pubConns | Select-Object -First 25)) {
+        # v2.56: one row per destination with connection count + every talking process
+        $entLeaf = @{}
+        foreach ($eb3 in $entB) { if ("$($eb3.Path)") { $entLeaf[(Split-Path "$($eb3.Path)" -Leaf).ToLower()] = $true } }
+        $null = $sb.AppendLine("<table><tr><th>Remote</th><th>Provider</th><th>Conns</th><th>Talking processes</th><th></th></tr>")
+        foreach ($cg in ($pubConns | Group-Object RemoteAddress, RemotePort | Sort-Object Count -Descending | Select-Object -First 25)) {
+            $c = $cg.Group[0]
             $prov = Get-IpCloudClass "$($c.RemoteAddress)"
             if (-not $prov) { $prov = 'non-cloud' }
-            $null = $sb.AppendLine("<tr><td>$(ConvertTo-HtmlEsc $c.RemoteAddress):$(ConvertTo-HtmlEsc $c.RemotePort)</td><td>$(ConvertTo-HtmlEsc $prov)</td><td>$(ConvertTo-HtmlEsc $c.State)</td><td>$(ConvertTo-HtmlEsc $c.PID)</td><td class='path'>$(ConvertTo-HtmlEsc $c.ProcessPath)</td><td>$(New-VtLink $c.RemoteAddress)</td></tr>")
+            $talkers = @($cg.Group | ForEach-Object { $leaf = if ("$($_.ProcessPath)") { Split-Path "$($_.ProcessPath)" -Leaf } else { "PID $($_.PID)" }; [pscustomobject]@{ Leaf = $leaf; Pid = "$($_.PID)" } } | Sort-Object Leaf -Unique)
+            $talkerCells = @($talkers | ForEach-Object {
+                $t = "$(ConvertTo-HtmlEsc $_.Leaf)"
+                if ($entLeaf.ContainsKey("$($_.Leaf)".ToLower())) { $t = "<a href='#entities'>$t</a>" }
+                if ("$($_.Pid)") { $t += " (PID $($_.Pid))" }
+                $t
+            })
+            $null = $sb.AppendLine("<tr><td>$(ConvertTo-HtmlEsc $c.RemoteAddress):$(ConvertTo-HtmlEsc $c.RemotePort)</td><td>$(ConvertTo-HtmlEsc $prov)</td><td><b>$($cg.Count)</b></td><td>$($talkerCells -join ', ')</td><td>$(New-VtLink $c.RemoteAddress)</td></tr>")
         }
         $null = $sb.AppendLine("</table>")
     } else {
@@ -5376,8 +5422,14 @@ tr.techrow{cursor:pointer}
     # ---------- connections: correlated entities ----------
     $null = $sb.AppendLine("<a name='entities'></a><h2>Connections - correlated entities</h2>")
     $null = $sb.AppendLine("<div class='meta'>Each entity below joins evidence from multiple independent sources (processes, execution history, persistence, network, SRUM usage, YARA, Sigma...) into one story. More categories touching one binary = stronger signal. Full data: csv\entities_binaries.csv / entities_accounts.csv / entities_remotes.csv</div>")
-    $entTop = @($entB | Where-Object { [int]"$($_.CatCount)" -ge 2 } | Select-Object -First 12)
+    $entAll = @($entB | Where-Object { [int]"$($_.CatCount)" -ge 2 } | Sort-Object { [int]"$($_.CatCount)" } -Descending)
+    $entTop = @($entAll | Select-Object -First 12)
     if ($entTop.Count -gt 0) {
+        if ($entAll.Count -gt $entTop.Count) {
+            $ebLbl = "csv\$(Get-CaseCsvPath 'entities_binaries')"
+            $ebLink = ConvertTo-CaseFileLink (Join-Path $CsvDir (Get-CaseCsvPath 'entities_binaries')) $ebLbl
+            $null = $sb.AppendLine("<div class='meta'>Showing the top $($entTop.Count) of <b>$($entAll.Count)</b> multi-source binaries - full list: $ebLink</div>")
+        }
         # master-timeline context for the top cards: rows within +/-15 min of the entity's first seen
         $tlPre = @()
         try {
@@ -5389,11 +5441,24 @@ tr.techrow{cursor:pointer}
             $null = $sb.AppendLine("<details><summary><b>$(ConvertTo-HtmlEsc $e.Name)</b> - <span class='high'>$($e.CatCount) evidence categories</span>$vTxt</summary>")
             $null = $sb.AppendLine("<table><tr><th>Path</th><th>First seen</th><th>Last seen</th><th>Signer</th><th>Hashes</th></tr>")
             $null = $sb.AppendLine("<tr><td class='path'>$(ConvertTo-HtmlEsc $e.Path)</td><td>$(ConvertTo-HtmlEsc $e.FirstSeen)</td><td>$(ConvertTo-HtmlEsc $e.LastSeen)</td><td>$(ConvertTo-HtmlEsc $e.Signer)</td><td class='path'>$(ConvertTo-HtmlEsc $e.Hashes)</td></tr></table>")
+            # v2.56: "appears in" chips - each category links to the section carrying its evidence
+            $entSrcs = @(("$($e.Evidence)" -split ' \| ') | ForEach-Object { ("$_" -split ': ', 2)[0] } | Sort-Object -Unique)
+            if ($entSrcs.Count -gt 0) {
+                $null = $sb.AppendLine("<div style='margin:4px 0'>appears in:")
+                foreach ($src2 in $entSrcs) {
+                    $anc2 = Get-SectionAnchorForSource $src2
+                    if ($anc2) { $null = $sb.AppendLine("<a href='#$anc2'><span class='chip'>$(ConvertTo-HtmlEsc $src2)</span></a>") }
+                    else { $null = $sb.AppendLine("<span class='chip'>$(ConvertTo-HtmlEsc $src2)</span>") }
+                }
+                $null = $sb.AppendLine("</div>")
+            }
             if ("$($e.Bytes)") { $null = $sb.AppendLine("<div class='meta'>SRUM network usage history: $(ConvertTo-HtmlEsc $e.Bytes)</div>") }
             $null = $sb.AppendLine("<table><tr><th>Source</th><th>Detail</th></tr>")
             foreach ($ev in (("$($e.Evidence)" -split ' \| ') | Select-Object -First 14)) {
                 $parts = "$ev" -split ': ', 2
-                $null = $sb.AppendLine("<tr><td><b>$(ConvertTo-HtmlEsc $parts[0])</b></td><td class='path'>$(ConvertTo-HtmlEsc ($parts[1..($parts.Length-1)] -join ': '))</td></tr>")
+                $srcAnc = Get-SectionAnchorForSource $parts[0]
+                $srcCell = if ($srcAnc) { "<a href='#$srcAnc'><b>$(ConvertTo-HtmlEsc $parts[0])</b></a>" } else { "<b>$(ConvertTo-HtmlEsc $parts[0])</b>" }
+                $null = $sb.AppendLine("<tr><td>$srcCell</td><td class='path'>$(ConvertTo-HtmlEsc ($parts[1..($parts.Length-1)] -join ': '))</td></tr>")
             }
             $null = $sb.AppendLine("</table>")
             # +/-15 min context window around first seen, pulled from the master timeline
@@ -5403,7 +5468,9 @@ tr.techrow{cursor:pointer}
                 $lo = $fs.AddMinutes(-30); $hi = $fs.AddMinutes(30)
                 $ctx = @($tlPre | Where-Object { $_.T -ge $lo -and $_.T -le $hi } | Select-Object -First 15)
                 if ($ctx.Count -gt 0) {
-                    $null = $sb.AppendLine("<div class='meta'><b>Context: everything else happening &plusmn;30 min around first seen $($fs.ToString('yyyy-MM-dd HH:mm:ss'))</b> (full window: csv\$(Get-CaseCsvPath 'supertimeline') - build a per-entity dossier with <b>-Mode Focus -ProcessName $($e.Name)</b>)</div>")
+                    $stLbl = "csv\$(Get-CaseCsvPath 'supertimeline')"
+                    $stLink = ConvertTo-CaseFileLink (Join-Path $CsvDir (Get-CaseCsvPath 'supertimeline')) $stLbl
+                    $null = $sb.AppendLine("<div class='meta'><b>Context: everything else happening &plusmn;30 min around first seen $($fs.ToString('yyyy-MM-dd HH:mm:ss'))</b> (full window: $stLink - build a per-entity dossier with <b>-Mode Focus -ProcessName $($e.Name)</b>)</div>")
                     $null = $sb.AppendLine("<table><tr><th>Time</th><th>Type</th><th>Actor</th><th>Detail</th></tr>")
                     foreach ($c2 in $ctx) {
                         $r2 = $c2.Row
@@ -5577,7 +5644,15 @@ tr.techrow{cursor:pointer}
             try { $fInst = @(Import-Csv -LiteralPath (Join-Path $focusDirP 'focus_instances.csv') -ErrorAction Stop) } catch { }
             $null = $sb.AppendLine("<a name='focus'></a><h2>Focus dossier - $(ConvertTo-HtmlEsc $ft.Indicator)</h2>")
             $degr = if ($ft.Degraded) { " <span class='med'>instance attribution degraded - no ProcessGuid captured in this case</span>" } else { '' }
-            $null = $sb.AppendLine("<div class='meta'>Focused on '<b>$(ConvertTo-HtmlEsc $ft.Indicator)</b>' ($($ft.Rounds) expansion round(s), $($ft.HitCount) evidence row(s), $($ft.InstanceCount) instance(s))$degr. Full dossier: <b>focus\focus_report.html</b> - activity chain: focus\focus_chain.csv</div>")
+            $null = $sb.AppendLine("<div class='meta'>Focused on '<b>$(ConvertTo-HtmlEsc $ft.Indicator)</b>' ($($ft.Rounds) expansion round(s), $($ft.HitCount) evidence row(s), $($ft.InstanceCount) instance(s))$degr. Full dossier: $(ConvertTo-CaseFileLink (Join-Path $focusDirP 'focus_report.html') 'focus\focus_report.html') - activity chain: $(ConvertTo-CaseFileLink (Join-Path $focusDirP 'focus_chain.csv') 'focus\focus_chain.csv')</div>")
+            # v2.56: the dossier's detection-surface banner travels in focus_terms.json - same verdict here as there
+            if ("$($ft.VerdictHint)") {
+                $fvCls = switch ("$($ft.VerdictHintCls)") { 'crit' { 'lead lead-crit' } 'med' { 'lead lead-med' } default { 'lead' } }
+                $null = $sb.AppendLine("<div class='$fvCls' style='padding:6px 12px'><b>$(ConvertTo-HtmlEsc $ft.VerdictHint)</b> - $(ConvertTo-HtmlEsc $ft.VerdictHintTxt)</div>")
+            }
+            if (@($ft.Masquerade).Count -gt 0) {
+                $null = $sb.AppendLine("<div class='lead lead-med' style='padding:6px 12px'><b>MASQUERADE WARNING:</b> the name appears at multiple paths - $(ConvertTo-HtmlEsc (@($ft.Masquerade) -join ', ')). Compare the entity groups below; only one of them is probably the real OS binary.</div>")
+            }
             if (@($ft.Paths).Count -gt 0) {
                 $null = $sb.AppendLine("<h3>Entity groups (path + hash keyed - same-name binaries at different paths are separate groups)</h3><table><tr><th>Path</th><th>SHA256</th><th>Hits</th><th>First seen</th><th>Last seen</th></tr>")
                 foreach ($p in @($ft.Paths | Select-Object -First 20)) {
@@ -5589,18 +5664,30 @@ tr.techrow{cursor:pointer}
                 $null = $sb.AppendLine("</table>")
             }
             if ($fInst.Count -gt 0) {
+                # v2.56: instances with no captured parent get one from the 4688 process_chains rebuild
+                $chainParent = @{}
+                foreach ($ch in @(Import-CaseCsv 'process_chains')) {
+                    if ("$($ch.Child)" -and "$($ch.Parent)") { $chainParent[(Split-Path "$($ch.Child)" -Leaf).ToLower()] = "$($ch.Parent)" }
+                }
                 $null = $sb.AppendLine("<h3>Instances</h3><table><tr><th>PID</th><th>ProcessGuid</th><th>Started</th><th>Image</th><th>Parent</th><th>User</th></tr>")
                 foreach ($i in @($fInst | Select-Object -First 25)) {
-                    $null = $sb.AppendLine("<tr><td>$(ConvertTo-HtmlEsc $i.Pid)</td><td class='path'>$(ConvertTo-HtmlEsc $i.Guid)</td><td>$(ConvertTo-HtmlEsc $i.Started)</td><td class='path'>$(ConvertTo-HtmlEsc $i.Image)</td><td>$(ConvertTo-HtmlEsc $i.Parent)</td><td>$(ConvertTo-HtmlEsc $i.User)</td></tr>")
+                    $par = "$($i.Parent)"
+                    if (-not $par -and $chainParent.ContainsKey((Split-Path "$($i.Image)" -Leaf).ToLower())) { $par = $chainParent[(Split-Path "$($i.Image)" -Leaf).ToLower()] }
+                    $null = $sb.AppendLine("<tr><td>$(ConvertTo-HtmlEsc $i.Pid)</td><td class='path'>$(ConvertTo-HtmlEsc $i.Guid)</td><td>$(ConvertTo-HtmlEsc $i.Started)</td><td class='path'>$(ConvertTo-HtmlEsc $i.Image)</td><td class='path'>$(ConvertTo-HtmlEsc $par)</td><td>$(ConvertTo-HtmlEsc $i.User)</td></tr>")
                 }
                 $null = $sb.AppendLine("</table><div class='meta'>Multiple instances of one name group per path+hash; a same-name binary at another path would appear as its own group (masquerade split).</div>")
             }
             if ($fHits.Count -gt 0) {
-                $null = $sb.AppendLine("<h3>Evidence by artifact</h3><table><tr><th>Artifact</th><th>Rows</th></tr>")
-                foreach ($g in ($fHits | Group-Object Source | Sort-Object Count -Descending | Select-Object -First 25)) {
-                    $null = $sb.AppendLine("<tr><td>$(ConvertTo-HtmlEsc $g.Name)</td><td>$($g.Count)</td></tr>")
+                # v2.56: aggregate table collapsed by default (it is the summary, the story is below), cap 30 + of N
+                $fGroups = @($fHits | Group-Object Source | Sort-Object Count -Descending)
+                $null = $sb.AppendLine("<details><summary><b>Evidence by artifact</b> - $($fGroups.Count) source(s)</summary><table><tr><th>Artifact</th><th>Rows</th></tr>")
+                foreach ($g in ($fGroups | Select-Object -First 30)) {
+                    $gAnc = Get-SectionAnchorForSource $g.Name
+                    $gName = if ($gAnc) { "<a href='#$gAnc'>$(ConvertTo-HtmlEsc $g.Name)</a>" } else { "$(ConvertTo-HtmlEsc $g.Name)" }
+                    $null = $sb.AppendLine("<tr><td>$gName</td><td>$($g.Count)</td></tr>")
                 }
-                $null = $sb.AppendLine("</table>")
+                if ($fGroups.Count -gt 30) { $null = $sb.AppendLine("<tr><td colspan='2' class='meta'>...and $($fGroups.Count - 30) more source(s)</td></tr>") }
+                $null = $sb.AppendLine("</table></details>")
             }
             # v2.45: the full correlation story embedded - activity graph + per-instance joins
             # (from focus_instances_detail.json, written by the focus engine core)
@@ -5620,7 +5707,8 @@ tr.techrow{cursor:pointer}
                 $hdr2 = "Instance PID $($pd2.Pid)"
                 if ("$($pd2.Guid)") { $hdr2 += " - $($pd2.Guid)" }
                 if ("$($pd2.User)") { $hdr2 += " ($($pd2.User))" }
-                $null = $sb.AppendLine("<h3>$(ConvertTo-HtmlEsc $hdr2) - everything it did</h3>")
+                # v2.56: each instance collapsed - the section lists every instance without burying the page
+                $null = $sb.AppendLine("<details><summary><b>$(ConvertTo-HtmlEsc $hdr2)</b> - everything it did</summary>")
                 if ("$($pd2.Respawn)") { $null = $sb.AppendLine("<div class='lead lead-med' style='padding:6px 12px'><b>$(ConvertTo-HtmlEsc $pd2.Respawn)</b></div>") }
                 if (@($pd2.Lineage).Count -gt 1) { $null = $sb.AppendLine("<div class='meta'>Arrived via: $(ConvertTo-HtmlEsc (@($pd2.Lineage) -join ' <- '))</div>") }
                 foreach ($secDef in @(
@@ -5644,12 +5732,14 @@ tr.techrow{cursor:pointer}
                     $rows2 = @($pd2.($secDef[1]))
                     if ($rows2.Count -eq 0) { continue }
                     $null = $sb.AppendLine("<h4>$($secDef[0]) ($($rows2.Count))</h4><table><tr>$(@($secDef[2] | ForEach-Object { "<th>$_</th>" }) -join '')</tr>")
-                    foreach ($x2 in @($rows2 | Select-Object -First 10)) {
+                    foreach ($x2 in @($rows2 | Select-Object -First 25)) {
                         $cells = & $secDef[3] $x2
                         $null = $sb.AppendLine("<tr>$(@($cells | ForEach-Object { "<td class='path'>$(ConvertTo-HtmlEsc $_)</td>" }) -join '')</tr>")
                     }
+                    if ($rows2.Count -gt 25) { $null = $sb.AppendLine("<tr><td colspan='$($secDef[2].Count)' class='meta'>showing 25 of $($rows2.Count) - full table: $(ConvertTo-CaseFileLink (Join-Path $focusDirP 'focus_report.html') 'focus_report.html')</td></tr>") }
                     $null = $sb.AppendLine("</table>")
                 }
+                $null = $sb.AppendLine("</details>")
             }
         }
     }
@@ -5846,10 +5936,22 @@ tr.techrow{cursor:pointer}
             foreach ($k in $desc.Keys) { if ($k.EndsWith('*') -and $base.StartsWith($k.TrimEnd('*'))) { $d = $desc[$k]; break } }
         }
         $rel = $f.FullName.Substring($CsvDir.Length).TrimStart('\')
-        $null = $sb.AppendLine("<tr><td>csv\$(ConvertTo-HtmlEsc $rel)</td><td>$rows</td><td>$(ConvertTo-HtmlEsc $d)</td></tr>")
+        $evLbl = "csv\$rel"
+        $null = $sb.AppendLine("<tr><td>$(ConvertTo-CaseFileLink $f.FullName $evLbl)</td><td>$rows</td><td>$(ConvertTo-HtmlEsc $d)</td></tr>")
     }
     $null = $sb.AppendLine("</table>")
-    $null = $sb.AppendLine("<div class='meta'>Also in the case: <b>supertimeline.csv</b> (MASTER chronology - every artifact, filter by time), <b>csv\evtx_ecmd\</b> (full event-log CSVs for deep-dives, when EvtxECmd ran in Parse mode), <b>siem_export.ndjson</b> (Splunk/Elastic-ready records), <b>case_draft.txt</b> (auto-written executive draft - edit into your report), <b>verdict.json</b>, <b>attack_layer.json</b> (MITRE ATT&amp;CK Navigator layer - load at navigator.mitre.org), <b>case.json</b> (run metadata + module timings), raw evidence under <b>raw\</b> (evtx, registry hives, prefetch, recent/jumplists, browser DBs, firewall log, RDP bitmap cache tiles in <b>raw\rdp_cache</b> - reconstruct what inbound RDP sessions displayed with RdpCacheStudio), collection.log</div>")
+    $caseRoot = Split-Path -Parent $CsvDir
+    $alsoIn = @()
+    $alsoIn += "$(ConvertTo-CaseFileLink (Join-Path $caseRoot 'supertimeline.csv') 'supertimeline.csv') (MASTER chronology - every artifact, filter by time)"
+    $alsoIn += "$(ConvertTo-CaseFileLink (Join-Path $caseRoot 'csv\evtx_ecmd') 'csv\evtx_ecmd\') (full event-log CSVs for deep-dives, when EvtxECmd ran in Parse mode)"
+    $alsoIn += "$(ConvertTo-CaseFileLink (Join-Path $caseRoot 'siem_export.ndjson') 'siem_export.ndjson') (Splunk/Elastic-ready records)"
+    $alsoIn += "$(ConvertTo-CaseFileLink (Join-Path $caseRoot 'case_draft.txt') 'case_draft.txt') (auto-written executive draft - edit into your report)"
+    $alsoIn += "$(ConvertTo-CaseFileLink (Join-Path $caseRoot 'verdict.json') 'verdict.json')"
+    $alsoIn += "$(ConvertTo-CaseFileLink (Join-Path $caseRoot 'attack_layer.json') 'attack_layer.json') (MITRE ATT&amp;CK Navigator layer - load at navigator.mitre.org)"
+    $alsoIn += "$(ConvertTo-CaseFileLink (Join-Path $caseRoot 'case.json') 'case.json') (run metadata + module timings)"
+    $alsoIn += "$(ConvertTo-CaseFileLink (Join-Path $caseRoot 'raw') 'raw\') (evtx, registry hives, prefetch, recent/jumplists, browser DBs, firewall log, RDP bitmap cache tiles in raw\rdp_cache - reconstruct what inbound RDP sessions displayed with RdpCacheStudio)"
+    $alsoIn += "$(ConvertTo-CaseFileLink (Join-Path $caseRoot 'collection.log') 'collection.log')"
+    $null = $sb.AppendLine("<div class='meta'>Also in the case: $($alsoIn -join ', ')</div>")
 
     # shared client-side helpers: click-to-copy / double-click-expand + per-rule Sigma browsers
     $ruleJsText = '{' + ($ruleJs -join ',') + '}'
@@ -9148,6 +9250,17 @@ function Invoke-FocusCore {
     }
 
     # ---- write outputs ----------------------------------------------------
+    # v2.56: detection-surface hint computed once here - rides focus_terms.json so the
+    # main-report embed shows the same CORROBORATED/SUSPICIOUS/REVIEW banner as the dossier
+    $hint = 'REVIEW'; $hintCls = 'info'; $hintTxt = 'No scanner/detection sources corroborated this entity in this case - review the evidence manually (absence of detections is not absence of malware).'
+    if ($hits.Count -gt 0) {
+        $detSrcs = '^(yara_hits|defender_threats|flash_ioc_hits|ioc_hits_|memory_malfind)'
+        $sigSrcs = '^(beacon_candidates|dns_beacon_candidates|hunt_findings|hayabusa_timeline|flash_process_scored|loldrivers_hits)'
+        $detHits = @($hits | Where-Object { "$($_.Source)" -match $detSrcs })
+        $sigHits = @($hits | Where-Object { "$($_.Source)" -match $sigSrcs })
+        if ($detHits.Count -gt 0) { $hint = 'CORROBORATED'; $hintCls = 'crit'; $hintTxt = "Detection sources flagged this entity ($($detHits.Count) row(s)): YARA/Defender/IOC/malfind. Treat as malicious until proven otherwise." }
+        elseif ($sigHits.Count -gt 0) { $hint = 'SUSPICIOUS'; $hintCls = 'med'; $hintTxt = "Sigma/hunt/beacon sources light up around this entity ($($sigHits.Count) row(s)). Strong investigation candidate." }
+    }
     $hits.ToArray() | Export-Csv -LiteralPath (Join-Path $focusDir 'focus_hits.csv') -NoTypeInformation -Encoding UTF8
     $chain.ToArray() | Export-Csv -LiteralPath (Join-Path $focusDir 'focus_chain.csv') -NoTypeInformation -Encoding UTF8
     $instances.ToArray() | Export-Csv -LiteralPath (Join-Path $focusDir 'focus_instances.csv') -NoTypeInformation -Encoding UTF8
@@ -9168,6 +9281,10 @@ function Invoke-FocusCore {
         InstanceCount = $instances.Count
         CorrNotes = $corrNotes.ToArray()
         Degraded = (-not ($guids.Count -gt 0))
+        VerdictHint = $hint
+        VerdictHintCls = $hintCls
+        VerdictHintTxt = $hintTxt
+        Masquerade = @($masq)
     } | ConvertTo-Json -Depth 5 | Set-Content -LiteralPath (Join-Path $focusDir 'focus_terms.json') -Encoding UTF8
 
     # ---- standalone dossier ------------------------------------------------
@@ -9304,13 +9421,7 @@ function Invoke-FocusCore {
     }
     $svg = ''
     if ($hits.Count -gt 0) {
-        $detSrcs = '^(yara_hits|defender_threats|flash_ioc_hits|ioc_hits_|memory_malfind)'
-        $sigSrcs = '^(beacon_candidates|dns_beacon_candidates|hunt_findings|hayabusa_timeline|flash_process_scored|loldrivers_hits)'
-        $detHits = @($hits | Where-Object { "$($_.Source)" -match $detSrcs })
-        $sigHits = @($hits | Where-Object { "$($_.Source)" -match $sigSrcs })
-        $hint = 'REVIEW'; $hintCls = 'info'; $hintTxt = 'No scanner/detection sources corroborated this entity in this case - review the evidence manually (absence of detections is not absence of malware).'
-        if ($detHits.Count -gt 0) { $hint = 'CORROBORATED'; $hintCls = 'crit'; $hintTxt = "Detection sources flagged this entity ($($detHits.Count) row(s)): YARA/Defender/IOC/malfind. Treat as malicious until proven otherwise." }
-        elseif ($sigHits.Count -gt 0) { $hint = 'SUSPICIOUS'; $hintCls = 'med'; $hintTxt = "Sigma/hunt/beacon sources light up around this entity ($($sigHits.Count) row(s)). Strong investigation candidate." }
+        # v2.56: $hint/$hintCls/$hintTxt computed once before the JSON write - reused here
         $h = New-Object System.Text.StringBuilder
         [void]$h.AppendLine("<!DOCTYPE html><html><head><meta charset='utf-8'><title>Ophira focus - $Indicator</title><style>body{background:#141821;color:#cdd3dc;font:13px/1.45 'Segoe UI',sans-serif;margin:20px}h1{color:#eee;font-size:20px}h2{color:#7ab;font-size:15px;border-bottom:1px solid #2a3040;padding-bottom:4px;margin-top:26px}h3{color:#9bd;font-size:13px;margin-top:18px}table{border-collapse:collapse;margin:8px 0;width:100%}th,td{border:1px solid #2a3040;padding:4px 8px;text-align:left;vertical-align:top}th{background:#1d2330;color:#9ab}.path{font-family:Consolas,monospace;font-size:12px;word-break:break-all}td{word-break:break-word}.banner{padding:12px 16px;border-radius:6px;margin:12px 0;font-weight:bold}.crit{background:#3a1518;color:#f88;border:1px solid #722}.med{background:#33290f;color:#fc6;border:1px solid #663}.info{background:#1d2330;color:#8ac;border:1px solid #345}.meta{color:#788;font-size:12px;margin:6px 0}.warn{color:#fc6}</style></head><body>")
         [void]$h.AppendLine("<h1>FOCUS DOSSIER - $(& $esc $Indicator)</h1>")
