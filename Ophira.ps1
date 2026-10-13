@@ -1,5 +1,5 @@
 ﻿<#
-Ophira v2.56  -  Windows Incident Response Triage Toolkit
+Ophira v2.57  -  Windows Incident Response Triage Toolkit
 READ-ONLY by design: never modifies the system, only reads and copies data
 into its own output folder. Intended to be handed to a system owner or run
 by a responder during early triage / threat hunting.
@@ -45,7 +45,7 @@ param(
     [switch]$ExitVerdict
 )
 
-$ScriptVersion = "2.56"
+$ScriptVersion = "2.57"
 $ErrorActionPreference = 'Continue'
 $ProgressPreference = 'SilentlyContinue'
 
@@ -1870,6 +1870,13 @@ function Get-ParseNeeds {
         elseif ($c.Net -eq 'net9' -and -not $nineOk) { $how = 'endpoint lacks .NET 9 - run on analyst PC: Ophira.ps1 -Mode Parse -Path <case>' }
         else { $how = 'tool was missing on endpoint - run on analyst PC: Ophira.ps1 -Mode Parse -Path <case>' }
         $rows += [pscustomobject]@{ Artifact = $c.Artifact; Parser = $c.Parser; DotNet = $c.Net; RawInput = $c.Input; HowToFinish = $how }
+    }
+    # v2.57: the plaso deep-timeline TODO lives right next to the generated results so the
+    # analyst does not forget the optional log2timeline pass (until plaso.csv exists)
+    $plasoCaseRoot = Split-Path -Parent $RawDir
+    $plasoIn = Join-Path $plasoCaseRoot 'plaso.csv'
+    if ((Test-Path -LiteralPath $RawDir) -and -not (Test-Path -LiteralPath $plasoIn) -and (@(Get-ChildItem -LiteralPath $RawDir -ErrorAction SilentlyContinue).Count -gt 0)) {
+        $rows += [pscustomobject]@{ Artifact = 'supertimeline.csv (deeper: plaso)'; Parser = 'log2timeline.py + psort'; DotNet = 'python (analyst PC)'; RawInput = 'raw\ (entire folder)'; HowToFinish = "analyst PC: log2timeline.py <case>\raw  ->  psort.py <storage> --output-format l2tcsv -w plaso.csv  ->  drop plaso.csv in the case root  ->  re-run Ophira.ps1 -Mode Parse -Path <case> to merge it into the master timeline" }
     }
     Save-Rows -Name 'parse_needed' -Rows $rows
     if ($rows.Count -gt 0) { Write-CaseLog "    $($rows.Count) artifact(s) unfinished on endpoint - see csv\parse_needed.csv (-Mode Parse completes most of them analyst-side)" 'Yellow' }
@@ -5765,6 +5772,11 @@ tr.techrow{cursor:pointer}
     if (-not $Sysmon) {
         $recs.Add('No Sysmon on this host - the conclusion is built from the execution-artifact spine (prefetch, amcache, BAM/DAM, shimcache, 4688, USN/$MFT, Defender history), and per-instance joins (network/DLL/file/registry/injection) are limited. Ophira never installs anything; if the Sysmon owner adds Sysmon with a broad community configuration, the next collection gains full process-precise telemetry.')
     }
+    # v2.57: the deep-timeline TODO sits next to the generated results (until plaso.csv exists)
+    $plasoRecP = Join-Path (Split-Path -Parent $CsvDir) 'plaso.csv'
+    if (-not (Test-Path -LiteralPath $plasoRecP)) {
+        $recs.Add("Deeper timeline available (optional, analyst-side): run plaso log2timeline.py against this case's raw\ folder, export psort l2tcsv as plaso.csv in the case root, then re-run Ophira.ps1 -Mode Parse - it merges into supertimeline.csv as Source 'plaso' rows (browser history, Jumplists, SRUM and other artifacts Ophira's own parsers do not cover).")
+    }
     if (-not (Test-Path (Join-Path $RawDir 'evtx'))) {
         $recs.Add('Event logs were not exported (module 4.x skipped or access denied) - rerun elevated with the Standard preset for Sigma/ATT&CK coverage.')
     }
@@ -7762,11 +7774,62 @@ function Get-CaseNarrative {
     return $L.ToArray()
 }
 
+function Import-PlasoTimeline {
+    # v2.57: analyst-side plaso deep-timeline import. The analyst runs plaso's
+    # log2timeline.py against the case's raw\ folder on their own box (Ophira never ships
+    # a Python runtime), exports psort's l2tcsv as plaso.csv in the case root, and this
+    # merges it into supertimeline.csv as Source 'plaso' rows. Idempotent: re-import
+    # replaces prior plaso rows instead of doubling. Returns -1 when there is no
+    # plaso.csv (silent no-op), else the number of rows merged.
+    param([string]$CaseRoot)
+    $plasoPath = Join-Path $CaseRoot 'plaso.csv'
+    if (-not (Test-Path -LiteralPath $plasoPath)) { return -1 }
+    # resolve supertimeline.csv the same way the script does (sortment map: csv\derived\ on
+    # current cases, flat in the case root on pre-2.42 cases and bare fixture dirs)
+    $stPath = $null
+    if (Get-Command Get-CaseCsvFullPath -ErrorAction SilentlyContinue) { $stPath = Get-CaseCsvFullPath 'supertimeline' }
+    if (-not ($stPath -and (Test-Path -LiteralPath $stPath))) {
+        $stPath = $null
+        foreach ($cand in @((Join-Path $CaseRoot 'supertimeline.csv'), (Join-Path (Join-Path $CaseRoot 'csv\derived') 'supertimeline.csv'))) {
+            if (Test-Path -LiteralPath $cand) { $stPath = $cand; break }
+        }
+    }
+    if (-not $stPath) { $stPath = Join-Path $CaseRoot 'supertimeline.csv' }
+    $rows = New-Object System.Collections.Generic.List[object]
+    if (Test-Path -LiteralPath $stPath) {
+        foreach ($r in @(Import-Csv -LiteralPath $stPath)) {
+            if ("$($r.Source)" -eq 'plaso') { continue }
+            $rows.Add($r)
+        }
+    }
+    $n = 0
+    foreach ($p in @(Import-Csv -LiteralPath $plasoPath)) {
+        $ts = ''
+        try {
+            $d = [datetime]::ParseExact("$($p.date) $($p.time)", 'MM/dd/yyyy HH:mm:ss', [Globalization.CultureInfo]::InvariantCulture)
+            $ts = $d.ToString('yyyy-MM-dd HH:mm:ss')
+        } catch { continue }
+        $typ = if ("$($p.sourcetype)") { "$($p.sourcetype)" } elseif ("$($p.format)") { "$($p.format)" } else { "$($p.source)" }
+        $rows.Add([pscustomobject]@{ Timestamp = $ts; Source = 'plaso'; Type = $typ; Actor = "$($p.host)"; Entity = "$($p.filename)"; Detail = "$($p.desc)" })
+        $n++
+    }
+    if ($n -eq 0) { return 0 }
+    $sorted = @($rows | Sort-Object { $_.Timestamp })
+    if ($sorted.Count -gt 120000) { $sorted = @($sorted | Select-Object -Last 120000) }
+    $sorted | Export-Csv -LiteralPath $stPath -NoTypeInformation -Encoding UTF8
+    return $n
+}
+
 function Invoke-RegenerateOutputs {
     # Shared by New-Package and -Mode Parse: rebuilds every derived artifact from csv\
     # (supertimeline, gaps, parse_needed, verdict.json, SIEM export, ATT&CK layer, report.html).
     param([pscustomobject]$Case)
     try { New-SuperTimeline } catch { Write-CaseLog "    supertimeline failed: $($_.Exception.Message)" 'DarkYellow' }
+    # v2.57: merge an analyst-dropped plaso deep-timeline (plaso.csv in the case root)
+    try {
+        $plasoN = Import-PlasoTimeline (Split-Path -Parent $script:CsvDir)
+        if ($plasoN -ge 0) { Write-CaseLog "    plaso import: $plasoN row(s) merged into the master timeline (Source 'plaso')" 'Cyan' }
+    } catch { Write-CaseLog "    plaso import failed: $($_.Exception.Message)" 'DarkYellow' }
     try { New-SigmaRuleLogs } catch { Write-CaseLog "    sigma rule logs failed: $($_.Exception.Message)" 'DarkYellow' }
     try { New-HuntFindings } catch { Write-CaseLog "    hunt findings failed: $($_.Exception.Message)" 'DarkYellow' }
     try { New-IocHits } catch { Write-CaseLog "    IOC xref failed: $($_.Exception.Message)" 'DarkYellow' }
@@ -8449,6 +8512,11 @@ function Invoke-ParseMode {
     Write-Host ""
     Write-Host "Done: $before -> $after CSVs. Regenerated report.html / verdict.json / supertimeline.csv / siem_export.ndjson." -ForegroundColor Green
     Write-Host "csv\parse_needed.csv lists anything that still needs the ORIGINAL endpoint (live-only sources)." -ForegroundColor Gray
+    # v2.57: the analyst TODO next to the generated results - don't forget the plaso deep-timeline pass
+    $plasoCsvP = Join-Path (Split-Path -Parent $script:CsvDir) 'plaso.csv'
+    if (-not (Test-Path -LiteralPath $plasoCsvP)) {
+        Write-Host "deep-timeline (optional): log2timeline.py <case>\raw  ->  psort l2tcsv as plaso.csv in the case root  ->  re-run -Mode Parse to merge it into supertimeline.csv" -ForegroundColor DarkCyan
+    }
 
     # 4) re-pack if the input was a zip
     if ($tmp) {
