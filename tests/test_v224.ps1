@@ -76,7 +76,7 @@ Check "weave: timestamps normalized (no raw .NET date noise)" (@($tl | Where-Obj
 # ============================================================================
 # PART 2 - structural: MFT drive fix + entity-card context wiring
 # ============================================================================
-Check "5.5: MFT paths get drive-letter prefix" ($src -match '\$path = if \(\$parent\) \{ "\$dl\$parent\\\$name" \}')
+Check "5.5: MFT paths get drive-letter prefix" ($src -match [regex]::Escape('$(Join-Path $dl ($parent -replace'))
 Check "report: entity-card context window wired" ($src -match 'Context: everything else happening' -and $src -match '\$fs\.AddMinutes\(-30\)')
 Check "report: context reads supertimeline" ($src -match "Import-CaseCsv 'supertimeline'")
 Check "evidence index: master timeline description updated" ($src -match 'MASTER TIMELINE: gathered evidence woven chronologically')

@@ -1,5 +1,5 @@
 ﻿<#
-Ophira v2.54  -  Windows Incident Response Triage Toolkit
+Ophira v2.55  -  Windows Incident Response Triage Toolkit
 READ-ONLY by design: never modifies the system, only reads and copies data
 into its own output folder. Intended to be handed to a system owner or run
 by a responder during early triage / threat hunting.
@@ -45,7 +45,7 @@ param(
     [switch]$ExitVerdict
 )
 
-$ScriptVersion = "2.54"
+$ScriptVersion = "2.55"
 $ErrorActionPreference = 'Continue'
 $ProgressPreference = 'SilentlyContinue'
 
@@ -347,6 +347,105 @@ function Test-IsPublicIp {
     if ($b[0] -eq 172 -and $b[1] -eq 31) { return $false }
     if ($b[0] -ge 224) { return $false }
     return $true
+}
+
+function Get-IpCloudClass {
+    # v2.55: static cloud-provider IP classification (no network calls). Returns the provider
+    # name for known cloud/CDN ranges, empty string for unknown/non-cloud. Ranges sourced
+    # from provider published IP docs as of 2026-10; refresh periodically.
+    param([string]$IpString)
+    $ip = $null
+    if (-not [System.Net.IPAddress]::TryParse($IpString, [ref]$ip)) { return '' }
+    if ($ip.AddressFamily -ne 'InterNetwork') { return '' }
+    $b = $ip.GetAddressBytes()
+    $o1 = [int]$b[0]; $o2 = [int]$b[1]
+    # Microsoft (Azure/O365/Defender cloud) - major published ranges
+    if ($o1 -eq 13 -and $o2 -ge 107 -and $o2 -le 109) { return 'microsoft' }
+    if ($o1 -eq 13 -and $o2 -eq 64) { return 'microsoft' }
+    if ($o1 -eq 13 -and $o2 -eq 72) { return 'microsoft' }
+    if ($o1 -eq 20 -and $o2 -ge 36 -and $o2 -le 240) { return 'microsoft' }
+    if ($o1 -eq 20 -and $o2 -ge 143 -and $o2 -le 190) { return 'microsoft' }
+    if ($o1 -eq 40 -and $o2 -ge 64 -and $o2 -le 124) { return 'microsoft' }
+    if ($o1 -eq 48 -and $o2 -ge 44 -and $o2 -le 218) { return 'microsoft' }
+    if ($o1 -eq 51 -and $o2 -ge 4 -and $o2 -le 152) { return 'microsoft' }
+    if ($o1 -eq 52 -and $o2 -ge 96 -and $o2 -le 240) { return 'microsoft' }
+    if ($o1 -eq 64 -and $o2 -ge 124 -and $o2 -le 144) { return 'microsoft' }
+    if ($o1 -eq 65 -and $o2 -ge 44 -and $o2 -le 152) { return 'microsoft' }
+    if ($o1 -eq 70 -and $o2 -ge 36 -and $o2 -le 240) { return 'microsoft' }
+    if ($o1 -eq 74 -and $o2 -ge 122 -and $o2 -le 255) { return 'microsoft' }
+    if ($o1 -eq 98 -and $o2 -ge 164 -and $o2 -le 252) { return 'microsoft' }
+    if ($o1 -eq 103 -and $o2 -ge 4 -and $o2 -le 240) { return 'microsoft' }
+    if ($o1 -eq 104 -and $o2 -ge 40 -and $o2 -le 200) { return 'microsoft' }
+    if ($o1 -eq 131 -and $o2 -ge 107 -and $o2 -le 255) { return 'microsoft' }
+    if ($o1 -eq 134 -and $o2 -ge 148 -and $o2 -le 208) { return 'microsoft' }
+    if ($o1 -eq 147 -and $o2 -ge 16 -and $o2 -le 40) { return 'microsoft' }
+    if ($o1 -eq 150 -and $o2 -ge 128 -and $o2 -le 248) { return 'microsoft' }
+    if ($o1 -eq 152 -and $o2 -ge 96 -and $o2 -le 188) { return 'microsoft' }
+    if ($o1 -eq 157 -and $o2 -ge 54 -and $o2 -le 240) { return 'microsoft' }
+    if ($o1 -eq 158 -and $o2 -ge 160 -and $o2 -le 240) { return 'microsoft' }
+    if ($o1 -eq 191 -and $o2 -ge 232 -and $o2 -le 255) { return 'microsoft' }
+    if ($o1 -eq 192 -and $o2 -eq 32) { return 'microsoft' }
+    if ($o1 -eq 192 -and $o2 -eq 200) { return 'microsoft' }
+    if ($o1 -eq 192 -and $o2 -eq 250) { return 'microsoft' }
+    if ($o1 -eq 193 -and $o2 -eq 220) { return 'microsoft' }
+    if ($o1 -eq 198 -and $o2 -ge 1 -and $o2 -le 252) { return 'microsoft' }
+    if ($o1 -eq 199 -and $o2 -ge 6 -and $o2 -le 240) { return 'microsoft' }
+    if ($o1 -eq 204 -and $o2 -ge 136 -and $o2 -le 160) { return 'microsoft' }
+    if ($o1 -eq 207 -and $o2 -ge 128 -and $o2 -le 152) { return 'microsoft' }
+    if ($o1 -eq 208 -and $o2 -ge 68 -and $o2 -le 192) { return 'microsoft' }
+    if ($o1 -eq 209 -and $o2 -ge 240 -and $o2 -le 255) { return 'microsoft' }
+    if ($o1 -eq 216 -and $o2 -ge 32 -and $o2 -le 224) { return 'microsoft' }
+    if ($o1 -eq 217 -and $o2 -eq 168) { return 'microsoft' }
+    # Amazon AWS
+    if ($o1 -eq 3 -and $o2 -ge 0 -and $o2 -le 255) { return 'amazon' }
+    if ($o1 -eq 13 -and $o2 -ge 226 -and $o2 -le 250) { return 'amazon' }
+    if ($o1 -eq 15 -and $o2 -ge 176 -and $o2 -le 255) { return 'amazon' }
+    if ($o1 -eq 18 -and $o2 -ge 32 -and $o2 -le 255) { return 'amazon' }
+    if ($o1 -eq 34 -and $o2 -ge 0 -and $o2 -le 255) { return 'amazon' }
+    if ($o1 -eq 52 -and $o2 -ge 0 -and $o2 -le 95) { return 'amazon' }
+    if ($o1 -eq 54 -and $o2 -ge 64 -and $o2 -le 255) { return 'amazon' }
+    if ($o1 -eq 99 -and $o2 -ge 76 -and $o2 -le 159) { return 'amazon' }
+    if ($o1 -eq 205 -and $o2 -ge 251 -and $o2 -le 255) { return 'amazon' }
+    # Google Cloud
+    if ($o1 -eq 8 -and $o2 -ge 0 -and $o2 -le 31) { return 'google' }
+    if ($o1 -eq 34 -and $o2 -ge 64 -and $o2 -le 127) { return 'google' }
+    if ($o1 -eq 35 -and $o2 -ge 184 -and $o2 -le 255) { return 'google' }
+    if ($o1 -eq 104 -and $o2 -ge 196 -and $o2 -le 247) { return 'google' }
+    if ($o1 -eq 107 -and $o2 -ge 180 -and $o2 -le 255) { return 'google' }
+    if ($o1 -eq 142 -and $o2 -ge 250 -and $o2 -le 255) { return 'google' }
+    if ($o1 -eq 146 -and $o2 -ge 148 -and $o2 -le 207) { return 'google' }
+    if ($o1 -eq 162 -and $o2 -ge 216 -and $o2 -le 255) { return 'google' }
+    if ($o1 -eq 172 -and $o2 -ge 253 -and $o2 -le 255) { return 'google' }
+    if ($o1 -eq 173 -and $o2 -ge 194 -and $o2 -le 255) { return 'google' }
+    if ($o1 -eq 192 -and $o2 -ge 158 -and $o2 -le 31) { return 'google' }
+    if ($o1 -eq 199 -and $o2 -ge 36 -and $o2 -le 159) { return 'google' }
+    if ($o1 -eq 209 -and $o2 -ge 85 -and $o2 -le 127) { return 'google' }
+    # Cloudflare
+    if ($o1 -eq 103 -and $o2 -ge 21 -and $o2 -le 22) { return 'cloudflare' }
+    if ($o1 -eq 103 -and $o2 -eq 31) { return 'cloudflare' }
+    if ($o1 -eq 103 -and $o2 -eq 224) { return 'cloudflare' }
+    if ($o1 -eq 104 -and $o2 -ge 16 -and $o2 -le 31) { return 'cloudflare' }
+    if ($o1 -eq 108 -and $o2 -eq 162) { return 'cloudflare' }
+    if ($o1 -eq 131 -and $o2 -eq 107) { return 'cloudflare' }
+    if ($o1 -eq 141 -and $o2 -ge 101 -and $o2 -le 107) { return 'cloudflare' }
+    if ($o1 -eq 162 -and $o2 -ge 158 -and $o2 -le 163) { return 'cloudflare' }
+    if ($o1 -eq 172 -and $o2 -ge 64 -and $o2 -le 127) { return 'cloudflare' }
+    if ($o1 -eq 173 -and $o2 -eq 245) { return 'cloudflare' }
+    if ($o1 -eq 188 -and $o2 -ge 114 -and $o2 -le 121) { return 'cloudflare' }
+    if ($o1 -eq 190 -and $o2 -eq 93) { return 'cloudflare' }
+    if ($o1 -eq 197 -and $o2 -eq 234) { return 'cloudflare' }
+    if ($o1 -eq 198 -and $o2 -ge 41 -and $o2 -le 64) { return 'cloudflare' }
+    if ($o1 -eq 103 -and $o2 -eq 252) { return 'cloudflare' }
+    # Akamai
+    if ($o1 -eq 23 -and $o2 -ge 32 -and $o2 -le 255) { return 'akamai' }
+    if ($o1 -eq 104 -and $o2 -ge 64 -and $o2 -le 127) { return 'akamai' }
+    if ($o1 -eq 118 -and $o2 -eq 6) { return 'akamai' }
+    if ($o1 -eq 172 -and $o2 -ge 224 -and $o2 -le 252) { return 'akamai' }
+    if ($o1 -eq 184 -and $o2 -ge 24 -and $o2 -le 51) { return 'akamai' }
+    if ($o1 -eq 184 -and $o2 -ge 84 -and $o2 -le 107) { return 'akamai' }
+    if ($o1 -eq 193 -and $o2 -ge 108 -and $o2 -le 111) { return 'akamai' }
+    if ($o1 -eq 205 -and $o2 -ge 185 -and $o2 -le 223) { return 'akamai' }
+    return ''
 }
 
 function Test-IsUserWritablePath {
@@ -1495,7 +1594,12 @@ function Invoke-FlashTriage {
         if ($b.Flags -match 'NO-COMPANY' -or $b.SigStatus -eq 'NotSigned') { $score += 2; $evidence.Add('unsigned/no-company') }
         if ($b.Flags -match 'BINARY-MISSING') { $score += 3; $evidence.Add('binary-deleted-from-disk') }
         $myExt = @($ext | Where-Object { $_.PID -eq $b.PID })
-        if ($myExt.Count -gt 0) { $score += 2; $evidence.Add("public-conn:$($myExt[0].RemoteAddress):$($myExt[0].RemotePort)") }
+        if ($myExt.Count -gt 0) {
+            $score += 2; $evidence.Add("public-conn:$($myExt[0].RemoteAddress):$($myExt[0].RemotePort)")
+            # v2.55: non-cloud public connection is a stronger signal than a CDN/azure egress
+            $nonCloud = @($myExt | Where-Object { -not (Get-IpCloudClass "$($_.RemoteAddress)") } | Select-Object -First 1)
+            if ($nonCloud.Count -gt 0) { $score += 2; $evidence.Add("non-cloud-conn:$($nonCloud[0].RemoteAddress)") }
+        }
         if ($iocHits | Where-Object { $_.Where -eq $b.Path }) { $score += 4; $evidence.Add('IOC-HASH-MATCH') }
         $name = Split-Path $b.Path -Leaf -ErrorAction SilentlyContinue
         if ($name) {
@@ -1512,7 +1616,7 @@ function Invoke-FlashTriage {
         } elseif ($trustedSigned -and $iocHit) {
             $evidence.Add("TRUSTED-PUBLISHER-BUT-IOC-HIT")
         }
-        $verdict = if ($score -ge 7) { 'HIGH' } elseif ($score -ge 4) { 'MEDIUM' } else { 'LOW' }
+        $verdict = if ($score -ge 6) { 'HIGH' } elseif ($score -ge 4) { 'MEDIUM' } else { 'LOW' }
         [pscustomobject]@{ PID = $b.PID; Name = $b.Name; Path = $b.Path; Score = $score; Verdict = $verdict; Evidence = ($evidence -join '; '); Flags = $b.Flags; Signer = $b.Signer }
     }
 
@@ -1777,7 +1881,7 @@ $script:SharedFunctions = @(
     'Save-Rows', 'Out-RawText', 'Invoke-ExeCapture', 'Invoke-NativeTool', 'Get-WmiOrCim', 'Convert-WmiDate',
     'Test-IsPublicIp', 'Test-IsUserWritablePath', 'Get-SignatureInfo', 'Get-SysmonState',
     'Get-UserProfileList', 'Get-UserAssistRows', 'ConvertTo-Rot13', 'Get-FilteredEvents', 'Export-Evtx',
-    'Import-CaseCsv', 'Invoke-BrowserIocXref', 'Get-EventDataRows', 'Get-IisW3cRows', 'Get-StartupInfoRows', 'Get-WerReportRows'
+    'Import-CaseCsv', 'Invoke-BrowserIocXref', 'Get-EventDataRows', 'Get-IisW3cRows', 'Get-StartupInfoRows', 'Get-WerReportRows', 'Test-SigmaSelfNoise', 'Remove-SigmaDuplicateEvents', 'Get-IpCloudClass'
 )
 
 $script:ModuleWorkerText = @'
@@ -1899,6 +2003,9 @@ $script:Modules = @(
             Save-Rows -Name 'processes' -Rows $rows
             $flagged = @($rows | Where-Object { $_.Flags })
             Save-Rows -Name 'processes_flagged' -Rows $flagged
+            $kitRoot = Get-KitRoot
+            $script:CollectorPids = @($rows | Where-Object { $_.Path -and $_.Path -like "$kitRoot*" } | ForEach-Object { [int]"$($_.PID)" } | Sort-Object -Unique)
+            $script:KitPaths = @($kitRoot, $CaseDir, (Join-Path $env:TEMP 'opencode')) | Where-Object { $_ }
         } }
     [pscustomobject]@{ Id = '1.2'; Cat = 'VOLATILE'; Name = 'Full process SHA256 hashing (slower)'; Default = $false; Quick = $false;
         Run = {
@@ -3000,7 +3107,7 @@ $script:Modules = @(
                             $ext = ("$($_.$cExt)").ToLower()
                             if ($exeExt -notcontains $ext) { return }
                             $parent = "$($_.$cParent)"
-                            $path = if ($parent) { "$dl$parent\$name" } else { "$dl\$name" }
+                            $path = if ($parent) { "$(Join-Path $dl ($parent -replace '^\.\\?', ''))\$name" } else { "$dl\$name" }
                             $userPath = Test-IsUserWritablePath $path
                             $created = $null; try { $created = [datetime]"$($_.$cCreated)" } catch { }
                             $recent = ($created -and $created -ge $cutoff)
@@ -3111,6 +3218,35 @@ $script:Modules = @(
                 [pscustomobject]@{ Time = $_.TimeCreated; EventId = $_.Id; Detail = ("$($_.Message)" -replace '\s+', ' ').Trim() }
             })
             Save-Rows -Name 'defender_config_events' -Rows $dconf
+            # v2.55: parse historical 1116 detections with threat name + path + time.
+            # Get-MpThreat only reports the current threat catalog (drops resolved detections);
+            # 1116 events are point-in-time and survive. Merge both into defender_threats.
+            $d1116 = @($ev | Where-Object { "$($_.Id)" -eq '1116' } | ForEach-Object {
+                $msg = "$($_.Message)"
+                $tn = ''; $sev = ''; $pth = ''
+                if ($msg -match '(?i)Threat Name:\s*(.+)') { $tn = $Matches[1].Trim() }
+                if ($msg -match '(?i)Severity:\s*(\w+)') { $sev = $Matches[1].Trim() }
+                if ($msg -match '(?i)Path:\s*(.+?)(?:\s*\(|$)') { $pth = $Matches[1].Trim() }
+                [pscustomobject]@{ ThreatName = $tn; Severity = $sev; ResourcePath = $pth; DetectedUTC = $_.TimeCreated; Source = 'evtx-history' }
+            })
+            $liveThreats = @(Import-CaseCsv 'defender_threats' | ForEach-Object {
+                $_ | Add-Member -NotePropertyName DetectedUTC -NotePropertyValue $null -Force
+                $_ | Add-Member -NotePropertyName ResourcePath -NotePropertyValue "$($_.Resources)" -Force
+                $_ | Add-Member -NotePropertyName Source -NotePropertyValue 'live-catalog' -Force
+                $_
+            })
+            $merged = New-Object System.Collections.Generic.List[object]
+            $seenThreat = @{}
+            foreach ($t in @($d1116) + @($liveThreats)) {
+                $tk = "$($t.ThreatName)|$($t.ResourcePath)"
+                if ($seenThreat.ContainsKey($tk)) {
+                    if ($t.Source -eq 'evtx-history') { $merged.RemoveAt($seenThreat[$tk]); $merged.Add($t); $seenThreat[$tk] = $merged.Count - 1 }
+                    continue
+                }
+                $seenThreat[$tk] = $merged.Count
+                $merged.Add($t)
+            }
+            Save-Rows -Name 'defender_threats' -Rows $merged.ToArray()
             Export-Evtx -LogName 'Microsoft-Windows-Windows Defender/Operational' -FileName 'Defender_Operational.evtx'
         } }
     [pscustomobject]@{ Id = '7.1'; Cat = 'MEMORY'; Name = 'RAM capture via winpmem (needs tools\winpmem, LARGE output)'; Default = $false; Quick = $false;
@@ -4441,6 +4577,44 @@ function Split-TagList {
     return @([regex]::Split("$s", '[^A-Za-z0-9.\-]+') | Where-Object { $_ -and $_.Length -gt 1 })
 }
 
+function Test-SigmaSelfNoise {
+    # v2.55: a Sigma row is self-noise when it fired on Ophira's own collection activity -
+    # our PIDs (captured at collection start) or our kit/case paths in the event text.
+    # Never filter by process name alone (powershell.exe is both the attacker's and our tool).
+    param($row)
+    if ($null -eq $row) { return $false }
+    $pidName = @($row.PSObject.Properties.Name | Where-Object { $_ -match '^(?i)processid$' } | Select-Object -First 1)
+    if ($pidName -and $script:CollectorPids) {
+        $rowPid = 0
+        try { $rowPid = [int]"$($row.$pidName)" } catch { $rowPid = 0 }
+        if ($rowPid -gt 0 -and @($script:CollectorPids) -contains $rowPid) { return $true }
+    }
+    $text = "$($row.Details) $($row.ExtraFieldInfo) $($row.CommandLine) $($row.Payload)"
+    if ($script:KitPaths) {
+        foreach ($kp in @($script:KitPaths)) {
+            if ($kp -and $text.IndexOf($kp, [StringComparison]::OrdinalIgnoreCase) -ge 0) { return $true }
+        }
+    }
+    return $false
+}
+
+function Remove-SigmaDuplicateEvents {
+    # v2.55: two Sigma rules can fire on the SAME event (e.g. both 4648-explicit-logon rules
+    # match every EID 4648). Dedupe by RecordID so one event counts once across all rules.
+    param([object[]]$rows)
+    $seen = @{}
+    $out = New-Object System.Collections.Generic.List[object]
+    foreach ($r in @($rows)) {
+        $rid = "$($r.RecordID)"
+        if (-not $rid) { $out.Add($r); continue }
+        $key = "$($r.Computer)|$rid"
+        if ($seen.ContainsKey($key)) { continue }
+        $seen[$key] = $true
+        $out.Add($r)
+    }
+    return $out.ToArray()
+}
+
 function Import-CaseCsv {
     param([string]$Name)
     if ($Name -notmatch '\.csv$') { $Name = "$Name.csv" }
@@ -4456,6 +4630,10 @@ function New-HtmlReport {
     $scored = @(Import-CaseCsv 'flash_process_scored.csv')
     $iocHits = @(Import-CaseCsv 'flash_ioc_hits.csv')
     $hayRows = @(Import-CaseCsv 'hayabusa_timeline.csv')
+    # v2.55: dedupe events matched by multiple rules + drop self-noise (our own collection activity)
+    if (Get-Command Remove-SigmaDuplicateEvents -ErrorAction SilentlyContinue) {
+        $hayRows = @(Remove-SigmaDuplicateEvents $hayRows | Where-Object { -not (Test-SigmaSelfNoise $_) })
+    }
     $execRows = @(Import-CaseCsv 'execution_timeline.csv')
     $brute = @(Import-CaseCsv 'security_bruteforce_candidates.csv')
     $pubConns = @(Import-CaseCsv 'flash_public_connections.csv')
@@ -4548,7 +4726,10 @@ tr.techrow{cursor:pointer}
     $sb = New-Object System.Text.StringBuilder
     $null = $sb.AppendLine("<!DOCTYPE html><html><head><meta charset='utf-8'><title>Ophira - $Computer</title>$css</head><body>")
     $null = $sb.AppendLine("<h1>OPHIRA COMPROMISE ASSESSMENT REPORT</h1>")
-    $null = $sb.AppendLine("<div class='meta'>Host: $Computer &nbsp;|&nbsp; Case: $(ConvertTo-HtmlEsc $script:CurrentCaseID) &nbsp;|&nbsp; Analyst: $(ConvertTo-HtmlEsc $script:CurrentAnalyst) &nbsp;|&nbsp; Collected: $($StartTime.ToString('u')) &nbsp;|&nbsp; Ophira v$ScriptVersion &nbsp;|&nbsp; Sysmon: $(if ($Sysmon) { 'yes' } else { 'no' }) &nbsp;|&nbsp; Elevated: $(if (Test-IsAdmin) { 'yes' } else { 'NO' })</div>")
+    $caseAdmin = $null
+    try { $caseAdmin = (Get-Content -LiteralPath (Join-Path $CaseDir 'case.json') -Raw -ErrorAction Stop | ConvertFrom-Json).AdminElevated } catch { }
+    $elevLabel = if ($null -ne $caseAdmin) { if ($caseAdmin) { 'yes' } else { 'NO' } } elseif (Test-IsAdmin) { 'yes' } else { 'NO' }
+    $null = $sb.AppendLine("<div class='meta'>Host: $Computer &nbsp;|&nbsp; Case: $(ConvertTo-HtmlEsc $script:CurrentCaseID) &nbsp;|&nbsp; Analyst: $(ConvertTo-HtmlEsc $script:CurrentAnalyst) &nbsp;|&nbsp; Collected: $($StartTime.ToString('u')) &nbsp;|&nbsp; Ophira v$ScriptVersion &nbsp;|&nbsp; Sysmon: $(if ($Sysmon) { 'yes' } else { 'no' }) &nbsp;|&nbsp; Elevated: $elevLabel</div>")
     $null = $sb.AppendLine("<div class='nav'><a href='#leads'>Leads</a><a href='#verdict'>Verdict</a><a href='#coverage'>Coverage</a><a href='#attack'>ATT&CK</a><a href='#ioc'>IOCs</a><a href='#tactics'>Findings by tactic</a><a href='#yara'>YARA</a><a href='#processes'>Processes</a><a href='#sigma'>Sigma</a><a href='#logons'>Logons</a><a href='#persistence'>Persistence</a><a href='#filesystem'>File system</a><a href='#beacons'>Beaconing</a><a href='#network'>Network</a><a href='#timeline'>Timeline</a><a href='#snapshot'>Snapshot</a><a href='#drivers'>Drivers</a><a href='#hunt'>Hunt</a><a href='#entities'>Connections</a><a href='#focus'>Focus</a><a href='#recommendations'>Recommendations</a><a href='#evidence'>Evidence index</a></div>")
 
     # ---------- verdict banner ----------
@@ -4557,13 +4738,13 @@ tr.techrow{cursor:pointer}
         $v = $script:Verdict
         $null = $sb.AppendLine("<div class='vbanner v$($v.LevelRank)'>")
         $null = $sb.AppendLine("<p class='vtitle'>$(ConvertTo-HtmlEsc $v.Level)</p>")
-        $null = $sb.AppendLine("<p class='vowner'>$(ConvertTo-HtmlEsc $v.OwnerLine) &nbsp; Confidence: $($v.ConfidencePercent)% (evidence coverage)</p>")
+        $null = $sb.AppendLine("<p class='vowner'>$(ConvertTo-HtmlEsc $v.OwnerLine) &nbsp; Evidence coverage: $($v.ConfidencePercent)% (how much of the case was collected, not a probability of compromise)</p>")
         $null = $sb.AppendLine("<div class='confwrap'><div class='confbar' style='width:$([math]::Min(100, [int]$v.ConfidencePercent))%;background:#b93'></div><div class='conftext'>$($v.ConfidencePercent)% of weighted evidence sources collected</div></div>")
         # v2.45: rank-specific first actions - the 30-minute decision starts here
         $donow = @{
             4 = 'Isolate the host from the network NOW. Capture RAM before any reboot. Treat every credential used on this host as compromised and start scoping other hosts.'
             3 = 'Isolate or network-restrict this host and preserve volatile evidence (RAM) before any reboot. Work the leads below top-down; verify each against the cited evidence.'
-            2 = 'Enough suspicious evidence exists to justify a closer look before this host returns to service - work the leads below.'
+            2 = 'Enough suspicious evidence exists to justify a closer look before this host returns to service - work the leads below (or review the Sigma findings and process scores if no lead met the threshold).'
         }
         if ($donow[[int]$v.LevelRank]) { $null = $sb.AppendLine("<div class='donow'><b>Do now:</b> $(ConvertTo-HtmlEsc $donow[[int]$v.LevelRank])</div>") }
         if (@($v.Signals).Count -gt 0) {
@@ -4623,8 +4804,24 @@ tr.techrow{cursor:pointer}
         foreach ($io in @(Import-CaseCsv 'ioc_hits_amcache' | Select-Object -First 2)) {
             $leads.Add([pscustomobject]@{ Rank = 'crit'; Title = "$($io.Application)"; Class = 'IOC hash match (known-bad binary ran on this host)'; Why = "SHA1 $($io.Indicator) matched the IOC feed"; Ident = "$($io.SourceFile)"; Extra = ''; Anchor = 'ioc' })
         }
+        # v2.55: medium-weight lead sources - a case can be SUSPICIOUS without any HIGH/YARA/beacon
+        $hayMed = @($hayRows | Where-Object { "$($_.Level)" -match '^(?i)(medium|high|crit)$' })
+        if ($hayMed.Count -ge 20) {
+            $hayTop = @($hayMed | Group-Object RuleTitle | Sort-Object Count -Descending | Select-Object -First 3)
+            $leads.Add([pscustomobject]@{ Rank = 'med'; Title = "Sigma storm: $([int]$hayMed.Count) detection rows"; Class = "review: sigma volume spike"; Why = (($hayTop | ForEach-Object { "$($_.Name) ($($_.Count) hits)" }) -join '; '); Ident = ''; Extra = ''; Anchor = 'sigma' })
+        }
+        foreach ($ch2 in @(Import-CaseCsv 'process_chains' | Where-Object { "$($_.Child)" } | Select-Object -First 2)) {
+            $leads.Add([pscustomobject]@{ Rank = 'crit'; Title = "$($ch2.Parent) -> $($ch2.Child)"; Class = "process lineage: spawned child process"; Why = "$($ch2.Evidence)"; Ident = "$($ch2.Child)"; Extra = ''; Anchor = 'entities' })
+        }
+        foreach ($pm in @(Import-CaseCsv 'flash_process_scored' | Where-Object { "$($_.Verdict)" -eq 'MEDIUM' -and "$($_.Name)" -and [int]"$($_.Score)" -ge 4 } | Sort-Object { ([int]"$($_.Score)") } -Descending | Select-Object -First 2)) {
+            $leads.Add([pscustomobject]@{ Rank = 'med'; Title = "$($pm.Name) (PID $($pm.PID))"; Class = "review: medium process score $($pm.Score)"; Why = "$($pm.Evidence)"; Ident = "$($pm.Path)"; Extra = "signer: $(if ("$($pm.Signer)") { $pm.Signer } else { 'NONE' })"; Anchor = 'processes' })
+        }
+        foreach ($pc in @($pubConns | Where-Object { "$($_.RemoteAddress)" -and -not (Get-IpCloudClass "$($_.RemoteAddress)") } | Group-Object RemoteAddress, RemotePort | ForEach-Object { $_.Group[0] } | Select-Object -First 2)) {
+            $pn = if ("$($pc.ProcessPath)") { Split-Path "$($pc.ProcessPath)" -Leaf } else { "PID $($pc.PID)" }
+            $leads.Add([pscustomobject]@{ Rank = 'med'; Title = "$pn -> $($pc.RemoteAddress):$($pc.RemotePort)"; Class = "review: outbound to non-cloud public IP"; Why = "established connection to unknown provider (not Microsoft/AWS/Google/Cloudflare/Akamai) - verify destination ownership and purpose"; Ident = "$($pc.RemoteAddress)"; Extra = ''; Anchor = 'network' })
+        }
         $leads = [System.Collections.Generic.List[object]]@(
-            @($leads | Sort-Object @{e = { if ($_.Rank -eq 'crit') { 0 } else { 1 } } } | Group-Object Title, Class | ForEach-Object { $_.Group[0] } | Select-Object -First 5)
+            @($leads | Sort-Object @{e = { if ($_.Rank -eq 'crit') { 0 } else { 1 } } } | Group-Object Title, Class | ForEach-Object { $_.Group[0] } | Select-Object -First 8)
         )
         $null = $sb.AppendLine("<a name='leads'></a><h2>Triage leads - decide these first</h2>")
         if ($leads.Count -eq 0) {
@@ -4661,7 +4858,7 @@ tr.techrow{cursor:pointer}
                 $null = $sb.AppendLine("</div>")
             }
         }
-    } catch { }
+    } catch { Write-CaseLog "    leads build failed: $($_.Exception.Message)" 'DarkYellow' }
     # ---------- narrative case draft (v2.31) ----------
     try {
         $draft = @(Get-CaseNarrative)
@@ -4953,6 +5150,32 @@ tr.techrow{cursor:pointer}
         foreach ($a in ($authSum | Select-Object -First 25)) { $null = $sb.AppendLine("<tr><td>$(ConvertTo-HtmlEsc $a.AccountSource)</td><td>$($a.Count)</td></tr>") }
         $null = $sb.AppendLine("</table></details>")
     }
+    # v2.55: explicit-credential logons (4648) - the strongest lateral-movement tell on a
+    # workstation. Previously invisible: the section hard-filtered to 4624 only.
+    $secAll = @(Import-CaseCsv 'security_events')
+    $e4648 = @($secAll | Where-Object { "$($_.Id)" -eq '4648' -or "$($_.EventId)" -eq '4648' })
+    if ($e4648.Count -gt 0) {
+        $e4648g = @($e4648 | ForEach-Object {
+            $tgt = "$($_.TargetDomainName)"; if (-not $tgt) { $tgt = "$($_.TargetServerName)" }
+            if (-not $tgt) { $tgt = "$($_.TargetUserName)" }
+            [pscustomobject]@{ Target = $tgt; Proc = "$($_.ProcessName)" }
+        } | Group-Object Target, Proc | Sort-Object Count -Descending | Select-Object -First 10)
+        $null = $sb.AppendLine("<h3>Explicit-credential logons (4648) - $([int]$e4648.Count) event(s)</h3>")
+        $null = $sb.AppendLine("<div class='meta'>A process supplied explicit credentials (username/password) to authenticate - common in admin automation, but also the shape of credential-use-after-theft. Verify the source account and tool.</div>")
+        $null = $sb.AppendLine("<table><tr><th>Target @ Process</th><th>Events</th></tr>")
+        foreach ($g in $e4648g) { $null = $sb.AppendLine("<tr><td>$(ConvertTo-HtmlEsc $g.Name)</td><td><b>$($g.Count)</b></td></tr>") }
+        $null = $sb.AppendLine("</table>")
+    }
+    $e4672 = @($secAll | Where-Object { "$($_.Id)" -eq '4672' -or "$($_.EventId)" -eq '4672' })
+    if ($e4672.Count -gt 0) {
+        $e4672g = @($e4672 | ForEach-Object {
+            [pscustomobject]@{ Who = "$(if ("$($_.AccountDomain)") { "$($_.AccountDomain)\" })$($_.Account)" }
+        } | Group-Object Who | Sort-Object Count -Descending | Select-Object -First 8)
+        $null = $sb.AppendLine("<h3>Special privileges assigned (4672) - $([int]$e4672.Count) event(s)</h3>")
+        $null = $sb.AppendLine("<table><tr><th>Account</th><th>Events</th></tr>")
+        foreach ($g in $e4672g) { $null = $sb.AppendLine("<tr><td>$(ConvertTo-HtmlEsc $g.Name)</td><td><b>$($g.Count)</b></td></tr>") }
+        $null = $sb.AppendLine("</table>")
+    }
     if ($brute.Count -gt 0) {
         $null = $sb.AppendLine("<h3>Brute-force candidates</h3><table><tr><th>Source IP</th><th>Failed logons</th><th></th></tr>")
         foreach ($b in $brute) { $null = $sb.AppendLine("<tr><td>$(ConvertTo-HtmlEsc $b.SourceIp)</td><td><b>$($b.FailedLogons)</b></td><td>$(New-VtLink $b.SourceIp)</td></tr>") }
@@ -5102,9 +5325,11 @@ tr.techrow{cursor:pointer}
     # ---------- network ----------
     $null = $sb.AppendLine("<a name='network'></a><h2>Public connections (live)</h2>")
     if ($pubConns.Count -gt 0) {
-        $null = $sb.AppendLine("<table><tr><th>Remote</th><th>State</th><th>PID</th><th>Process</th><th></th></tr>")
+        $null = $sb.AppendLine("<table><tr><th>Remote</th><th>Provider</th><th>State</th><th>PID</th><th>Process</th><th></th></tr>")
         foreach ($c in ($pubConns | Select-Object -First 25)) {
-            $null = $sb.AppendLine("<tr><td>$(ConvertTo-HtmlEsc $c.RemoteAddress):$(ConvertTo-HtmlEsc $c.RemotePort)</td><td>$(ConvertTo-HtmlEsc $c.State)</td><td>$(ConvertTo-HtmlEsc $c.PID)</td><td class='path'>$(ConvertTo-HtmlEsc $c.ProcessPath)</td><td>$(New-VtLink $c.RemoteAddress)</td></tr>")
+            $prov = Get-IpCloudClass "$($c.RemoteAddress)"
+            if (-not $prov) { $prov = 'non-cloud' }
+            $null = $sb.AppendLine("<tr><td>$(ConvertTo-HtmlEsc $c.RemoteAddress):$(ConvertTo-HtmlEsc $c.RemotePort)</td><td>$(ConvertTo-HtmlEsc $prov)</td><td>$(ConvertTo-HtmlEsc $c.State)</td><td>$(ConvertTo-HtmlEsc $c.PID)</td><td class='path'>$(ConvertTo-HtmlEsc $c.ProcessPath)</td><td>$(New-VtLink $c.RemoteAddress)</td></tr>")
         }
         $null = $sb.AppendLine("</table>")
     } else {
@@ -5204,7 +5429,7 @@ tr.techrow{cursor:pointer}
         $null = $sb.AppendLine("<h3>Remote endpoints</h3><table><tr><th>Remote</th><th>Public</th><th>Conns</th><th>Talkers</th><th>Beacon</th><th>Failed logons</th><th>RDP out</th></tr>")
         foreach ($e in ($entR | Select-Object -First 12)) {
             $bCls = switch -Regex ("$($e.Beacon)") { 'high' { 'crit'; break } 'medium' { 'med'; break } default { 'info' } }
-            $null = $sb.AppendLine("<tr><td>$(New-VtLink $e.Remote)</td><td>$(ConvertTo-HtmlEsc $e.Public)</td><td>$($e.Connections)</td><td class='path'>$(ConvertTo-HtmlEsc $e.Talkers)</td><td class='$bCls'>$(ConvertTo-HtmlEsc $e.Beacon)</td><td class='$(if ([int]"$($e.FailedLogons)" -gt 0) { 'crit' } else { 'info' })'>$($e.FailedLogons)</td><td>$($e.RdpOutCount)</td></tr>")
+            $null = $sb.AppendLine("<tr><td class='path'>$(ConvertTo-HtmlEsc $e.Remote) $(New-VtLink $e.Remote)</td><td>$(ConvertTo-HtmlEsc $e.Public)</td><td>$($e.Connections)</td><td class='path'>$(ConvertTo-HtmlEsc $e.Talkers)</td><td class='$bCls'>$(ConvertTo-HtmlEsc $e.Beacon)</td><td class='$(if ([int]"$($e.FailedLogons)" -gt 0) { 'crit' } else { 'info' })'>$($e.FailedLogons)</td><td>$($e.RdpOutCount)</td></tr>")
         }
         $null = $sb.AppendLine("</table>")
     }
@@ -5435,8 +5660,11 @@ tr.techrow{cursor:pointer}
     if ($script:Verdict -and $script:Verdict.LevelRank -ge 3) {
         $recs.Add('Likely/confirmed compromise: preserve evidence (do not wipe yet), isolate the host from the network, and treat credentials used on it as suspect - rotate them.')
     }
-    if ($gapRows.Count -gt 0) {
+    $gapTamperRec = @($gapRows | Where-Object { "$($_.EventId)" -match '^(1102|104)$' -or "$($_.Meaning)" -match '(?i)clear|overwrit| Audit log' } | Select-Object -First 1)
+    if ($gapTamperRec) {
         $recs.Add('Security log clearing/stopping events were observed - determine who/what cleared them and when (csv\logging_gaps.csv, raw evtx).')
+    } elseif ($gapRows.Count -gt 0) {
+        $recs.Add('Chronological gaps detected in event logs - check collection completeness (csv\logging_gaps.csv). This is NOT evidence of log clearing.')
     }
     if ($brute.Count -gt 0) {
         $recs.Add('Brute-force sources observed - check whether any 4625 failure was followed by a 4624 success from the same IP (csv\security_auth_events.csv), and enforce account lockout policy.')
@@ -5450,7 +5678,8 @@ tr.techrow{cursor:pointer}
     if (-not (Test-Path (Join-Path $RawDir 'evtx'))) {
         $recs.Add('Event logs were not exported (module 4.x skipped or access denied) - rerun elevated with the Standard preset for Sigma/ATT&CK coverage.')
     }
-    if (-not (Test-IsAdmin)) {
+    $recElev = if ($null -ne $caseAdmin) { -not $caseAdmin } else { -not (Test-IsAdmin) }
+    if ($recElev) {
         $recs.Add('This collection ran WITHOUT admin rights - rerun elevated to include registry hives, amcache, Security log and other key sources.')
     }
     if ($script:LogStartDT) {
@@ -7154,6 +7383,10 @@ function Get-CompromiseVerdict {
     $iocAmc = Import-CaseCsv 'ioc_hits_amcache'
     $yara = Import-CaseCsv 'yara_hits'
     $hay = Import-CaseCsv 'hayabusa_timeline'
+    # v2.55: same dedupe + self-noise filter as the report so verdict and report agree
+    if (Get-Command Remove-SigmaDuplicateEvents -ErrorAction SilentlyContinue) {
+        $hay = @(Remove-SigmaDuplicateEvents $hay | Where-Object { -not (Test-SigmaSelfNoise $_) })
+    }
     $proc = Import-CaseCsv 'flash_process_scored'
     $def = Import-CaseCsv 'defender_threats'
     $gaps = Import-CaseCsv 'logging_gaps'
@@ -7209,12 +7442,19 @@ function Get-CompromiseVerdict {
     $rExt = ((@($usnBursts) | Where-Object { "$($_.RansomExt)" } | ForEach-Object { "$($_.RansomExt)" } | Sort-Object -Unique) -join ',')
     # ponytail: COM hijacks + StartupApproved excluded from the signal (per-user COM has many legit users, e.g. Teams/OneDrive); they stay report-visible
     $asepHotN = @($asep | Where-Object { $_.Flags -match 'user-path|nondefault' -and "$($_.Category)" -notmatch 'ComHijack|StartupApproved' }).Count
+    # v2.55: posture gaps + credential exposure now carry verdict weight (previously report-only)
+    $posture = Import-CaseCsv 'posture'
+    $postureBad = @($posture | Where-Object { "$($_.Status)" -eq 'BAD' })
+    $credSweep = Import-CaseCsv 'credential_sweep'
+    $credMed = @($credSweep | Where-Object { "$($_.Severity)" -match '(?i)med|high' })
 
     Add-Signal 'IOC hit - historical execution (amcache SHA1)' 4 @($iocAmc).Count "near-certain true positive evidence"
     Add-Signal 'YARA hit - high/critical rule' 4 $yaraHi (($yara | Where-Object { "$($_.Severity)" -match '^(?i)(high|critical)$' } | Select-Object -First 3 | ForEach-Object { $_.Rule }) -join '; ')
     Add-Signal 'C2 beaconing - highly regular callbacks' 3 $beaconHi (($beacons | Where-Object { "$($_.Severity)" -match '^(?i)high$' } | Select-Object -First 3 | ForEach-Object { "$($_.Process) -> $($_.RemoteIp):$($_.Port) every ~$($_.MedianIntervalSec)s" }) -join '; ')
     Add-Signal 'C2 DNS beaconing - highly regular domain queries' 3 $dnsHi (($dnsBeacons | Where-Object { "$($_.Severity)" -match '^(?i)high$' } | Select-Object -First 3 | ForEach-Object { "$($_.Process) -> $($_.Domain) every ~$($_.MedianIntervalSec)s" }) -join '; ')
     Add-Signal 'Known-malicious driver on disk (LOLDrivers)' 2 $lolMal (($lol | Where-Object { $_.Status -eq 'malicious' } | Select-Object -First 3 | ForEach-Object { "$($_.Name): $($_.Path)" }) -join '; ')
+    Add-Signal 'Security posture gaps' 1 @($postureBad).Count (($postureBad | ForEach-Object { "$($_.Setting): $($_.Detail)" }) -join '; ')
+    Add-Signal 'Credential material exposure' 2 @($credMed).Count (($credMed | Select-Object -First 3 | ForEach-Object { "$($_.Description)" }) -join '; ')
     Add-Signal 'Hunt technique - renamed binary / side-load / download-exec / LSASS access / Office chain / proxy-exec / share staging / Defender tamper / DCSync / spray / webshell / tunnel / RDP hijack / SSH keys / svchost masquerade / injection / C2 pipe / hollowing / raw volume / WMI persistence' 2 $huntHi.Count (($huntHi | Select-Object -First 3 | ForEach-Object { $_.Rule }) -join '; ')
     Add-Signal 'Ransomware-like mass file modification (USN journal)' 3 $usnBurstN ((($usnBursts | Select-Object -First 3 | ForEach-Object { "$($_.WindowStart): $($_.WriteEvents) writes / $($_.DistinctFiles) files" }) -join '; ') + $(if ($rExt) { " - RANSOM EXTENSIONS: $rExt" }))
     Add-Signal 'Uncommon persistence mechanism (IFEO/AppInit/Winlogon/netsh/LSA)' 2 $asepHotN (($asep | Where-Object { $_.Flags -match 'user-path|nondefault' -and "$($_.Category)" -notmatch 'ComHijack|StartupApproved' } | Select-Object -First 3 | ForEach-Object { "$($_.Category): $($_.Name) = $($_.Value)" }) -join '; ')
@@ -7233,8 +7473,12 @@ function Get-CompromiseVerdict {
     Add-Signal 'C2 beaconing - periodic callbacks' 2 $beaconMed (($beacons | Where-Object { "$($_.Severity)" -match '^(?i)medium$' } | Select-Object -First 3 | ForEach-Object { "$($_.Process) -> $($_.RemoteIp) every ~$($_.MedianIntervalSec)s" }) -join '; ')
     Add-Signal 'C2 DNS beaconing - periodic domain queries' 2 $dnsMed (($dnsBeacons | Where-Object { "$($_.Severity)" -match '^(?i)medium$' } | Select-Object -First 3 | ForEach-Object { "$($_.Process) -> $($_.Domain) every ~$($_.MedianIntervalSec)s" }) -join '; ')
     Add-Signal 'Sigma detection - high' $highFloor $hayHigh.Count "$($hayHigh.Count) events from $hayHighRules distinct rules$(if ($highFloor -eq 0 -and $hayHigh.Count -gt 0) { ' - single-rule storm carries no verdict weight (see -Mode Tune)' })"
+    # v2.55: volume signal - a single med/low rule with >=100 deduped events is a storm worth
+    # naming (usually admin automation, sometimes real). Floor 0 = visible, no verdict weight.
+    $hayStorm = @($hay | Group-Object RuleTitle | Where-Object { $_.Count -ge 100 -and @($_.Group | Where-Object { (Get-LvlRank "$($_.Level)") -le 2 } | Select-Object -First 1) } | Sort-Object Count -Descending)
+    Add-Signal 'Sigma volume signal' 0 @($hayStorm).Count (($hayStorm | Select-Object -First 3 | ForEach-Object { "$($_.Name) ($($_.Count) events - review sample, then tune if benign)" }) -join '; ')
     Add-Signal 'Process anomaly verdict HIGH' 2 $procHigh (($proc | Where-Object { "$($_.Verdict)" -eq 'HIGH' } | Select-Object -First 3 | ForEach-Object { $_.Name }) -join '; ')
-    Add-Signal 'Defender detection history' 2 @($def).Count "antivirus detected something during retention window"
+    Add-Signal 'Defender detection history' 2 @($def).Count ((@($def | Select-Object -First 3 | ForEach-Object { "$($_.ThreatName)$(if ("$($_.SeverityID)") { ' (sev ' + $_.SeverityID + ')' })" } | Where-Object { "$_" -ne '' -and "$_" -ne ' (sev )' }) -join '; ') + $(if (@($def).Count -gt 3) { "; +$(@($def).Count - 3) more" }))
     Add-Signal 'Security tooling tampering / log clearing' 2 $gapTamper "log cleared or security service stopped"
     Add-Signal 'Process anomaly verdict MEDIUM' 1 $procMed "unsigned/user-path binaries worth review"
     Add-Signal 'Brute-force source(s) seen' 0 @($brute).Count "failed logon sources - check for follow-up success"
@@ -7305,6 +7549,24 @@ function Get-CompromiseVerdict {
     if (-not (Test-CaseCsv 'prefetch_index')) { $caveats.Add('Prefetch unavailable - program execution history limited') }
     if (-not (Test-CaseCsv 'amcache')) { $caveats.Add('Amcache unavailable - historical execution inventory missing') }
     if (-not (Test-Path $evtxDir)) { $caveats.Add('Event logs not exported - Sigma detection could not run') }
+    # v2.55: 4688 auditing off = the whole process-lineage / session-attribution /
+    # Office-chain detection layer is blind. Say it plainly instead of empty CSVs.
+    # 4688 can live in the filtered export OR the full EvtxECmd conversion - check both.
+    if (Test-Path $evtxDir) {
+        $has4688 = $false
+        foreach ($s4688 in @('security_events', 'evtx_ecmd/Security')) {
+            $r4688 = @(Import-CaseCsv $s4688)
+            if ($r4688.Count -eq 0) { continue }
+            $idCol = ($r4688[0].PSObject.Properties.Name | Where-Object { $_ -match '^(?i)(eventid|id)$' } | Select-Object -First 1)
+            if ($idCol -and @($r4688 | Where-Object { "$($_.$idCol)" -eq '4688' } | Select-Object -First 1)) { $has4688 = $true; break }
+        }
+        if (-not $has4688) { $has4688 = (@(Import-CaseCsv 'security_proc_events').Count -gt 0) }
+        if (-not $has4688) {
+            $caveats.Add('Process-creation auditing (4688) is NOT enabled on this host - no process lineage, no session attribution and no parent-child detections were possible. Enable: auditpol /set /subcategory:"Process Creation" /success:enable (and consider Sysmon)')
+        } elseif (@(Import-CaseCsv 'security_proc_events').Count -eq 0) {
+            $caveats.Add('4688 events exist but command-line capture is NOT enabled - detections that need process command lines (encoded PowerShell, proxy execution) ran blind. Enable the "Include command line in process creation events" policy')
+        }
+    }
     if ($rank -eq 0) { $caveats.Add('Too little evidence was collected to draw a conclusion') }
 
     $ownerLines = @{
@@ -7347,7 +7609,7 @@ function Get-CaseNarrative {
     $L.Add("")
     if (-not $script:Verdict) { $L.Add("The verdict engine did not run - this draft has no assessment. Review the evidence sections."); return $L.ToArray() }
     $v = $script:Verdict
-    $L.Add("ASSESSMENT: $($v.Level) (confidence $($v.ConfidencePercent)% of expected evidence collected). $($v.OwnerLine)")
+    $L.Add("ASSESSMENT: $($v.Level) (evidence coverage $($v.ConfidencePercent)% of expected sources - not a probability of compromise). $($v.OwnerLine)")
     $L.Add("")
     $strong = @($v.Signals | Where-Object { $_.Weight -ge 3 })
     $notable = @($v.Signals | Where-Object { $_.Weight -eq 2 })
@@ -7384,7 +7646,7 @@ function Get-CaseNarrative {
             $ft2 = $null
             try { $ft2 = Get-Content -LiteralPath $ftPath -Raw -ErrorAction Stop | ConvertFrom-Json } catch { }
             if ($ft2) {
-                $L.Add("FOCUSED ANALYSIS: a focus dossier was built for '$($ft2.Indicator)' - $($ft2.HitCount) evidence row(s) across $($ft2.SourcesHit.PSObject.Properties.Count) artifact source(s), $($ft2.InstanceCount) instance(s), $($ft2.Rounds) expansion round(s). Full activity chain and per-instance detail: focus\focus_report.html")
+                $L.Add("FOCUSED ANALYSIS: a focus dossier was built for '$($ft2.Indicator)' - $($ft2.HitCount) evidence row(s) across $(@($ft2.SourcesHit.PSObject.Properties).Count) artifact source(s), $($ft2.InstanceCount) instance(s), $($ft2.Rounds) expansion round(s). Full activity chain and per-instance detail: focus\focus_report.html")
                 $L.Add("")
             }
         }
@@ -7426,7 +7688,7 @@ function Invoke-RegenerateOutputs {
                 }) -Force
             }
             $vColor = switch ($script:Verdict.LevelRank) { 4 { 'Red' } 3 { 'Red' } 2 { 'Yellow' } 1 { 'Green' } default { 'DarkYellow' } }
-            Write-CaseLog "    VERDICT: $($script:Verdict.Level) (confidence $($script:Verdict.ConfidencePercent)%) - $($script:Verdict.Signals.Count) signal(s), $($script:Verdict.Caveats.Count) caveat(s) -> verdict.json" $vColor
+            Write-CaseLog "    VERDICT: $($script:Verdict.Level) (evidence coverage $($script:Verdict.ConfidencePercent)%) - $($script:Verdict.Signals.Count) signal(s), $($script:Verdict.Caveats.Count) caveat(s) -> verdict.json" $vColor
         }
     } catch { Write-CaseLog "    verdict engine failed: $($_.Exception.Message)" 'DarkYellow' }
     # v2.45 auto-correlation: when the scoring calls a process malicious (HIGH) - or a YARA-high
@@ -7602,7 +7864,7 @@ function New-Package {
         Write-Host "  Memory dump : $(if (Test-Path $MemDir) { "$MemDir (NOT in zip - send separately)" } else { 'not captured' })"
         if ($script:Verdict) {
             $vColor = switch ($script:Verdict.LevelRank) { 4 { 'Red' } 3 { 'Red' } 2 { 'Yellow' } 1 { 'Green' } default { 'DarkYellow' } }
-            Write-Host "  VERDICT     : $($script:Verdict.Level)  (confidence $($script:Verdict.ConfidencePercent)%)  - details: report.html / verdict.json" $vColor
+            Write-Host "  VERDICT     : $($script:Verdict.Level)  (evidence coverage $($script:Verdict.ConfidencePercent)%)  - details: report.html / verdict.json" $vColor
         }
         Write-Host ""
         Write-Host "  Send the ZIP file (and memory dump if captured) to the analyst." -ForegroundColor Yellow

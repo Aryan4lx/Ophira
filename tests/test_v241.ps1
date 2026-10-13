@@ -34,7 +34,7 @@ foreach ($fp in @(@('dbbfd9f3-9508-478b-887e-03ddb9236909', 'Suspicious Service 
 $m = [regex]::Match($src, "(?s)function Get-CompromiseVerdict \{.*?\r?\n\}")
 if (-not $m.Success) { throw 'Get-CompromiseVerdict extract failed' }
 $defs = ''
-foreach ($n in @('Import-CaseCsv', 'Get-DotNetRelease')) {
+foreach ($n in @('Import-CaseCsv', 'Get-DotNetRelease', 'Get-LvlRank', 'Split-TagList', 'Get-TacticLabel', 'Test-SigmaSelfNoise', 'Remove-SigmaDuplicateEvents', 'Get-IpCloudClass')) {
     $m2 = [regex]::Match($src, "(?s)function $n \{.*?\r?\n\}")
     if ($m2.Success) { $defs += $m2.Value + "`r`n" }
 }

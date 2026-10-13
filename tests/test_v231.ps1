@@ -48,7 +48,7 @@ $script:Verdict = [pscustomobject]@{
 }
 $lines = @(Get-CaseNarrative)
 $text = $lines -join "`n"
-Check "draft: assessment line with verdict + confidence" (($lines | Where-Object { $_ -match 'ASSESSMENT: LIKELY COMPROMISED \(confidence 78%' }).Count -eq 1)
+Check "draft: assessment line with verdict + coverage" (($lines | Where-Object { $_ -match 'ASSESSMENT: LIKELY COMPROMISED \(evidence coverage 78%' }).Count -eq 1)
 Check "draft: strong signal rendered with detail" (($lines | Where-Object { $_ -match 'Defender real-time protection DISABLED x1 \(DC-IIS\)' }).Count -eq 1)
 Check "draft: weight-2 signal prefixed as 'Also seen'" (($lines | Where-Object { $_ -match 'Also seen: Hunt technique' }).Count -eq 1)
 Check "draft: high findings as leads, info/medium excluded" (($lines | Where-Object { $_ -match 'T1036\.003.*winupd' }).Count -eq 1 -and $text -notmatch 'Discovery command storm')
