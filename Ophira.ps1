@@ -1,5 +1,5 @@
 ﻿<#
-Ophira v2.58  -  Windows Incident Response Triage Toolkit
+Ophira v2.59  -  Windows Incident Response Triage Toolkit
 READ-ONLY by design: never modifies the system, only reads and copies data
 into its own output folder. Intended to be handed to a system owner or run
 by a responder during early triage / threat hunting.
@@ -45,7 +45,7 @@ param(
     [switch]$ExitVerdict
 )
 
-$ScriptVersion = "2.58"
+$ScriptVersion = "2.59"
 $ErrorActionPreference = 'Continue'
 $ProgressPreference = 'SilentlyContinue'
 
@@ -805,6 +805,7 @@ function Show-ToolLinks {
         [pscustomobject]@{ Tool = 'RECmd (EZ)'; Url = 'https://ericzimmerman.github.io/'; Use = 'Parse mode: batch registry deep-dive over saved hives (bundled batch: tools\recmd\ophira-registry.reb)' }
         [pscustomobject]@{ Tool = 'EvtxECmd (EZ)'; Url = 'https://ericzimmerman.github.io/'; Use = 'Parse mode: FULL evtx->CSV conversion into csv\evtx_ecmd (timeframe deep-dives beyond the EID-filtered parses)' }
         [pscustomobject]@{ Tool = 'SQLECmd (EZ, .NET 9)'; Url = 'https://ericzimmerman.github.io/'; Use = 'module 8.7 browser SQLite parse (History/Downloads)' }
+        [pscustomobject]@{ Tool = 'SrumECmd (EZ, .NET 9)'; Url = 'https://ericzimmerman.github.io/'; Use = 'analyst-side SRUM parse in -Mode Parse (per-app network usage history)' }
         [pscustomobject]@{ Tool = 'LOLDrivers datasets'; Url = 'https://github.com/magicsword-io/LOLDrivers'; Use = 'module 8.10 malicious/vulnerable driver hash lists into tools\loldrivers' }
         [pscustomobject]@{ Tool = 'velociraptor (enterprise)'; Url = 'https://github.com/Velocidex/velociraptor/releases'; Use = 'if you move to always-on agent-based DFIR' }
     )
@@ -831,6 +832,7 @@ function Invoke-SetupMode {
         [pscustomobject]@{ Name = 'SBECmd';      Direct = 'https://download.ericzimmermanstools.com/SBECmd.zip'; Zip = $true; Target = 'endpoint' }
         [pscustomobject]@{ Name = 'AppCompatParser'; Direct = 'https://download.ericzimmermanstools.com/AppCompatParser.zip'; Zip = $true; Target = 'endpoint' }
         [pscustomobject]@{ Name = 'SQLECmd';     Direct = 'https://download.ericzimmermanstools.com/net9/SQLECmd.zip'; Zip = $true; Target = 'analyst' }
+        [pscustomobject]@{ Name = 'SrumECmd';    Direct = 'https://download.ericzimmermanstools.com/net9/SrumECmd.zip'; Zip = $true; Target = 'analyst' }
         [pscustomobject]@{ Name = 'RECmd';       Direct = 'https://download.ericzimmermanstools.com/RECmd.zip'; Zip = $true; Target = 'endpoint' }
         [pscustomobject]@{ Name = 'EvtxECmd';    Direct = 'https://download.ericzimmermanstools.com/EvtxECmd.zip'; Zip = $true; Target = 'analyst' }
         [pscustomobject]@{ Name = 'loldrivers';  Raw = @('https://raw.githubusercontent.com/magicsword-io/LOLDrivers/main/detections/hashes/samples_malicious.sha256', 'https://raw.githubusercontent.com/magicsword-io/LOLDrivers/main/detections/hashes/samples_vulnerable.sha256'); Zip = $false; Target = 'endpoint' }
@@ -1876,6 +1878,7 @@ function Get-ParseNeeds {
         @{ Artifact = 'lnk_parsed.csv';         Parser = 'LECmd';         Net = 'net4'; Input = 'recent';               Live = $false }
         @{ Artifact = 'jumplist_parsed*.csv';   Parser = 'JLECmd';        Net = 'net4'; Input = 'jumplists';            Live = $false }
         @{ Artifact = 'browser_history.csv';    Parser = 'SQLECmd';       Net = 'net9'; Input = 'browser';              Live = $false }
+        @{ Artifact = 'srum_usage.csv';         Parser = 'SrumECmd';      Net = 'net9'; Input = 'sru\SRUDB.dat';        Live = $false }
         @{ Artifact = 'execution_timeline.csv'; Parser = 'chainsaw';      Net = 'none'; Input = 'registry\SYSTEM.hiv';  Live = $false }
         @{ Artifact = 'hayabusa_timeline.csv';  Parser = 'hayabusa';      Net = 'none'; Input = 'evtx';                 Live = $false }
         @{ Artifact = 'shellbags.csv';          Parser = 'SBECmd';        Net = 'net4'; Input = 'live C:\Users';        Live = $true }
@@ -3043,7 +3046,7 @@ $script:Modules = @(
             }
             Save-Rows -Name 'userassist' -Rows (Get-UserAssistRows)
         } }
-    [pscustomobject]@{ Id = '5.3'; Cat = 'ARTIFACTS'; Name = 'SRUM database (larger, uses VSS copy)'; Default = $false; Quick = $false;
+    [pscustomobject]@{ Id = '5.3'; Cat = 'ARTIFACTS'; Name = 'SRUM database (larger, uses VSS copy)'; Default = $true; Quick = $false;
         Run = {
             $sru = Join-Path $env:SystemRoot 'System32\sru\SRUDB.dat'
             if (-not (Test-Path $sru)) { return }
@@ -3052,7 +3055,7 @@ $script:Modules = @(
             $out = Join-Path $dest 'SRUDB.dat'
             $null = Copy-LockedFile -Source $sru -Dest $out
         } }
-    [pscustomobject]@{ Id = '5.4'; Cat = 'ARTIFACTS'; Name = 'Execution history (chainsaw: shimcache+amcache timeline, SRUM, evtx gaps)'; Default = $true; Quick = $false;
+    [pscustomobject]@{ Id = '5.4'; Cat = 'ARTIFACTS'; Name = 'Execution history (chainsaw: shimcache+amcache timeline, evtx gaps)'; Default = $true; Quick = $false;
         Run = {
             $tDir = Get-ToolsDir
             $cs = $null
@@ -3083,11 +3086,9 @@ $script:Modules = @(
                 $n = @(Get-Content -LiteralPath $out | Select-Object -Skip 1).Count
                 Write-CaseLog "    execution timeline: $n entries in csv\execution_timeline.csv" 'Gray'
             } else { Write-CaseLog "    chainsaw shimcache analysis failed" 'DarkYellow' }
-            $sruCopy = Join-Path $RawDir 'sru\SRUDB.dat'
-            if ((Test-Path $sruCopy) -and (Test-Path $sft)) {
-                Write-CaseLog "    chainsaw: SRUM usage analysis..." 'Cyan'
-                $null = Invoke-NativeTool -ExePath $cs.FullName -ToolArgs @('analyse', 'srum', '-s', $sft, $sruCopy, '-o', (Get-CaseCsvFullPath 'srum_usage'), '-q')
-            }
+            # v2.59: SRUM parsing moved analyst-side (module 5.3 saves raw\sru\SRUDB.dat; SrumECmd in
+            # -Mode Parse produces the deep usage + network-connection tables - chainsaw's shallower
+            # pass never ran in practice and would have split the schema story for one artifact)
             $evtxDir = Join-Path $RawDir 'evtx'
             if (Test-Path $evtxDir) {
                 $anDir = Join-Path $RawDir 'analysis'
@@ -5664,6 +5665,35 @@ tr.techrow{cursor:pointer}
     $null = $sb.AppendLine("<a name='timeline'></a><h2>Master timeline (gathered evidence chronology)</h2>")
     $null = $sb.AppendLine("<div class='card'>The full chronology lives in <b>csv\$(ConvertTo-HtmlEsc (Get-CaseCsvPath 'supertimeline'))</b> ($(ConvertTo-HtmlEsc $tlAll.Count) events from $($tlSources.Count) evidence sources - open it in Excel/Timeline Explorer and filter by Timestamp). Evidence sources woven: $(ConvertTo-HtmlEsc ($tlSources -join ', ')). Scanner conclusions (Sigma detections, hunt findings, beacons) are intentionally NOT part of it - they have their own sections above. For windowed pivots with per-source/busiest-minute summaries run <b>-Mode Timeline</b>.</div>")
     if ($tlAll.Count -gt 0) {
+        # v2.59: per-day activity sparkline - the case's shape at a glance before the newest-150 table
+        $tlDays = @{}
+        foreach ($t in $tlAll) {
+            $d = "$($t.Timestamp)"
+            if ($d.Length -ge 10 -and $d -match '^\d{4}-\d{2}-\d{2}') {
+                $k = $d.Substring(0, 10)
+                if (-not $tlDays.ContainsKey($k)) { $tlDays[$k] = 0 }
+                $tlDays[$k]++
+            }
+        }
+        $tlDayKeys = @($tlDays.Keys | Sort-Object)
+        if ($tlDayKeys.Count -gt 120) { $tlDayKeys = @($tlDayKeys | Select-Object -Last 120) }
+        if ($tlDayKeys.Count -gt 1) {
+            $tlMax = ($tlDayKeys | ForEach-Object { $tlDays[$_] } | Measure-Object -Maximum).Maximum
+            $tlTop = @($tlDayKeys | Sort-Object { $tlDays[$_] } -Descending | Select-Object -First 1)[0]
+            $bw = 8; $tGap = 2; $sh = 60
+            $bars = New-Object System.Text.StringBuilder
+            $x = 0
+            foreach ($k in $tlDayKeys) {
+                $bh = [Math]::Max(2, [int][Math]::Round($sh * $tlDays[$k] / $tlMax))
+                $fill = if ($k -eq $tlTop) { '#e0a93e' } else { '#4d8fd1' }
+                $null = $bars.Append("<rect x='$x' y='$($sh - $bh)' width='$bw' height='$bh' fill='$fill'><title>$k : $($tlDays[$k]) event(s)</title></rect>")
+                $x += $bw + $tGap
+            }
+            $sw = $x - $tGap
+            $null = $sb.AppendLine("<div class='card'><b>Activity per day</b> <span class='meta'>(busiest: $tlTop with $($tlDays[$tlTop]) events - hover a bar for its count; showing the last $($tlDayKeys.Count) day(s) with activity)</span><svg viewBox='0 0 $sw $sh' width='100%' height='$sh' preserveAspectRatio='none' style='margin-top:6px'>$($bars.ToString())</svg></div>")
+        }
+    }
+    if ($tlAll.Count -gt 0) {
         $tlShow = @(@($tlAll | Sort-Object { "$($_.Timestamp)" } | Select-Object -Last 150))
         [array]::Reverse($tlShow)
         $null = $sb.AppendLine("<div class='meta'>Newest 150 of $($tlAll.Count) events, newest first:</div>")
@@ -5935,7 +5965,7 @@ tr.techrow{cursor:pointer}
         'memory_malfind'                  = 'Volatility malfind - hidden/injected memory regions'
         'memory_netscan'                  = 'Volatility netscan - network artifacts found in RAM'
         'recyclebin'                      = 'RBCmd recycle bin parse (original paths + delete times)'
-        'srum_usage'                      = 'SRUM: per-app resource/network usage over weeks'
+        'srum_usage'                      = 'SRUM: per-app network usage history over weeks (bytes sent/received per hour - SrumECmd deep parse, -Mode Parse)'
         'logging_gaps'                    = 'Log clear/stop events + evtx coverage gaps'
         'parse_needed'                    = 'Artifacts not finished on the endpoint + exactly how to finish them (-Mode Parse)'
         'hunt_findings'                   = 'Technique-based hunt detections (renamed binaries, side-loads, download-exec, LSASS access, Office chains, proxy-exec, share staging, UAC bypass, discovery storms, Defender tamper, timestomping, DCSync, Kerberoasting, spray, webshells)'
@@ -6223,6 +6253,16 @@ function New-SuperTimeline {
         param($r)
         $tp = ''; foreach ($pn in @('TargetFilePath', 'TargetPath', 'DownloadPath', 'FullPath', 'Path')) { $p2 = $r.PSObject.Properties[$pn]; if ($p2 -and "$($p2.Value)") { $tp = "$($p2.Value)"; break } }
         @((& $anyT $r ''), 'browser download', '', (& $leaf $tp), "$($r.PSObject.Properties['URL'].Value)")
+    }
+    # v2.59: SRUM per-app network history (deep SrumECmd parse) - zero-traffic usage rows are
+    # skipped so the cap is spent on real events
+    & $weave 'srum_usage' 2000 {
+        param($r)
+        $bs = 0L; $br = 0L
+        try { $bs = [long]"$($r.BytesSent)" } catch { }
+        try { $br = [long]"$($r.BytesReceived)" } catch { }
+        if (($bs + $br) -le 0) { return $null }
+        @("$($r.Timestamp)", 'app network usage (SRUM)', "$($r.User)", (& $leaf $r.Application), "sent $bs / recv $br bytes")
     }
     & $weave 'iis_requests' 1000 { param($r) @("$($r.Time)", "web request (IIS) $("$($r.Method)")", '', "$($r.ClientIp) -> $("$($r.Uri)")", "status $($r.Status) ua=$("$($r.UserAgent)")") }
     # scanner/derived outputs (hayabusa Sigma results, hunt findings, session attribution,
@@ -7853,6 +7893,19 @@ function Get-CaseNarrative {
     return $L.ToArray()
 }
 
+function ConvertFrom-SrumCsv {
+    # v2.59: normalize one SrumECmd NetworkUsages CSV into the case schema - 'Application'
+    # matches the entity binFromRow list and the report's top-consumer column patterns, so
+    # both consumers work without schema branches. Returns @() on missing/unreadable input.
+    # (SrumECmd's NetworkConnections table is deliberately NOT imported: on the real schema
+    # every row carries an opaque AppId with no ExeInfo - 3k rows, zero attribution.)
+    param([string]$Path)
+    if (-not (Test-Path -LiteralPath $Path)) { return @() }
+    $raw = @()
+    try { $raw = @(Import-Csv -LiteralPath $Path -ErrorAction Stop) } catch { return @() }
+    @($raw | ForEach-Object { [pscustomobject]@{ Timestamp = "$($_.Timestamp)"; Application = "$($_.ExeInfo)"; User = "$($_.UserName)"; BytesSent = "$($_.BytesSent)"; BytesReceived = "$($_.BytesReceived)"; InterfaceType = "$($_.InterfaceType)" } })
+}
+
 function Import-PlasoTimeline {
     # v2.57: analyst-side plaso deep-timeline import. The analyst runs plaso's
     # log2timeline.py against the case's raw\ folder on their own box (Ophira never ships
@@ -8233,7 +8286,7 @@ function Invoke-SetupWizard {
     Write-Host ""
     Write-Host "=== Setup companion tools ===" -ForegroundColor Cyan
     Write-Host "Tools live in tools\ subfolders. Available:" -ForegroundColor Gray
-    Write-Host "  winpmem  hayabusa  volatility3  chainsaw  AmcacheParser  RBCmd  MFTECmd  PECmd  LECmd  JLECmd  SBECmd  SQLECmd  loldrivers  yara" -ForegroundColor White
+    Write-Host "  winpmem  hayabusa  volatility3  chainsaw  AmcacheParser  RBCmd  MFTECmd  PECmd  LECmd  JLECmd  SBECmd  SQLECmd  SrumECmd  loldrivers  yara" -ForegroundColor White
     Write-Host "ENTER = walk through all tools (confirm each download)," 
     Write-Host "or give a comma-separated list (e.g. hayabusa,winpmem)."
     $inp = (Read-Host "Tools [all]").Trim()
@@ -8553,6 +8606,27 @@ function Invoke-ParseMode {
             & $merge '*ChromiumBrowser_KeywordSearches_*.csv' 'browser_searches'
             Get-ChildItem -Path $script:CsvDir -Filter 'SQLite.Interop.dll' -File -ErrorAction SilentlyContinue | Remove-Item -Force -ErrorAction SilentlyContinue
             Invoke-BrowserIocXref
+        }
+    }
+    # v2.59: SRUM deep parse - module 5.3 saves the locked SRUDB.dat raw; SrumECmd's per-app
+    # usage table (bytes sent/received per hour over ~30 days) is the analyst-side completion
+    # (net9 like SQLECmd - collected on the endpoint, parsed here, never shipped)
+    $sruDb = Join-Path $script:RawDir 'sru\SRUDB.dat'
+    if ((Test-Path -LiteralPath $sruDb) -and -not (Test-CaseCsv 'srum_usage')) {
+        $sruExe = & $findTool 'SrumECmd*.exe'
+        if ($sruExe) {
+            $sruSoft = Join-Path (Join-Path $script:RawDir 'registry') 'SOFTWARE.hiv'
+            $sruArgs = @('-f', $sruDb)
+            if (Test-Path -LiteralPath $sruSoft) { $sruArgs += @('-r', $sruSoft) }
+            $sruTmp = Join-Path ([IO.Path]::GetTempPath()) ("ophira_srum_" + (Get-Date -Format 'HHmmss'))
+            New-Item -ItemType Directory -Path $sruTmp -Force | Out-Null
+            & $runTool $sruExe ($sruArgs + @('--csv', $sruTmp)) 'SrumECmd: SRUM per-app network usage'
+            $f3 = @(Get-ChildItem -Path $sruTmp -Filter '*NetworkUsages_Output.csv' -File -ErrorAction SilentlyContinue | Select-Object -First 1)
+            if ($f3.Count -gt 0) {
+                $rows3 = @(ConvertFrom-SrumCsv -Path $f3[0].FullName)
+                if ($rows3.Count -gt 0) { Save-Rows -Name 'srum_usage' -Rows $rows3; Write-Host "  SRUM: $($rows3.Count) row(s) -> csv\$(Get-CaseCsvPath 'srum_usage')" -ForegroundColor Gray }
+            }
+            Remove-Item -LiteralPath $sruTmp -Recurse -Force -ErrorAction SilentlyContinue
         }
     }
     # RECmd batch registry deep-dive over saved hives (v2.25; v2.53: .reb format - RECmd 2.x
