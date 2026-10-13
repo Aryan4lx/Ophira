@@ -1,5 +1,5 @@
 ﻿<#
-Ophira v2.57  -  Windows Incident Response Triage Toolkit
+Ophira v2.58  -  Windows Incident Response Triage Toolkit
 READ-ONLY by design: never modifies the system, only reads and copies data
 into its own output folder. Intended to be handed to a system owner or run
 by a responder during early triage / threat hunting.
@@ -45,7 +45,7 @@ param(
     [switch]$ExitVerdict
 )
 
-$ScriptVersion = "2.57"
+$ScriptVersion = "2.58"
 $ErrorActionPreference = 'Continue'
 $ProgressPreference = 'SilentlyContinue'
 
@@ -232,11 +232,32 @@ $script:CsvCatMap = @{
     'ioc_export' = 'derived'; 'process_pivot' = 'derived'
 }
 
+function Get-LocalAdminMembers {
+    # v2.58: parse the member lines out of "net localgroup administrators" output. The old
+    # code used a hardcoded Select-Object -Skip 6 which overshot the 4 non-blank header lines
+    # real output has (Alias/Comment/Members/dashes) - the members themselves were skipped and
+    # local_admins.csv was ALWAYS empty. Locale ceiling: net.exe output is localized on
+    # non-English Windows; this parser matches the English shapes (status quo there).
+    param([string[]]$Lines)
+    $members = @()
+    $inMembers = $false
+    foreach ($line in @($Lines)) {
+        if ("$line" -notmatch '\S') { continue }
+        if ("$line" -match '^Members\s*$') { $inMembers = $true; continue }
+        if (-not $inMembers) { continue }
+        if ("$line" -match '^-{5,}') { continue }
+        if ("$line" -match 'command completed successfully') { break }
+        $members += ("$line".Trim())
+    }
+    return $members
+}
+
 function Get-CaseCsvPath {
     # Relative path of a case CSV under CsvDir: mapped category subfolder or flat fallback.
     param([string]$Name)
     if ($Name -notmatch '\.csv$') { $Name = "$Name.csv" }
-    $cat = $script:CsvCatMap[($Name -replace '\.csv$', '').ToLower()]
+    $cat = $null
+    if ($script:CsvCatMap) { $cat = $script:CsvCatMap[($Name -replace '\.csv$', '').ToLower()] }
     if ($cat) { return "$cat\$Name" }
     return $Name
 }
@@ -1868,7 +1889,17 @@ function Get-ParseNeeds {
         if ($c.Live) { $how = 'endpoint-only source - rerun collection elevated on the host' }
         elseif (-not (Test-Path (Join-Path $RawDir $c.Input))) { $how = 'raw evidence not collected (module skipped on endpoint)' }
         elseif ($c.Net -eq 'net9' -and -not $nineOk) { $how = 'endpoint lacks .NET 9 - run on analyst PC: Ophira.ps1 -Mode Parse -Path <case>' }
-        else { $how = 'tool was missing on endpoint - run on analyst PC: Ophira.ps1 -Mode Parse -Path <case>' }
+        else {
+            $how = 'tool was missing on endpoint - run on analyst PC: Ophira.ps1 -Mode Parse -Path <case>'
+            # v2.58: if the parser is missing from the kit too, -Mode Parse cannot finish this -
+            # say so instead of sending the analyst into a Parse loop that changes nothing
+            $toolExe = $null
+            try {
+                $td = Get-ToolsDir
+                if ($td) { $toolExe = @(Get-ChildItem -LiteralPath $td -Recurse -Filter "$($c.Parser).exe" -File -ErrorAction SilentlyContinue | Select-Object -First 1) }
+            } catch { }
+            if (-not $toolExe) { $how = "parser tool missing from the kit - run Ophira.ps1 -Mode Setup first (downloads $($c.Parser)), then re-run -Mode Parse -Path <case>" }
+        }
         $rows += [pscustomobject]@{ Artifact = $c.Artifact; Parser = $c.Parser; DotNet = $c.Net; RawInput = $c.Input; HowToFinish = $how }
     }
     # v2.57: the plaso deep-timeline TODO lives right next to the generated results so the
@@ -1888,7 +1919,7 @@ $script:SharedFunctions = @(
     'Save-Rows', 'Out-RawText', 'Invoke-ExeCapture', 'Invoke-NativeTool', 'Get-WmiOrCim', 'Convert-WmiDate',
     'Test-IsPublicIp', 'Test-IsUserWritablePath', 'Get-SignatureInfo', 'Get-SysmonState',
     'Get-UserProfileList', 'Get-UserAssistRows', 'ConvertTo-Rot13', 'Get-FilteredEvents', 'Export-Evtx',
-    'Import-CaseCsv', 'Invoke-BrowserIocXref', 'Get-EventDataRows', 'Get-IisW3cRows', 'Get-StartupInfoRows', 'Get-WerReportRows', 'Test-SigmaSelfNoise', 'Remove-SigmaDuplicateEvents', 'Get-IpCloudClass'
+    'Import-CaseCsv', 'Invoke-BrowserIocXref', 'Get-EventDataRows', 'Get-IisW3cRows', 'Get-StartupInfoRows', 'Get-WerReportRows', 'Test-SigmaSelfNoise', 'Remove-SigmaDuplicateEvents', 'Get-IpCloudClass', 'Get-LocalAdminMembers'
 )
 
 $script:ModuleWorkerText = @'
@@ -1924,6 +1955,12 @@ function New-WorkerPreamble {
         $lit = "'" + ("$($seed[$k])" -replace "'", "''") + "'"
         [void]$sb.AppendLine("`$$k = $lit")
     }
+    # v2.58: the sortment map is DATA, not a function - worker runspaces never received it,
+    # so Save-Rows -> Get-CaseCsvPath indexed a null array and EVERY pooled module died with
+    # "Cannot index into a null array" (advanced-mode collections broken since v2.42; the
+    # SimpleUI front-screen path ran modules inline in-process and masked it completely)
+    $mapLit = (@($script:CsvCatMap.Keys | Sort-Object | ForEach-Object { "    '{0}' = '{1}'" -f $_, "$($script:CsvCatMap[$_])" }) -join "`r`n")
+    [void]$sb.AppendLine("`$script:CsvCatMap = @{`r`n$mapLit`r`n}")
     [void]$sb.AppendLine("`$script:LogHours = $($LogHours)")
     [void]$sb.AppendLine("`$script:LogStartDT = $(if ($script:LogStartDT) { "[datetime]'" + $script:LogStartDT.ToString('o') + "'" } else { '$null' })")
     [void]$sb.AppendLine("`$script:LogEndDT = $(if ($script:LogEndDT) { "[datetime]'" + $script:LogEndDT.ToString('o') + "'" } else { '$null' })")
@@ -3512,9 +3549,9 @@ public class OphiraDump {
             # local administrators (account entities + rogue-admin hunting)
             $la = @()
             try {
-                $laOut = & net.exe localgroup administrators 2>$null | Where-Object { $_ -match '\S' } | Select-Object -Skip 6
-                $laOut = @($laOut | Where-Object { $_ -notmatch 'The command completed' })
-                foreach ($member in $laOut) { $la += [pscustomobject]@{ Group = 'Administrators'; Member = "$member".Trim() } }
+                foreach ($member in (Get-LocalAdminMembers @(& net.exe localgroup administrators 2>$null))) {
+                    $la += [pscustomobject]@{ Group = 'Administrators'; Member = "$member" }
+                }
                 if ($la.Count -gt 0) { Write-CaseLog "    local admins: $($la.Count) member(s)" 'Gray' }
             } catch { }
             Save-Rows -Name 'local_admins' -Rows $la
@@ -5769,6 +5806,10 @@ tr.techrow{cursor:pointer}
     foreach ($pb in $postureBad) {
         $recs.Add("Hardening: $($pb.Check) - $($pb.Detail)")
     }
+    # v2.58: 4688 disabled = hardening recommendation only (WARN posture row, never a verdict weight)
+    foreach ($p4688 in @($posture | Where-Object { "$($_.Check)" -match '4688' -and "$($_.Status)" -ne 'GOOD' })) {
+        $recs.Add("Hardening: 4688 process-creation auditing is disabled on this host - process lineage, session attribution and the 4688 hunt rules run blind. Enable via GPO: Advanced Audit Policy > Detailed Tracking > Audit Process Creation (success).")
+    }
     if (-not $Sysmon) {
         $recs.Add('No Sysmon on this host - the conclusion is built from the execution-artifact spine (prefetch, amcache, BAM/DAM, shimcache, 4688, USN/$MFT, Defender history), and per-instance joins (network/DLL/file/registry/injection) are limited. Ophira never installs anything; if the Sysmon owner adds Sysmon with a broad community configuration, the next collection gains full process-precise telemetry.')
     }
@@ -5838,7 +5879,7 @@ tr.techrow{cursor:pointer}
         'powershell_events'               = 'PowerShell 4104 script block logs'
         'sysmon_events'                   = 'Sysmon events in window (raw)'
         'sysmon_network'                  = 'Sysmon EID 3 network events - source for beaconing'
-        'rdp_localsession'                = 'Local RDP session events'
+        'rdp_localsession'                = 'Local RDP session events (EID 21/22/24/25 - note: EID 59 rows in this channel are VMware session probes, not RDP)'
         'rdp_connections'                 = 'Inbound RDP connection events'
         'rdp_client_targets'              = 'Outbound RDP destinations (registry MRU)'
         'system_events'                   = 'System log events in window'
@@ -5933,6 +5974,37 @@ tr.techrow{cursor:pointer}
         'delta_new'                       = 'Findings NEW since the previous collection'
         'supertimeline'                   = 'MASTER TIMELINE: gathered evidence woven chronologically (logons, 4688/5145, Kerberos, Sysmon, prefetch, $MFT births, browser, WER, StartupInfo - scanner outputs excluded by design) with Timestamp/Source/Type/Actor/Entity/Detail - filter to any timeframe in Excel/Timeline Explorer'
     }
+    # v2.58: zero-row artifacts explain themselves - the honest-empty map (what condition
+    # produced the empty, and whether empty is good, boring, or a blind spot to fix)
+    $emptyWhy = @{
+        'security_proc_events'            = 'no 4688 events in the Security log - process-creation auditing appears disabled (see the hardening recommendation); lineage and session attribution run thin'
+        'process_chains'                  = 'built from 4688 events - with process auditing disabled almost no lineage is recoverable'
+        'session_activity'                = 'joins 4688/5145 events - nothing to join when process/share auditing is disabled'
+        'rdp_localsession'                = 'no RDP session events (EID 21/22/24/25) in the window - EID 59 rows in this channel are VMware session probes, not RDP activity'
+        'rdp_connections'                 = 'no inbound RDP connection events (EID 1149) in the window'
+        'system_new_services'             = 'no EID 7045 service installs in the window'
+        'security_task_install'           = 'no EID 4698 scheduled-task installs in the window'
+        'security_share_access'           = 'no 5145 share-access events (share auditing disabled or no remote file access)'
+        'security_bruteforce_candidates'  = 'no sources with 5+ failed logons (empty is good)'
+        'usn_write_bursts'                = 'no mass file-modification windows in the USN journal (no ransomware-style burst - empty is good)'
+        'yara_hits'                       = 'the bundled rules matched nothing in the scanned set - see yara_scanned.csv for what was scanned'
+        'flash_ioc_hits'                  = 'no IOC feed matches on live processes/files'
+        'drivers_flagged'                 = 'all drivers live in protected paths (empty is good)'
+        'svchost_audit'                   = 'no svchost masquerade indicators - all -k groups registered with ServiceDlls in place (empty is good)'
+        'wmi_event_consumers'             = 'no WMI event consumers on this host (rare persistence - empty is good)'
+        'wmi_bindings'                    = 'no WMI filter-to-consumer bindings (empty is good)'
+        'recyclebin_index'                = 'recycle bin empty at collection, or the RBCmd parser was unavailable - see parse_needed.csv'
+        'local_admins'                    = 'Administrators group listing came back empty (localized net.exe output can do this on non-English Windows)'
+        'office_mru'                      = 'no Office recent-document entries (Office not used or not installed)'
+        'rdp_client_targets'              = 'this host never initiated outbound RDP'
+        'remote_access'                   = 'no remote-access tools (AnyDesk/TeamViewer/ngrok-class) found (empty is good)'
+        'server_logs'                     = 'no IIS/HTTP error logs on this host (workstation role)'
+        'startup_info'                    = 'no StartupInfo evidence available'
+        'ioc_export'                      = 'no high-confidence indicators met the export bar (HIGH verdicts / YARA-high / high beacons)'
+        'smb_mounted_shares'              = 'no mapped drives at collection time'
+        'smb_active_connections'          = 'no live SMB sessions at collection time'
+        'userassist'                      = 'empty on cases collected before v2.54 (the parser had a GUID-matching bug) - re-collect to populate'
+    }
     $null = $sb.AppendLine("<table><tr><th>Artifact</th><th>Rows</th><th>What it is / what to look for</th></tr>")
     foreach ($f in @(Get-ChildItem -Path $CsvDir -Filter '*.csv' -File -Recurse -ErrorAction SilentlyContinue | Where-Object { @('sigma_rules', 'evtx_ecmd', 'recmd_out') -notcontains $_.Directory.Name } | Sort-Object Name)) {
         $rows = 0
@@ -5949,7 +6021,14 @@ tr.techrow{cursor:pointer}
         }
         $rel = $f.FullName.Substring($CsvDir.Length).TrimStart('\')
         $evLbl = "csv\$rel"
-        $null = $sb.AppendLine("<tr><td>$(ConvertTo-CaseFileLink $f.FullName $evLbl)</td><td>$rows</td><td>$(ConvertTo-HtmlEsc $d)</td></tr>")
+        # v2.58: zero-row artifacts explain themselves instead of showing a naked 0
+        $dTxt = $d
+        if ($rows -eq 0) {
+            $why = $emptyWhy[$base]
+            if (-not $why) { foreach ($wk in $emptyWhy.Keys) { if ($wk.EndsWith('*') -and $base.StartsWith($wk.TrimEnd('*'))) { $why = $emptyWhy[$wk]; break } } }
+            if ($why) { $dTxt = "$d <div class='meta' style='margin-top:4px'><b>why empty:</b> $(ConvertTo-HtmlEsc $why)</div>" }
+        }
+        $null = $sb.AppendLine("<tr><td>$(ConvertTo-CaseFileLink $f.FullName $evLbl)</td><td>$rows</td><td>$dTxt</td></tr>")
     }
     $null = $sb.AppendLine("</table>")
     $caseRoot = Split-Path -Parent $CsvDir
@@ -7824,6 +7903,16 @@ function Invoke-RegenerateOutputs {
     # Shared by New-Package and -Mode Parse: rebuilds every derived artifact from csv\
     # (supertimeline, gaps, parse_needed, verdict.json, SIEM export, ATT&CK layer, report.html).
     param([pscustomobject]$Case)
+    # v2.58: remove v2.53-era SBECmd orphan strays - the old module 8.8 leaked per-hive
+    # outputs (e.g. Aryan_NTUSER.csv, 0_Aryan_Aryan_UsrClass.csv) into the csv root, and
+    # cases collected before the v2.54 fix keep carrying them as nameless 0-row unknowns
+    # in the evidence index. shellbags.csv (the merged artifact) is never matched.
+    foreach ($orphan in @(Get-ChildItem -LiteralPath $script:CsvDir -File -Filter '*.csv' -ErrorAction SilentlyContinue)) {
+        if ($orphan.Name -match '^\d{0,3}.*_(NTUSER|UsrClass)\.csv$') {
+            Remove-Item -LiteralPath $orphan.FullName -Force -ErrorAction SilentlyContinue
+            Write-CaseLog "    removed v2.53 shellbag orphan: $($orphan.Name)" 'DarkYellow'
+        }
+    }
     try { New-SuperTimeline } catch { Write-CaseLog "    supertimeline failed: $($_.Exception.Message)" 'DarkYellow' }
     # v2.57: merge an analyst-dropped plaso deep-timeline (plaso.csv in the case root)
     try {
@@ -7839,6 +7928,22 @@ function Invoke-RegenerateOutputs {
     try { New-ProcessChains } catch { Write-CaseLog "    process lineage failed: $($_.Exception.Message)" 'DarkYellow' }
     try { New-LoggingGaps } catch { Write-CaseLog "    logging gaps failed: $($_.Exception.Message)" 'DarkYellow' }
     try { Get-ParseNeeds } catch { Write-CaseLog "    parse-needed check failed: $($_.Exception.Message)" 'DarkYellow' }
+    # v2.58: evidence-based 4688 check - the Security log is readable but zero 4688 rows were
+    # parsed, so process-creation auditing is disabled. WARN posture row + hardening rec ONLY -
+    # deliberately NOT a verdict weight (a missing log is a hardening gap, not compromise evidence).
+    try {
+        $authN = @(Import-CaseCsv 'security_auth_events').Count
+        $procN = @(Import-CaseCsv 'security_proc_events').Count
+        if ($authN -gt 0 -and $procN -eq 0) {
+            $postPath = Get-CaseCsvFullPath 'posture'
+            $post = @(); if (Test-Path -LiteralPath $postPath) { $post = @(Import-Csv -LiteralPath $postPath) }
+            if (-not @($post | Where-Object { "$($_.Check)" -match '4688' }).Count) {
+                $post += [pscustomobject]@{ Check = 'Process-creation auditing (4688)'; Status = 'WARN'; Detail = 'The Security log is readable but contains no 4688 events - process auditing is disabled, so process lineage and session attribution run blind. Enable via GPO: Advanced Audit Policy > Detailed Tracking > Audit Process Creation (success).' }
+                $post | Export-Csv -LiteralPath $postPath -NoTypeInformation -Encoding UTF8
+                Write-CaseLog "    posture: 4688 process-creation auditing appears DISABLED - hardening recommendation added (report-only, no verdict weight)" 'Yellow'
+            }
+        }
+    } catch { }
     $script:Verdict = $null
     try {
         $script:Verdict = Get-CompromiseVerdict
