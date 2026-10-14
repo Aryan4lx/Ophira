@@ -1,5 +1,5 @@
 ﻿<#
-Ophira v2.60  -  Windows Incident Response Triage Toolkit
+Ophira v2.61  -  Windows Incident Response Triage Toolkit
 READ-ONLY by design: never modifies the system, only reads and copies data
 into its own output folder. Intended to be handed to a system owner or run
 by a responder during early triage / threat hunting.
@@ -45,7 +45,7 @@ param(
     [switch]$ExitVerdict
 )
 
-$ScriptVersion = "2.60"
+$ScriptVersion = "2.61"
 $ErrorActionPreference = 'Continue'
 $ProgressPreference = 'SilentlyContinue'
 
@@ -4737,6 +4737,58 @@ function Import-CaseCsv {
     return @()
 }
 
+function Get-CleanCheckSummary {
+    # v2.61: the negative-evidence half of "is it infected?". A clean verdict is only defensible
+    # if the report shows WHICH checks produced it - every engine that ran and found nothing
+    # renders as "check - N examined, 0 flagged" (count included only where the data carries one).
+    # Checks WITH findings are omitted here: they already render as verdict signals + sections.
+    # Report-side only - reads existing CSVs, no new collection, works on old cases via -Mode Parse.
+    $out = New-Object System.Collections.Generic.List[object]
+    $add = { param([string]$check, [string]$detail) $out.Add([pscustomobject]@{ Check = $check; Detail = $detail }) }
+
+    # Sigma: total events vs critical/high (same dedupe + self-noise filter as the verdict/report)
+    $hay = @(Import-CaseCsv 'hayabusa_timeline')
+    if ($hay.Count -gt 0) {
+        if (Get-Command Remove-SigmaDuplicateEvents -ErrorAction SilentlyContinue) {
+            $hay = @(Remove-SigmaDuplicateEvents $hay | Where-Object { -not (Test-SigmaSelfNoise $_) })
+        }
+        $flags = @($hay | Where-Object { "$($_.Level)" -match '^(?i)(crit|high)$' })
+        if ($flags.Count -eq 0) { & $add 'Sigma rule scan' "$($hay.Count) events scanned, 0 critical/high detections" }
+    }
+    # YARA
+    $ySc = @(Import-CaseCsv 'yara_scanned')
+    if ($ySc.Count -gt 0 -and @(Import-CaseCsv 'yara_hits').Count -eq 0) { & $add 'YARA scan' "$($ySc.Count) binaries scanned, 0 matched" }
+    # IOC feed cross-referenced across every surface
+    $iHit = 0
+    foreach ($s in @('flash_ioc_hits', 'ioc_hits_amcache', 'ioc_hits_dns', 'ioc_hits_network', 'ioc_hits_mft', 'ioc_hits_hash', 'ioc_hits_browser')) { $iHit += @(Import-CaseCsv $s).Count }
+    $feed = $null
+    try { $feed = Get-IocList } catch { }
+    if ($feed) {
+        $feedN = $feed.Hashes.Count + $feed.Ips.Count + $feed.Domains.Count + $feed.Names.Count
+        if ($iHit -eq 0 -and $feedN -gt 0) { & $add 'IOC feed cross-reference' "$feedN indicators checked across live system, amcache, DNS, network, MFT, hashes and browser history - 0 matches" }
+    }
+    # Beaconing (only meaningful when network telemetry exists at all)
+    $netRows = @(Import-CaseCsv 'flash_public_connections') + @(Import-CaseCsv 'sysmon_network') + @(Import-CaseCsv 'connections')
+    if ($netRows.Count -gt 0 -and @(Import-CaseCsv 'beacon_candidates').Count -eq 0 -and @(Import-CaseCsv 'dns_beacon_candidates').Count -eq 0) {
+        & $add 'Beacon detection' 'no periodic-callback candidates in network or DNS telemetry'
+    }
+    # Technique hunt (the engine always writes the CSV during regen - row absence = 0 findings)
+    if ((Test-CaseCsv 'hunt_findings') -and @(Import-CaseCsv 'hunt_findings').Count -eq 0) { & $add 'Technique hunt rules' '0 detections (renamed binaries, side-loads, download-exec, LSASS access, persistence abuse...)' }
+    if ((Test-CaseCsv 'usn_write_bursts') -and @(Import-CaseCsv 'usn_write_bursts').Count -eq 0) { & $add 'Mass file modification scan' 'USN journal analyzed, 0 ransomware-like write bursts' }
+    if ((Test-CaseCsv 'loldrivers_hits') -and @(@(Import-CaseCsv 'loldrivers_hits') | Where-Object { "$($_.Status)" -eq 'malicious' }).Count -eq 0) { & $add 'Loaded driver check' '0 drivers matching the malicious-driver hash feed' }
+    # Brute force (only meaningful with logon telemetry)
+    $auth = @(Import-CaseCsv 'security_auth_events')
+    if ($auth.Count -gt 0 -and @(Import-CaseCsv 'security_bruteforce_candidates').Count -eq 0) { & $add 'Brute-force analysis' "$($auth.Count) logon events analyzed, 0 brute-force source candidates" }
+    # Log integrity: tamper = clear/stop markers inside logged gaps (same rule as the verdict)
+    $gaps = @(Import-CaseCsv 'logging_gaps')
+    if ((Test-CaseCsv 'logging_gaps') -and @($gaps | Where-Object { "$($_.Detail)" -match '(?i)clear|stop' }).Count -eq 0) { & $add 'Log integrity' 'no security log clear/stop events found' }
+    # Credential exposure
+    if ((Test-CaseCsv 'credential_sweep') -and @(@(Import-CaseCsv 'credential_sweep') | Where-Object { "$($_.Risk)" -eq 'HIGH' }).Count -eq 0) { & $add 'Credential exposure sweep' 'no HIGH-risk exposure (auto-logon secrets, LSASS dumps on disk, key material)' }
+    if ((Test-CaseCsv 'svchost_audit') -and @(Import-CaseCsv 'svchost_audit').Count -eq 0) { & $add 'svchost masquerade audit' 'every running svchost instance runs from System32' }
+    if ((Test-CaseCsv 'wmi_event_consumers') -and @(Import-CaseCsv 'wmi_event_consumers').Count -eq 0) { & $add 'WMI event subscriptions' 'no permanent persistence subscriptions' }
+    return $out.ToArray()
+}
+
 function New-HtmlReport {
     $scored = @(Import-CaseCsv 'flash_process_scored.csv')
     $iocHits = @(Import-CaseCsv 'flash_ioc_hits.csv')
@@ -4843,14 +4895,23 @@ tr.techrow{cursor:pointer}
     $null = $sb.AppendLine("<div class='meta'>Host: $Computer &nbsp;|&nbsp; Case: $(ConvertTo-HtmlEsc $script:CurrentCaseID) &nbsp;|&nbsp; Analyst: $(ConvertTo-HtmlEsc $script:CurrentAnalyst) &nbsp;|&nbsp; Collected: $($StartTime.ToString('u')) &nbsp;|&nbsp; Ophira v$ScriptVersion &nbsp;|&nbsp; Sysmon: $(if ($Sysmon) { 'yes' } else { 'no' }) &nbsp;|&nbsp; Elevated: $elevLabel</div>")
     $null = $sb.AppendLine("<div class='nav'><a href='#leads'>Leads</a><a href='#verdict'>Verdict</a><a href='#coverage'>Coverage</a><a href='#attack'>ATT&CK</a><a href='#ioc'>IOCs</a><a href='#tactics'>Findings by tactic</a><a href='#yara'>YARA</a><a href='#processes'>Processes</a><a href='#sigma'>Sigma</a><a href='#logons'>Logons</a><a href='#persistence'>Persistence</a><a href='#filesystem'>File system</a><a href='#beacons'>Beaconing</a><a href='#network'>Network</a><a href='#timeline'>Timeline</a><a href='#snapshot'>Snapshot</a><a href='#drivers'>Drivers</a><a href='#hunt'>Hunt</a><a href='#entities'>Connections</a><a href='#focus'>Focus</a><a href='#recommendations'>Recommendations</a><a href='#evidence'>Evidence index</a></div>")
 
-    # ---------- verdict banner ----------
-    $null = $sb.AppendLine("<a name='verdict'></a><h2>Verdict</h2>")
+    # ---------- assessment at a glance (v2.61: the banner answers "infected or not?") ----------
+    $null = $sb.AppendLine("<a name='verdict'></a><h2>Assessment at a glance</h2>")
     if ($script:Verdict) {
         $v = $script:Verdict
         $null = $sb.AppendLine("<div class='vbanner v$($v.LevelRank)'>")
         $null = $sb.AppendLine("<p class='vtitle'>$(ConvertTo-HtmlEsc $v.Level)</p>")
         $null = $sb.AppendLine("<p class='vowner'>$(ConvertTo-HtmlEsc $v.OwnerLine) &nbsp; Evidence coverage: $($v.ConfidencePercent)% (how much of the case was collected, not a probability of compromise)</p>")
         $null = $sb.AppendLine("<div class='confwrap'><div class='confbar' style='width:$([math]::Min(100, [int]$v.ConfidencePercent))%;background:#b93'></div><div class='conftext'>$($v.ConfidencePercent)% of weighted evidence sources collected</div></div>")
+        # v2.61: what the level means - and what it does NOT mean
+        $vmean = @{
+            4 = 'Multiple independent high-confidence indicators agree - treat this host as compromised until proven otherwise.'
+            3 = 'Strong evidence of malicious activity - respond as an incident. This is not yet proof of full compromise.'
+            2 = 'Real anomalies exist, but each has plausible benign explanations - investigate before this host returns to service.'
+            1 = 'The checks below ran and found nothing. This is not a guarantee: the clean-check list shows exactly what was verified, and the caveats show what could not be.'
+            0 = 'Too little evidence was collected to draw any conclusion - recollect with a deeper preset if the host allows it.'
+        }
+        if ($vmean[[int]$v.LevelRank]) { $null = $sb.AppendLine("<p class='vowner' style='font-style:italic'>$(ConvertTo-HtmlEsc $vmean[[int]$v.LevelRank])</p>") }
         # v2.45: rank-specific first actions - the 30-minute decision starts here
         $donow = @{
             4 = 'Isolate the host from the network NOW. Capture RAM before any reboot. Treat every credential used on this host as compromised and start scoping other hosts.'
@@ -4883,8 +4944,28 @@ tr.techrow{cursor:pointer}
         } else {
             $null = $sb.AppendLine("<p style='margin-top:12px' class='meta'>No compromising signals were observed in the collected evidence.</p>")
         }
+        # v2.61: negative evidence - every check that ran and found NOTHING, with counts
+        $clean = @()
+        try { $clean = @(Get-CleanCheckSummary) } catch { }
+        if ($clean.Count -gt 0) {
+            $null = $sb.AppendLine("<p style='margin-top:14px'><b>Checked and clean</b> (a clean verdict is only as good as the checks behind it)</p>")
+            foreach ($cc in $clean) {
+                $null = $sb.AppendLine("<div class='sig'><span class='badge LOW'>clean</span> <b>$(ConvertTo-HtmlEsc $cc.Check)</b> - <span class='meta'>$(ConvertTo-HtmlEsc $cc.Detail)</span></div>")
+            }
+        }
+        # v2.61: incident window from the master timeline
+        try {
+            $tlGlance = @(Import-CaseCsv 'supertimeline' | ForEach-Object { $tg = $null; try { $tg = [datetime]"$($_.Timestamp)" } catch { }; if ($tg) { $tg } })
+            if ($tlGlance.Count -gt 1) {
+                $tlSorted2 = @($tlGlance | Sort-Object)
+                $days2 = @{}
+                foreach ($t2 in $tlGlance) { $k2 = $t2.ToString('yyyy-MM-dd'); if (-not $days2.ContainsKey($k2)) { $days2[$k2] = 0 }; $days2[$k2]++ }
+                $top2 = @($days2.Keys | Sort-Object { $days2[$_] } -Descending | Select-Object -First 1)[0]
+                $null = $sb.AppendLine("<p class='meta' style='margin-top:10px'><b>Evidence window:</b> $($tlSorted2[0].ToString('yyyy-MM-dd HH:mm')) to $($tlSorted2[$tlSorted2.Count - 1].ToString('yyyy-MM-dd HH:mm')) ($($tlGlance.Count) events) - busiest day $top2 ($($days2[$top2]) events). Full chronology: <a href='#timeline'>master timeline</a></p>")
+            }
+        } catch { }
         if (@($v.Caveats).Count -gt 0) {
-            $null = $sb.AppendLine("<p style='margin-top:12px'><b>What would change this verdict (caveats)</b></p><ul>")
+            $null = $sb.AppendLine("<p style='margin-top:14px'><b>Could not check / what would change this verdict</b></p><ul>")
             foreach ($c in @($v.Caveats)) { $null = $sb.AppendLine("<li>$(ConvertTo-HtmlEsc $c)</li>") }
             $null = $sb.AppendLine("</ul>")
         }
