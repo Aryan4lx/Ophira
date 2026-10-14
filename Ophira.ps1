@@ -1,5 +1,5 @@
 ﻿<#
-Ophira v2.61  -  Windows Incident Response Triage Toolkit
+Ophira v2.62  -  Windows Incident Response Triage Toolkit
 READ-ONLY by design: never modifies the system, only reads and copies data
 into its own output folder. Intended to be handed to a system owner or run
 by a responder during early triage / threat hunting.
@@ -45,7 +45,7 @@ param(
     [switch]$ExitVerdict
 )
 
-$ScriptVersion = "2.61"
+$ScriptVersion = "2.62"
 $ErrorActionPreference = 'Continue'
 $ProgressPreference = 'SilentlyContinue'
 
@@ -207,6 +207,7 @@ $script:CsvCatMap = @{
     # ARTIFACTS
     'prefetch_index' = 'artifacts'; 'prefetch_parsed' = 'artifacts'; 'userassist' = 'artifacts'
     'srum_usage' = 'artifacts'; 'execution_timeline' = 'artifacts'; 'mft_recent' = 'artifacts'
+    'ads_findings' = 'artifacts'
     'amcache' = 'artifacts'; 'lnk_parsed' = 'artifacts'; 'jumplist_parsed' = 'artifacts'
     'recyclebin' = 'artifacts'; 'recentfilecache' = 'artifacts'; 'shellbags' = 'artifacts'
     'registry_recmd' = 'artifacts'; 'browser_files' = 'artifacts'; 'browser_history' = 'artifacts'
@@ -221,6 +222,7 @@ $script:CsvCatMap = @{
     'bits_jobs' = 'context'; 'domain_info' = 'context'; 'local_admins' = 'context'
     'certificates' = 'context'; 'posture' = 'context'; 'loldrivers_hits' = 'context'
     'usb_devices' = 'context'; 'office_mru' = 'context'; 'ual_files' = 'context'
+    'webshell_candidates' = 'context'
     'iis_requests' = 'context'; 'iis_anomalies' = 'context'; 'startup_info' = 'context'
     'wer_reports' = 'context'; 'server_logs' = 'context'; 'credential_sweep' = 'context'; 'remote_access' = 'context'
     # DERIVED (rebuilt by Invoke-RegenerateOutputs / analyst modes)
@@ -1928,13 +1930,51 @@ function Get-ParseNeeds {
     if ($rows.Count -gt 0) { Write-CaseLog "    $($rows.Count) artifact(s) unfinished on endpoint - see csv\parse_needed.csv (-Mode Parse completes most of them analyst-side)" 'Yellow' }
 }
 
+function Find-AdsOnPe {
+    # v2.62: alternate data streams on executable files - a non-Zone.Identifier ADS on a PE is a
+    # classic stager/stash spot (payload rides next to the binary). Only EXISTING on-disk files
+    # can be stream-scanned (mft_recent is a birth inventory, not a live listing).
+    param([string[]]$Paths, [int]$MaxChecks = 120)
+    $out = New-Object System.Collections.Generic.List[object]
+    $checked = 0
+    foreach ($p in $Paths) {
+        if ($checked -ge $MaxChecks) { break }
+        if ("$p" -notmatch '\.(exe|dll|sys)$') { continue }
+        if (-not (Test-Path -LiteralPath "$p" -PathType Leaf)) { continue }
+        $checked++
+        try {
+            foreach ($st in (Get-Item -LiteralPath "$p" -Stream * -ErrorAction Stop)) {
+                $sn = "$($st.Stream)"
+                if ($sn -eq ':$DATA' -or $sn -match '(?i)Zone\.Identifier') { continue }
+                if ([long]$st.Length -le 0) { continue }
+                $null = $out.Add([pscustomobject]@{ Path = "$p"; Stream = $sn; Length = "$($st.Length)" })
+            }
+        } catch { }
+    }
+    return $out.ToArray()
+}
+
+function Test-WebshellContent {
+    # v2.62: webshell content heuristics (NOT signatures - every hit is "verify against baseline",
+    # rendered report-only medium). Returns the matched heuristics, @() when clean.
+    param([string]$Content)
+    $hits = @()
+    if ("$Content" -match '(?i)eval\s*\(\s*Request') { $hits += 'eval(Request)' }
+    if ("$Content" -match '(?i)ExecuteGlobal|Execute\s*\(\s*Request') { $hits += 'execute(Request)' }
+    if ("$Content" -match '(?i)(cmd|shell)\s*\.\s*exe?\s*/c|cmd\s*/c') { $hits += 'shell exec' }
+    if ("$Content" -match '[A-Za-z0-9+/]{300,}={0,2}') { $hits += 'long base64 blob' }
+    if ("$Content" -match '(?i)Process\.Start|WScript\.Shell') { $hits += 'process start' }
+    return $hits
+}
+
 $script:SharedFunctions = @(
     'Get-KitRoot', 'Get-ToolsDir', 'Copy-LockedFile', 'Get-LogStart', 'Get-IocList', 'Test-TrustedPublisher',
     'Get-CaseCsvPath', 'Test-CaseCsv', 'Get-CaseCsvFullPath',
     'Save-Rows', 'Out-RawText', 'Invoke-ExeCapture', 'Invoke-NativeTool', 'Get-WmiOrCim', 'Convert-WmiDate',
     'Test-IsPublicIp', 'Test-IsUserWritablePath', 'Get-SignatureInfo', 'Get-SysmonState',
     'Get-UserProfileList', 'Get-UserAssistRows', 'ConvertTo-Rot13', 'Get-FilteredEvents', 'Export-Evtx',
-    'Import-CaseCsv', 'Invoke-BrowserIocXref', 'Get-EventDataRows', 'Get-IisW3cRows', 'Get-StartupInfoRows', 'Get-WerReportRows', 'Test-SigmaSelfNoise', 'Remove-SigmaDuplicateEvents', 'Get-IpCloudClass', 'Get-LocalAdminMembers'
+    'Import-CaseCsv', 'Invoke-BrowserIocXref', 'Get-EventDataRows', 'Get-IisW3cRows', 'Get-StartupInfoRows', 'Get-WerReportRows', 'Test-SigmaSelfNoise', 'Remove-SigmaDuplicateEvents', 'Get-IpCloudClass', 'Get-LocalAdminMembers',
+    'Find-AdsOnPe', 'Test-WebshellContent'
 )
 
 $script:ModuleWorkerText = @'
@@ -2307,7 +2347,7 @@ $script:Modules = @(
             Save-Rows -Name 'wmi_event_consumers' -Rows $consumers
             Save-Rows -Name 'wmi_bindings' -Rows $bindings
         } }
-    [pscustomobject]@{ Id = '2.6'; Cat = 'PERSISTENCE'; Name = 'ASEP deep sweep (IFEO, AppInit, Winlogon, COM hijacks, netsh, LSA, StartupApproved)'; Default = $true; Quick = $false;
+    [pscustomobject]@{ Id = '2.6'; Cat = 'PERSISTENCE'; Name = 'ASEP deep sweep (IFEO, AppInit, Winlogon, COM hijacks, netsh, LSA, StartupApproved, Active Setup, screensaver, Office/PS profiles, print/time, browser ext)'; Default = $true; Quick = $false;
         Run = {
             $asepList = New-Object System.Collections.Generic.List[object]
             function Add-Asep([string]$Category, [string]$Location, [string]$Name, [string]$Value, [string[]]$Flags) {
@@ -2431,6 +2471,84 @@ $script:Modules = @(
                     if ($p -and $p.PSObject.Properties['FullPath']) { $v = "$($p.FullPath)" }
                     if (-not $v) { foreach ($prop in ($p.PSObject.Properties | Where-Object { $_.Name -notmatch '^PS' })) { if ("$($prop.Value)" -match '\.sdb$') { $v = "$($prop.Value)"; break } } }
                     if ($v) { Add-Asep 'Sdb' $k.PSPath $k.PSChildName $v (& $flagFor $v) }
+                }
+            }
+            # ---- v2.62 detection-surface extension (all read-only; new categories are
+            # report-visible, only user-path/nondefault values join the verdict signal -
+            # same FP doctrine as the COM-hijack exclusion above) ----
+            $userProfiles = @(Get-UserProfileList)
+            $fsUsers = @(Get-ChildItem "$env:SystemDrive\Users" -Directory -ErrorAction SilentlyContinue)
+            # Active Setup StubPath (runs per-user at every logon - classic stager spot)
+            foreach ($asRoot in @('HKLM:\SOFTWARE\Microsoft\Active Setup\Installed Components', 'HKLM:\SOFTWARE\Wow6432Node\Microsoft\Active Setup\Installed Components')) {
+                if (-not (Test-Path $asRoot)) { continue }
+                foreach ($k in (Get-ChildItem -Path $asRoot -ErrorAction SilentlyContinue)) {
+                    $v = "$((Get-ItemProperty -Path $k.PSPath -ErrorAction SilentlyContinue).StubPath)"
+                    if ($v) { Add-Asep 'ActiveSetup' $k.PSPath "StubPath ($($k.PSChildName))" $v (& $flagFor $v) }
+                }
+            }
+            # Screensaver executable (per-user; a .scr on a logon path)
+            foreach ($up in $userProfiles) {
+                $dp = Get-ItemProperty -Path "Registry::HKEY_USERS\$($up.Sid)\Control Panel\Desktop" -ErrorAction SilentlyContinue
+                $sv = $null; if ($dp) { $sv = $dp.PSObject.Properties['SCRNSAVE.EXE'] }
+                if ($sv -and "$($sv.Value)") { Add-Asep 'Screensaver' "HKU\$($up.Sid)\Control Panel\Desktop" 'SCRNSAVE.EXE' "$($sv.Value)" (& $flagFor "$($sv.Value)") }
+            }
+            # Office add-ins / startup templates (WLL/XLL/dotm/xlam in the dirs Word/Excel autorun)
+            foreach ($u in $fsUsers) {
+                foreach ($od in @((Join-Path $u.FullName 'AppData\Roaming\Microsoft\Word\Startup'), (Join-Path $u.FullName 'AppData\Roaming\Microsoft\Excel\XLSTART'))) {
+                    foreach ($f in (Get-ChildItem -LiteralPath $od -File -ErrorAction SilentlyContinue | Where-Object { $_.Extension -match '(?i)^\.(wll|xll|dotm|xlam)$' } | Select-Object -First 20)) {
+                        Add-Asep 'OfficeAddin' $f.FullName $f.Name "modified $($f.LastWriteTime.ToString('yyyy-MM-dd HH:mm'))" @('user-path')
+                    }
+                }
+            }
+            # Outlook client-side rules (existence-only, observational - no verdict weight)
+            foreach ($up in $userProfiles) {
+                $rk = "Registry::HKEY_USERS\$($up.Sid)\Software\Microsoft\Windows Messaging Subsystem\Rules"
+                if (Test-Path $rk) {
+                    $n = @(Get-ChildItem -Path $rk -ErrorAction SilentlyContinue).Count
+                    if ($n -gt 0) { Add-Asep 'OutlookRules' $rk "$n rule subkey(s)" 'existence - review rule actions for auto-run/forward abuse' @('observational') }
+                }
+            }
+            # Chromium browser extensions (report-visible; 'new-in-window' when the version dir appeared in-window)
+            $extWin = (Get-Date).AddHours(-$(if ($script:LogHours -gt 0) { $script:LogHours } else { 168 }))
+            foreach ($u in $fsUsers) {
+                foreach ($bRoot in @((Join-Path $u.FullName 'AppData\Local\Google\Chrome\User Data\Default\Extensions'), (Join-Path $u.FullName 'AppData\Local\Microsoft\Edge\User Data\Default\Extensions'))) {
+                    if (-not (Test-Path -LiteralPath $bRoot)) { continue }
+                    foreach ($ext in (Get-ChildItem -LiteralPath $bRoot -Directory -ErrorAction SilentlyContinue | Select-Object -First 60)) {
+                        $ver = @(Get-ChildItem -LiteralPath $ext.FullName -Directory -ErrorAction SilentlyContinue | Sort-Object Name -Descending | Select-Object -First 1)[0]
+                        if (-not $ver) { continue }
+                        $nm = $ext.Name
+                        $mf = Join-Path $ver.FullName 'manifest.json'
+                        if (Test-Path -LiteralPath $mf) { try { $j = Get-Content -LiteralPath $mf -Raw -ErrorAction Stop | ConvertFrom-Json; if ($j.name) { $nm = "$($j.name)" } } catch { } }
+                        $f = @()
+                        try { if ($ver.CreationTime -gt $extWin) { $f += 'new-in-window' } } catch { }
+                        Add-Asep 'BrowserExt' $ext.FullName $nm "$($ext.Name) v$($ver.Name)" $f
+                    }
+                }
+            }
+            # PowerShell profiles (user-profile scripts auto-run in every PS session)
+            foreach ($u in $fsUsers) {
+                foreach ($pp in @((Join-Path $u.FullName 'Documents\WindowsPowerShell\profile.ps1'), (Join-Path $u.FullName 'Documents\WindowsPowerShell\Microsoft.PowerShell_profile.ps1'), (Join-Path $u.FullName 'Documents\PowerShell\profile.ps1'), (Join-Path $u.FullName 'Documents\PowerShell\Microsoft.PowerShell_profile.ps1'))) {
+                    if (Test-Path -LiteralPath $pp -PathType Leaf) { $fi = Get-Item -LiteralPath $pp; Add-Asep 'PsProfile' $pp $fi.Name "$($fi.Length) bytes" @('user-path') }
+                }
+            }
+            foreach ($pp in @((Join-Path $env:SystemRoot 'System32\WindowsPowerShell\v1.0\profile.ps1'), (Join-Path $env:ProgramFiles 'PowerShell\7\profile.ps1'))) {
+                if (Test-Path -LiteralPath $pp -PathType Leaf) { $fi = Get-Item -LiteralPath $pp; Add-Asep 'PsProfile' $pp $fi.Name "$($fi.Length) bytes" (& $flagFor $pp) }
+            }
+            # Print processors + monitors (driver DLL values)
+            foreach ($pEnv in @('Windows x64', 'Windows NT x86')) {
+                foreach ($pp2 in @("HKLM:\SYSTEM\CurrentControlSet\Control\Print\Environments\$pEnv\Print Processors", "HKLM:\SYSTEM\CurrentControlSet\Control\Print\Environments\$pEnv\Print Monitors")) {
+                    foreach ($k in (Get-ChildItem -Path $pp2 -ErrorAction SilentlyContinue)) {
+                        $v = "$((Get-ItemProperty -Path $k.PSPath -ErrorAction SilentlyContinue).Driver)"
+                        if ($v) { Add-Asep ($(if ($pp2 -match 'Processors') { 'PrintProcessor' } else { 'PrintMonitor' })) $k.PSPath 'Driver' $v (& $flagFor $v) }
+                    }
+                }
+            }
+            # W32Time time providers (DllName - rare legit additions)
+            $tp = 'HKLM:\SYSTEM\CurrentControlSet\Services\W32Time\TimeProviders'
+            if (Test-Path $tp) {
+                foreach ($k in (Get-ChildItem -Path $tp -ErrorAction SilentlyContinue)) {
+                    $v = "$((Get-ItemProperty -Path $k.PSPath -ErrorAction SilentlyContinue).DllName)"
+                    if ($v) { Add-Asep 'TimeProvider' $k.PSPath 'DllName' $v (& $flagFor $v) }
                 }
             }
             $rows = $asepList.ToArray()
@@ -3229,6 +3347,14 @@ $script:Modules = @(
                 if ($out5.Count -gt 5000) { $out5 = $out5[0..4999] }
                 Save-Rows -Name 'mft_recent' -Rows $out5
                 Write-CaseLog "    MFT: $mftTotal entries scanned across $($drives.Count) drive(s), $($keep.Count) executable/user-path/recent kept -> csv\mft_recent.csv" 'Gray'
+                # v2.62: alternate data streams on executables that still exist on disk
+                # (mft_recent is the birth inventory - only on-disk files can be stream-scanned)
+                $adsRows = @(Find-AdsOnPe -Paths @($keep | ForEach-Object { "$($_.Path)" }))
+                Save-Rows -Name 'ads_findings' -Rows $adsRows
+                if ($adsRows.Count -gt 0) {
+                    Write-CaseLog "    ADS: $($adsRows.Count) non-Zone.Identifier stream(s) on executables - POSSIBLE PAYLOAD STASH -> csv\ads_findings.csv" 'Yellow'
+                    foreach ($a in ($adsRows | Select-Object -First 4)) { Write-CaseLog "      $($a.Path) :: $($a.Stream) ($($a.Length) bytes)" 'Yellow' }
+                } else { Write-CaseLog "    ADS: no non-Zone.Identifier streams on checked executables" 'Gray' }
                 Save-Rows -Name 'usn_write_bursts' -Rows $bursts
                 if (@($bursts).Count -gt 0) {
                     Write-CaseLog "    USN: $(@($bursts).Count) mass-modification window(s) >=1000 writes/min - POSSIBLE RANSOMWARE -> csv\usn_write_bursts.csv" 'Red'
@@ -4020,7 +4146,7 @@ public class OphiraDump {
                 Write-CaseLog "    UAL: $($mts.Count) .mts file(s) copied to raw\ual (ESE - analyst-side parse)" 'Gray'
             }
         } }
-    [pscustomobject]@{ Id = '8.12'; Cat = 'CONTEXT'; Name = 'Web server artifacts (IIS/HTTPERR logs raw + W3C parse, app pool config)'; Default = $false; Quick = $false;
+    [pscustomobject]@{ Id = '8.12'; Cat = 'CONTEXT'; Name = 'Web server artifacts (IIS/HTTPERR logs raw + W3C parse, app pool config, webshell content scan)'; Default = $false; Quick = $false;
         Run = {
             $copied = 0
             foreach ($src in @(@('web\iis', "$env:SystemDrive\inetpub\logs\LogFiles"), @('web\httperr', "$env:SystemRoot\System32\LogFiles\HTTPERR"))) {
@@ -4060,6 +4186,29 @@ public class OphiraDump {
                 $null = $anom.Add([pscustomobject]@{ Kind = 'headless-posts'; Detail = "$($noUa.Count) POST requests with no User-Agent"; Sample = ((@($noUa | Select-Object -First 3 | ForEach-Object { $_.Uri })) -join ' | ') })
             }
             Save-Rows -Name 'iis_anomalies' -Rows $anom.ToArray()
+            # v2.62: webshell content scan (this module is opt-in WebServer/Full; heuristics,
+            # NOT signatures - every hit renders report-only medium "verify against baseline")
+            $wsRows = New-Object System.Collections.Generic.List[object]
+            $wsRoots = @("$env:SystemDrive\inetpub\wwwroot")
+            $ahcRaw = Join-Path $RawDir 'web\applicationHost.config'
+            if (Test-Path -LiteralPath $ahcRaw) {
+                try { foreach ($m3 in ([regex]::Matches((Get-Content -LiteralPath $ahcRaw -Raw -ErrorAction Stop), 'physicalPath="([^"]+)"'))) {
+                    $p4 = $m3.Groups[1].Value -replace '%SystemDrive%', $env:SystemDrive
+                    if ($p4 -and (Test-Path -LiteralPath $p4)) { $wsRoots += $p4 }
+                } } catch { }
+            }
+            $wsRoots = @($wsRoots | Sort-Object -Unique)
+            $wsCand = @(Get-ChildItem -Path $wsRoots -Recurse -File -Include '*.aspx', '*.jsp', '*.php', '*.ashx', '*.asmx' -ErrorAction SilentlyContinue | Sort-Object LastWriteTime -Descending | Select-Object -First 300)
+            foreach ($wf in $wsCand) {
+                if ($wf.Length -gt 2MB) { continue }
+                try { $wc = Get-Content -LiteralPath $wf.FullName -Raw -ErrorAction Stop } catch { continue }
+                $wh = @(Test-WebshellContent -Content $wc)
+                if ($wh.Count -gt 0) { $null = $wsRows.Add([pscustomobject]@{ Path = $wf.FullName; Modified = $wf.LastWriteTime.ToString('yyyy-MM-dd HH:mm:ss'); Size = $wf.Length; Matches = ($wh -join '; ') }) }
+            }
+            Save-Rows -Name 'webshell_candidates' -Rows $wsRows.ToArray()
+            if ($wsRows.Count -gt 0) {
+                Write-CaseLog "    webshell scan: $($wsRows.Count) of $($wsCand.Count) script file(s) match heuristics - VERIFY AGAINST BASELINE -> csv\webshell_candidates.csv" 'Yellow'
+            } elseif ($wsCand.Count -gt 0) { Write-CaseLog "    webshell scan: $($wsCand.Count) script file(s) clean" 'Gray' }
             if ($norm.Count -gt 0) {
                 Write-CaseLog "    IIS: $($norm.Count) parsed request(s), $($anom.Count) anomaly row(s), $copied log file(s) -> raw\web\" 'Gray'
             } elseif ($copied -gt 0) {
@@ -4786,6 +4935,8 @@ function Get-CleanCheckSummary {
     if ((Test-CaseCsv 'credential_sweep') -and @(@(Import-CaseCsv 'credential_sweep') | Where-Object { "$($_.Risk)" -eq 'HIGH' }).Count -eq 0) { & $add 'Credential exposure sweep' 'no HIGH-risk exposure (auto-logon secrets, LSASS dumps on disk, key material)' }
     if ((Test-CaseCsv 'svchost_audit') -and @(Import-CaseCsv 'svchost_audit').Count -eq 0) { & $add 'svchost masquerade audit' 'every running svchost instance runs from System32' }
     if ((Test-CaseCsv 'wmi_event_consumers') -and @(Import-CaseCsv 'wmi_event_consumers').Count -eq 0) { & $add 'WMI event subscriptions' 'no permanent persistence subscriptions' }
+    if ((Test-CaseCsv 'ads_findings') -and @(Import-CaseCsv 'ads_findings').Count -eq 0) { & $add 'ADS scan' 'no non-Zone.Identifier streams on checked executables' }
+    if ((Test-CaseCsv 'webshell_candidates') -and @(Import-CaseCsv 'webshell_candidates').Count -eq 0) { & $add 'Webshell content scan' 'script files scanned, 0 heuristic matches' }
     return $out.ToArray()
 }
 
@@ -6094,6 +6245,8 @@ tr.techrow{cursor:pointer}
         'sysmon_pipes'                    = 'Sysmon EID 17/18 named pipes created/connected - C2-style pipe channels (R29)'
         'sysmon_proc_tamper'              = 'Sysmon EID 25 process tampering - the OS itself flagged hollowing/image swap (R30)'
         'sysmon_raw_access'               = 'Sysmon EID 9 raw volume reads via \\.\ - locked-hive credential theft / anti-forensics (R31)'
+        'ads_findings'                    = 'Non-Zone.Identifier alternate data streams on executables still on disk - payload stash/stager spot (R34)'
+        'webshell_candidates'             = 'Web scripts matching content heuristics (eval(Request, base64 blobs, shell exec) - verify against source baseline (R35)'
         'sysmon_wmi'                      = 'Sysmon EID 19/20/21 WMI filter/consumer/binding registrations - permanent event persistence (R32)'
         'shimcache'                       = 'Shimcache/AppCompatCache (SYSTEM hive via AppCompatParser) - executed-from evidence that survives prefetch/amcache deletion (the no-Sysmon spine)'
         'defender_config_events'          = 'Defender 5001/5007 - real-time protection disabled / exclusion changes (tamper)'
@@ -7524,6 +7677,17 @@ function New-HuntFindings {
         if ("$($r.Id)" -ne '16') { continue }
         & $find 'Sysmon configuration changed' 'high' 'Sysmon' "$($r.TimeCreated): Sysmon service configuration change observed - anti-forensics tell (T1562.001); compare the copied config snapshot in raw\context with the endpoint's expectations" 'T1562.001'
         break
+    }
+
+    # ---------- R34: alternate data streams on executables (v2.62 - stager/stash spot) ----------
+    # Non-Zone.Identifier ADS on a PE = payload riding next to a signed binary; inspect with dir /r.
+    foreach ($r in (Import-CaseCsv 'ads_findings')) {
+        & $find 'ADS on executable file' 'medium' "$($r.Path)" "non-Zone.Identifier alternate data stream '$($r.Stream)' ($($r.Length) bytes) on an executable - inspect with dir /r (T1564.004)" 'T1564.004'
+    }
+
+    # ---------- R35: webshell content heuristics (v2.62 - report-only medium, verify vs baseline) ----------
+    foreach ($r in (Import-CaseCsv 'webshell_candidates')) {
+        & $find 'Webshell content heuristics' 'medium' (Split-Path "$($r.Path)" -Leaf) "$($r.Path) modified $($r.Modified) matches webshell heuristics ($($r.Matches)) - verify against the source-control/deployment baseline" 'T1505.003'
     }
 
     Save-Rows -Name 'hunt_findings' -Rows $out.ToArray()
