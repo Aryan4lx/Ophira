@@ -1,5 +1,5 @@
 ﻿<#
-Ophira v2.59  -  Windows Incident Response Triage Toolkit
+Ophira v2.60  -  Windows Incident Response Triage Toolkit
 READ-ONLY by design: never modifies the system, only reads and copies data
 into its own output folder. Intended to be handed to a system owner or run
 by a responder during early triage / threat hunting.
@@ -45,7 +45,7 @@ param(
     [switch]$ExitVerdict
 )
 
-$ScriptVersion = "2.59"
+$ScriptVersion = "2.60"
 $ErrorActionPreference = 'Continue'
 $ProgressPreference = 'SilentlyContinue'
 
@@ -365,7 +365,6 @@ function Test-IsPublicIp {
     if ($b[0] -eq 172 -and $b[1] -ge 16 -and $b[1] -le 31) { return $false }
     if ($b[0] -eq 192 -and $b[1] -eq 168) { return $false }
     if ($b[0] -eq 169 -and $b[1] -eq 254) { return $false }
-    if ($b[0] -eq 172 -and $b[1] -eq 31) { return $false }
     if ($b[0] -ge 224) { return $false }
     return $true
 }
@@ -1883,14 +1882,27 @@ function Get-ParseNeeds {
         @{ Artifact = 'hayabusa_timeline.csv';  Parser = 'hayabusa';      Net = 'none'; Input = 'evtx';                 Live = $false }
         @{ Artifact = 'shellbags.csv';          Parser = 'SBECmd';        Net = 'net4'; Input = 'live C:\Users';        Live = $true }
         @{ Artifact = 'mft_recent.csv';         Parser = 'MFTECmd';       Net = 'net4'; Input = 'live volume (admin)';  Live = $true }
-        @{ Artifact = 'recentfilecache.csv';    Parser = 'AppCompatParser'; Net = 'net4'; Input = 'extras\appcompat';   Live = $false }
-        @{ Artifact = 'shimcache.csv';          Parser = 'AppCompatParser'; Net = 'net4'; Input = 'registry\SYSTEM.hiv'; Live = $false }
+        @{ Artifact = 'recentfilecache.csv';    Parser = 'AppCompatParser'; Net = 'net4'; Input = 'extras\appcompat';   Live = $false; AbsentNote = ' (RecentFileCache.bcf is often absent on current Win11 builds)' }
+        @{ Artifact = 'shimcache.csv';          Parser = 'AppCompatParser'; Net = 'net4'; Input = 'registry\SYSTEM.hiv'; Live = $false; CoveredBy = 'execution_timeline.csv' }
     )
     $rows = @()
+    # v2.60: the case's own preset tells "module skipped" (Quick) apart from "the endpoint
+    # genuinely lacks the file" (Standard/Full ran the collecting module and found nothing)
+    $casePreset = ''
+    try { $casePreset = "$((Get-Content -LiteralPath (Join-Path (Split-Path -Parent $RawDir) 'case.json') -Raw -ErrorAction Stop | ConvertFrom-Json).Preset)" } catch { }
     foreach ($c in $caps) {
         if (Test-CaseCsv $c.Artifact) { continue }
+        # v2.60: an artifact whose data another CSV already carries is finished - don't demand a standalone parse
+        if ($c.ContainsKey('CoveredBy') -and (Test-CaseCsv $c.CoveredBy)) { continue }
         if ($c.Live) { $how = 'endpoint-only source - rerun collection elevated on the host' }
-        elseif (-not (Test-Path (Join-Path $RawDir $c.Input))) { $how = 'raw evidence not collected (module skipped on endpoint)' }
+        elseif (-not (Test-Path (Join-Path $RawDir $c.Input))) {
+            if ($casePreset -eq 'Quick') { $how = 'module skipped on the endpoint (Quick preset) - rerun collection with a deeper preset' }
+            else { $how = "raw evidence not collected - the source was not present on this endpoint$("$($c.AbsentNote)")" }
+        }
+        elseif (@(Get-ChildItem -LiteralPath (Join-Path $RawDir $c.Input) -Recurse -File -ErrorAction SilentlyContinue).Count -eq 0) {
+            # v2.60: collected but empty (recycle bin was empty at collection) - Parse can never finish this
+            $how = 'input was collected but empty on the endpoint (e.g. the recycle bin was empty at collection) - nothing to parse'
+        }
         elseif ($c.Net -eq 'net9' -and -not $nineOk) { $how = 'endpoint lacks .NET 9 - run on analyst PC: Ophira.ps1 -Mode Parse -Path <case>' }
         else {
             $how = 'tool was missing on endpoint - run on analyst PC: Ophira.ps1 -Mode Parse -Path <case>'
@@ -3107,7 +3119,11 @@ $script:Modules = @(
             New-Item -ItemType Directory -Path $tmp -Force | Out-Null
             try {
                 $exeExt = @('.exe', '.dll', '.ps1', '.bat', '.cmd', '.vbs', '.js', '.jar', '.hta', '.scr', '.msi', '.py', '.wsf', '.lnk')
-                $cutoff = (Get-Date).AddDays(-30)   # ponytail: fixed 30-day recency ($LogHours is not seeded into worker runspaces)
+                # v2.60: the recency window follows the case's log window ($script:LogHours is
+                # seeded into workers) but never shrinks below the 30-day default
+                $mftDays = 30
+                try { $lh = if ($script:LogHours -gt 0) { $script:LogHours } elseif ($LogHours -gt 0) { $LogHours } else { 0 }; if ($lh -gt 0) { $mftDays = [Math]::Max(30, [int][double]($lh / 24)) } } catch { }
+                $cutoff = (Get-Date).AddDays(-$mftDays)
                 $ransomExt = @('.locked', '.locky', '.crypt', '.crypto', '.enc', '.encrypted', '.enc1', '.cry', '.cerber', '.wallet', '.onion', '.aes', '.rsa', '.mallox', '.pha', '.devos', '.mkp', '.faust', '.elh', '.ransom', '.payform', '.locked1')
                 $keepFull = {
                     # Full preset only: preserve the unfiltered parser output for analyst-side work (skips when disk is tight).
@@ -3306,7 +3322,8 @@ $script:Modules = @(
                 $url = Read-Host "    Paste winpmem download URL (or press Enter to skip)"
                 if ($url) {
                     try {
-                        $tDir = Join-Path $BaseDir 'tools'
+                        # v2.60: Get-KitRoot (worker-seeded) instead of $BaseDir (top-level only - this would die in a worker runspace)
+                        $tDir = Join-Path (Get-KitRoot) 'tools'
                         New-Item -ItemType Directory -Path $tDir -Force | Out-Null
                         $dest = Join-Path $tDir 'winpmem_downloaded.exe'
                         Invoke-WebRequest -Uri $url -OutFile $dest -UseBasicParsing -ErrorAction Stop
@@ -3548,12 +3565,26 @@ public class OphiraDump {
             }
             Save-Rows -Name 'domain_info' -Rows $dom
             # local administrators (account entities + rogue-admin hunting)
+            # v2.60: CIM first, resolved by the language-neutral Administrators SID (S-1-5-32-544) -
+            # both net.exe output AND the group NAME are localized on non-English Windows, which is
+            # why this parse used to return zero members there. net.exe parser stays as fallback.
             $la = @()
             try {
-                foreach ($member in (Get-LocalAdminMembers @(& net.exe localgroup administrators 2>$null))) {
-                    $la += [pscustomobject]@{ Group = 'Administrators'; Member = "$member" }
+                $lgm = $null
+                try {
+                    $admGroup = Get-LocalGroup -ErrorAction Stop | Where-Object { "$($_.SID)" -eq 'S-1-5-32-544' } | Select-Object -First 1
+                    if ($admGroup) { $lgm = @(Get-LocalGroupMember -Group $admGroup -ErrorAction Stop) }
+                } catch { }
+                if ($lgm -and $lgm.Count -gt 0) {
+                    $machineRx = "^$([regex]::Escape($env:COMPUTERNAME))\\"
+                    foreach ($m in $lgm) { $la += [pscustomobject]@{ Group = 'Administrators'; Member = ("$($m.Name)" -replace $machineRx, '') } }
+                    Write-CaseLog "    local admins: $($la.Count) member(s) (CIM)" 'Gray'
+                } else {
+                    foreach ($member in (Get-LocalAdminMembers @(& net.exe localgroup administrators 2>$null))) {
+                        $la += [pscustomobject]@{ Group = 'Administrators'; Member = "$member" }
+                    }
+                    if ($la.Count -gt 0) { Write-CaseLog "    local admins: $($la.Count) member(s)" 'Gray' }
                 }
-                if ($la.Count -gt 0) { Write-CaseLog "    local admins: $($la.Count) member(s)" 'Gray' }
             } catch { }
             Save-Rows -Name 'local_admins' -Rows $la
             if ($cs -and $cs.PartOfDomain) {
@@ -7679,7 +7710,9 @@ function Get-CompromiseVerdict {
     $posture = Import-CaseCsv 'posture'
     $postureBad = @($posture | Where-Object { "$($_.Status)" -eq 'BAD' })
     $credSweep = Import-CaseCsv 'credential_sweep'
-    $credMed = @($credSweep | Where-Object { "$($_.Severity)" -match '(?i)med|high' })
+    # v2.60 fix: module 8.15 writes Item/Detail/Risk - the old Severity/Description filter matched
+    # nothing, so this floor-2 signal had silently never fired on any case
+    $credMed = @($credSweep | Where-Object { "$($_.Risk)" -match '(?i)med|high' })
 
     Add-Signal 'IOC hit - historical execution (amcache SHA1)' 4 @($iocAmc).Count "near-certain true positive evidence"
     Add-Signal 'YARA hit - high/critical rule' 4 $yaraHi (($yara | Where-Object { "$($_.Severity)" -match '^(?i)(high|critical)$' } | Select-Object -First 3 | ForEach-Object { $_.Rule }) -join '; ')
@@ -7687,7 +7720,7 @@ function Get-CompromiseVerdict {
     Add-Signal 'C2 DNS beaconing - highly regular domain queries' 3 $dnsHi (($dnsBeacons | Where-Object { "$($_.Severity)" -match '^(?i)high$' } | Select-Object -First 3 | ForEach-Object { "$($_.Process) -> $($_.Domain) every ~$($_.MedianIntervalSec)s" }) -join '; ')
     Add-Signal 'Known-malicious driver on disk (LOLDrivers)' 2 $lolMal (($lol | Where-Object { $_.Status -eq 'malicious' } | Select-Object -First 3 | ForEach-Object { "$($_.Name): $($_.Path)" }) -join '; ')
     Add-Signal 'Security posture gaps' 1 @($postureBad).Count (($postureBad | ForEach-Object { "$($_.Setting): $($_.Detail)" }) -join '; ')
-    Add-Signal 'Credential material exposure' 2 @($credMed).Count (($credMed | Select-Object -First 3 | ForEach-Object { "$($_.Description)" }) -join '; ')
+    Add-Signal 'Credential material exposure' 2 @($credMed).Count (($credMed | Select-Object -First 3 | ForEach-Object { "$($_.Item): $($_.Detail)" }) -join '; ')
     Add-Signal 'Hunt technique - renamed binary / side-load / download-exec / LSASS access / Office chain / proxy-exec / share staging / Defender tamper / DCSync / spray / webshell / tunnel / RDP hijack / SSH keys / svchost masquerade / injection / C2 pipe / hollowing / raw volume / WMI persistence' 2 $huntHi.Count (($huntHi | Select-Object -First 3 | ForEach-Object { $_.Rule }) -join '; ')
     Add-Signal 'Ransomware-like mass file modification (USN journal)' 3 $usnBurstN ((($usnBursts | Select-Object -First 3 | ForEach-Object { "$($_.WindowStart): $($_.WriteEvents) writes / $($_.DistinctFiles) files" }) -join '; ') + $(if ($rExt) { " - RANSOM EXTENSIONS: $rExt" }))
     Add-Signal 'Uncommon persistence mechanism (IFEO/AppInit/Winlogon/netsh/LSA)' 2 $asepHotN (($asep | Where-Object { $_.Flags -match 'user-path|nondefault' -and "$($_.Category)" -notmatch 'ComHijack|StartupApproved' } | Select-Object -First 3 | ForEach-Object { "$($_.Category): $($_.Name) = $($_.Value)" }) -join '; ')
@@ -7711,7 +7744,25 @@ function Get-CompromiseVerdict {
     $hayStorm = @($hay | Group-Object RuleTitle | Where-Object { $_.Count -ge 100 -and @($_.Group | Where-Object { (Get-LvlRank "$($_.Level)") -le 2 } | Select-Object -First 1) } | Sort-Object Count -Descending)
     Add-Signal 'Sigma volume signal' 0 @($hayStorm).Count (($hayStorm | Select-Object -First 3 | ForEach-Object { "$($_.Name) ($($_.Count) events - review sample, then tune if benign)" }) -join '; ')
     Add-Signal 'Process anomaly verdict HIGH' 2 $procHigh (($proc | Where-Object { "$($_.Verdict)" -eq 'HIGH' } | Select-Object -First 3 | ForEach-Object { $_.Name }) -join '; ')
-    Add-Signal 'Defender detection history' 2 @($def).Count ((@($def | Select-Object -First 3 | ForEach-Object { "$($_.ThreatName)$(if ("$($_.SeverityID)") { ' (sev ' + $_.SeverityID + ')' })" } | Where-Object { "$_" -ne '' -and "$_" -ne ' (sev )' }) -join '; ') + $(if (@($def).Count -gt 3) { "; +$(@($def).Count - 3) more" }))
+    # v2.60 FP fix: weight honesty for Defender detections. The live catalog is current, and
+    # 1116 history inside the log window is fresh - both keep weight 2. Only explicitly-tagged
+    # evtx-history (v2.55+ merge) outside the window drops to weight 1 report-only, so an old
+    # cleaned detection can no longer ride the two-weight-2-signals escalation to LIKELY
+    # COMPROMISED. Schema-less rows (pre-v2.55 cases) default fresh - legacy behavior preserved.
+    $defWinCutoff = (Get-Date).AddHours(-$(if ($LogHours -gt 0) { $LogHours } else { 168 }))
+    $defFresh = New-Object System.Collections.Generic.List[object]
+    $defStale = New-Object System.Collections.Generic.List[object]
+    foreach ($t in $def) {
+        $fresh = $true
+        if ("$($t.Source)" -eq 'evtx-history') {
+            $fresh = $false
+            try { $fresh = ([datetime]"$($t.DetectedUTC)") -gt $defWinCutoff } catch { }
+        }
+        if ($fresh) { $defFresh.Add($t) } else { $defStale.Add($t) }
+    }
+    $defDetail = { param($list) ((@($list | Select-Object -First 3 | ForEach-Object { "$($_.ThreatName)$(if ("$($_.SeverityID)") { ' (sev ' + $_.SeverityID + ')' })$(if ("$($_.DetectedUTC)") { " @ $($_.DetectedUTC)" })" } | Where-Object { "$_" -ne '' -and "$_" -notmatch '^ \(sev \)' }) -join '; ') + $(if ($list.Count -gt 3) { "; +$($list.Count - 3) more" })) }
+    Add-Signal 'Defender detection - active or in log window' 2 $defFresh.Count (& $defDetail $defFresh)
+    Add-Signal 'Defender detection - stale history (resolved / outside log window)' 1 $defStale.Count (& $defDetail $defStale)
     Add-Signal 'Security tooling tampering / log clearing' 2 $gapTamper "log cleared or security service stopped"
     Add-Signal 'Process anomaly verdict MEDIUM' 1 $procMed "unsigned/user-path binaries worth review"
     Add-Signal 'Brute-force source(s) seen' 0 @($brute).Count "failed logon sources - check for follow-up success"

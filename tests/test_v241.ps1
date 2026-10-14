@@ -61,7 +61,7 @@ $caseData['defender_threats.csv'] = @(
 $v = Get-CompromiseVerdict
 $sigA = @(@($v.Signals) | Where-Object { $_.Signal -eq 'Sigma detection - critical' })
 Check "case A: lone Defender-channel crit row does NOT create the sigma signal" ($sigA.Count -eq 0)
-Check "case A: Defender signal still present (no evidence lost)" (@(@($v.Signals) | Where-Object { $_.Signal -eq 'Defender detection history' }).Count -eq 1)
+Check "case A: Defender signal still present (no evidence lost)" (@(@($v.Signals) | Where-Object { $_.Signal -eq 'Defender detection - active or in log window' }).Count -eq 1)
 Check "case A: verdict stays SUSPICIOUS, not LIKELY COMPROMISED" ($v.LevelRank -eq 2)
 
 # Case B - a real crit storm: 4 events across 2 distinct non-Defender rules -> floor 3

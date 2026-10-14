@@ -21,6 +21,8 @@ $case1 = Join-Path $env:TEMP "ophira_pn_$stamp"
 $CsvDir = Join-Path $case1 'csv'; $RawDir = Join-Path $case1 'raw'
 New-Item -ItemType Directory -Path $CsvDir, "$RawDir\prefetch", "$RawDir\browser", "$RawDir\registry" -Force | Out-Null
 Set-Content (Join-Path "$RawDir\registry" 'Amcache.hve') -Value 'x'
+Set-Content (Join-Path "$RawDir\prefetch" 'NOTEPAD.EXE-123.pf') -Value 'x'   # v2.60: non-empty input -> classification as before (empty inputs now say "collected but empty")
+Set-Content (Join-Path "$RawDir\browser" 'History') -Value 'x'
 Set-Content (Join-Path $CsvDir 'amcache.csv') -Value "A`r`nB"   # already parsed on endpoint
 function Get-DotNetRelease { '.NET Framework 4.8 (release 528040); .NET 9 desktop runtime: absent' }
 function Import-CaseCsv { param([string]$Name) @() }
