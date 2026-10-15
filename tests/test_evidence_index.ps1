@@ -62,6 +62,15 @@ foreach ($empty in @('yara_hits', 'flash_ioc_hits', 'ioc_hits_amcache', 'logging
     "# no entries" | Set-Content -LiteralPath (Join-Path $csvDir "$empty.csv") -Encoding UTF8
 }
 
+# v2.63 T4 fixtures: evidence-index row counts (empty / marker / header-only / header+N -> 0/0/0/N)
+[System.IO.File]::WriteAllText((Join-Path $csvDir 'fixture_empty.csv'), '')
+"# no entries" | Set-Content -LiteralPath (Join-Path $csvDir 'fixture_marker.csv') -Encoding UTF8
+'"ColA","ColB"' | Set-Content -LiteralPath (Join-Path $csvDir 'fixture_headeronly.csv') -Encoding UTF8
+$fxLines = New-Object 'System.Collections.Generic.List[string]'
+$fxLines.Add('"ColA","ColB"')
+1..4 | ForEach-Object { $fxLines.Add('"v' + $_ + '",' + $_) }
+Set-Content -LiteralPath (Join-Path $csvDir 'fixture_rows.csv') -Value $fxLines.ToArray() -Encoding UTF8
+
 $pass = 0; $fail = 0
 function Check([string]$label, [bool]$ok) {
     if ($ok) { $script:pass++; Write-Host "  [ok] $label" -ForegroundColor Green }
@@ -83,6 +92,10 @@ Check "evidence index: table header" ($html -match 'Evidence index')
 Check "evidence index: row count column" ($html -match '<td>3</td>' -and $html -match 'hayabusa_timeline\.csv')
 Check "evidence index: description present" ($html -match 'Sigma detection timeline')
 Check "evidence index: key files meta (supertimeline/siem/layer)" ($html -match 'supertimeline\.csv' -and $html -match 'siem_export\.ndjson' -and $html -match 'attack_layer\.json')
+Check "evidence index: empty file -> 0 rows" ($html -match 'fixture_empty\.csv</a></td><td>0</td>')
+Check "evidence index: marker file -> 0 rows" ($html -match 'fixture_marker\.csv</a></td><td>0</td>')
+Check "evidence index: header-only -> 0 rows" ($html -match 'fixture_headeronly\.csv</a></td><td>0</td>')
+Check "evidence index: header+4 rows -> 4 rows" ($html -match 'fixture_rows\.csv</a></td><td>4</td>')
 
 New-AttackLayer
 $layerFile = Join-Path $CaseDir 'attack_layer.json'

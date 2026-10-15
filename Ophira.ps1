@@ -1,5 +1,5 @@
 ﻿<#
-Ophira v2.62  -  Windows Incident Response Triage Toolkit
+Ophira v2.63  -  Windows Incident Response Triage Toolkit
 READ-ONLY by design: never modifies the system, only reads and copies data
 into its own output folder. Intended to be handed to a system owner or run
 by a responder during early triage / threat hunting.
@@ -16,6 +16,8 @@ param(
     [string]$Preset = 'Standard',
     [switch]$NoMenu,
     [switch]$SimpleUI,
+    [ValidateSet('Quiet', 'Normal', 'Verbose')]
+    [string]$LogLevel = 'Normal',
     [switch]$IncludeMemory,
     [switch]$PushTools,
     [switch]$Sequential,
@@ -45,7 +47,7 @@ param(
     [switch]$ExitVerdict
 )
 
-$ScriptVersion = "2.62"
+$ScriptVersion = "2.63"
 $ErrorActionPreference = 'Continue'
 $ProgressPreference = 'SilentlyContinue'
 
@@ -155,17 +157,20 @@ function Save-OphiraConfig {
     } catch { return $false }
 }
 $script:SimpleUI = [bool]$SimpleUI
+$script:NoMenu = [bool]$NoMenu
+$script:Verbosity = @('Quiet', 'Normal', 'Verbose').IndexOf("$LogLevel")
+if ($script:Verbosity -lt 0) { $script:Verbosity = 1 }
 
 function Write-CaseLog {
     param([string]$Message, [string]$Color = 'Gray', [switch]$NoConsole)
     $line = "[{0}] {1}" -f (Get-Date -Format 'HH:mm:ss'), $Message
-    if (-not $NoConsole -and -not $script:SimpleUI) { Write-Host $line -ForegroundColor $Color }
+    if (-not $NoConsole -and -not $script:SimpleUI -and $script:Verbosity -ge 1) { Write-Host $line -ForegroundColor $Color }
     Add-Content -LiteralPath $CaseLog -Value $line -Encoding UTF8
 }
 
 function Out-Flash {
     param([string]$Text, [string]$Color = 'White')
-    if (-not $script:SimpleUI) { Write-Host $Text -ForegroundColor $Color }
+    if (-not $script:SimpleUI -and $script:Verbosity -ge 1) { Write-Host $Text -ForegroundColor $Color }
     $script:FlashLines.Add(($Text -replace "\x1b\[[0-9;]*m", ''))
 }
 
@@ -1501,7 +1506,7 @@ a{color:#8ab4f8}.foot{margin-top:40px;color:#565e6b;font-size:11px}
                     $lvl = (@($g.Group | ForEach-Object { $_.Level }) | Sort-Object -Descending | Select-Object -First 1) -join ''
                     $lvlClass = switch -Regex ("$lvl") { 'crit' { 'crit'; break } 'high' { 'high'; break } 'med' { 'med'; break } default { 'info' } }
                     $hostsN = @($g.Group | ForEach-Object { $_.Computer } | Select-Object -Unique).Count
-                    $null = $fsb.AppendLine("<tr><td>$(ConvertTo-HtmlEsc $g.Name)</td><td>$($g.Count)</td><td class='$lvlClass'>$lvl</td><td>$hostsN</td></tr>")
+                    $null = $fsb.AppendLine("<tr><td>$(ConvertTo-HtmlEsc $g.Name)</td><td>$($g.Count)</td><td class='$lvlClass'>$(ConvertTo-HtmlEsc $lvl)</td><td>$hostsN</td></tr>")
                 }
                 $null = $fsb.AppendLine("</table><div class='meta'>Full timeline: fleet_hayabusa_timeline.csv / fleet_hayabusa_report.html</div>")
             }
@@ -1545,7 +1550,7 @@ a{color:#8ab4f8}.foot{margin-top:40px;color:#565e6b;font-size:11px}
 
 function Invoke-FlashTriage {
     $sw = [System.Diagnostics.Stopwatch]::StartNew()
-    Write-Host ""
+    if (-not $script:SimpleUI -and $script:Verbosity -ge 1) { Write-Host "" }
     Out-Flash "==============================================================" 'Cyan'
     Out-Flash "  FLASH TRIAGE  -  $Computer  -  $($StartTime.ToString('yyyy-MM-dd HH:mm:ss'))" 'Cyan'
     Out-Flash "==============================================================" 'Cyan'
@@ -1811,7 +1816,7 @@ function Invoke-NativeTool {
             foreach ($block in @($out, $err)) {
                 if ($block) {
                     ($block -split "`r?`n") | Select-Object -Last 40 | Where-Object { $_ } | ForEach-Object {
-                        Write-CaseLog "      $(($_ -replace ([char]27 + '\[[0-9;]*m'), ''))" 'DarkGray'
+                        Write-CaseLog "      $(($_ -replace ([char]27 + '\[[0-9;]*m'), ''))" 'DarkGray' -NoConsole:($script:Verbosity -lt 2)
                     }
                 }
             }
@@ -3445,6 +3450,7 @@ $script:Modules = @(
             }
             if (-not $tool) {
                 Write-CaseLog "    winpmem not found in tools\ folder" 'Yellow'
+                if ($script:NoMenu) { Write-CaseLog "    Memory capture skipped (non-interactive -NoMenu)" 'Yellow'; return }
                 $url = Read-Host "    Paste winpmem download URL (or press Enter to skip)"
                 if ($url) {
                     try {
@@ -3457,6 +3463,7 @@ $script:Modules = @(
                     } catch { Write-CaseLog "    Download failed: $($_.Exception.Message)" 'Red'; return }
                 } else { return }
             }
+            if ($script:NoMenu) { Write-CaseLog "    Memory capture skipped (non-interactive -NoMenu)" 'Yellow'; return }
             $confirm = Read-Host "    Capture full RAM to disk? This can take several minutes and RAM-size disk space [y/N]"
             if ($confirm -notmatch '^[Yy]') { Write-CaseLog "    Memory capture skipped by user" 'Gray'; return }
             New-Item -ItemType Directory -Path $MemDir -Force | Out-Null
@@ -4686,7 +4693,7 @@ function Invoke-SelectedModules {
     $runInline = {
         param($m)
         $script:Progress++
-        Write-Host ""
+        if (-not $script:SimpleUI -and $script:Verbosity -ge 1) { Write-Host "" }
         Write-CaseLog ("[{0}/{1}] Module {2}: {3}" -f $script:Progress, $total, $m.Id, $m.Name) 'Cyan'
         $sw = [System.Diagnostics.Stopwatch]::StartNew()
         try {
@@ -4892,11 +4899,14 @@ function Get-CleanCheckSummary {
     # renders as "check - N examined, 0 flagged" (count included only where the data carries one).
     # Checks WITH findings are omitted here: they already render as verdict signals + sections.
     # Report-side only - reads existing CSVs, no new collection, works on old cases via -Mode Parse.
+    # v2.63: -HayRows lets the report pass its already-imported Sigma rows so the big CSV is read
+    # once per run; absent (external callers) the CSV is imported here as before.
+    param([object[]]$HayRows = $null)
     $out = New-Object System.Collections.Generic.List[object]
     $add = { param([string]$check, [string]$detail) $out.Add([pscustomobject]@{ Check = $check; Detail = $detail }) }
 
     # Sigma: total events vs critical/high (same dedupe + self-noise filter as the verdict/report)
-    $hay = @(Import-CaseCsv 'hayabusa_timeline')
+    if ($null -ne $HayRows) { $hay = @($HayRows) } else { $hay = @(Import-CaseCsv 'hayabusa_timeline') }
     if ($hay.Count -gt 0) {
         if (Get-Command Remove-SigmaDuplicateEvents -ErrorAction SilentlyContinue) {
             $hay = @(Remove-SigmaDuplicateEvents $hay | Where-Object { -not (Test-SigmaSelfNoise $_) })
@@ -4944,6 +4954,8 @@ function New-HtmlReport {
     $scored = @(Import-CaseCsv 'flash_process_scored.csv')
     $iocHits = @(Import-CaseCsv 'flash_ioc_hits.csv')
     $hayRows = @(Import-CaseCsv 'hayabusa_timeline.csv')
+    # v2.63: supertimeline read ONCE here - glance/entity/master views below derive from $tlRows
+    $tlRows = @(Import-CaseCsv 'supertimeline')
     # v2.55: dedupe events matched by multiple rules + drop self-noise (our own collection activity)
     if (Get-Command Remove-SigmaDuplicateEvents -ErrorAction SilentlyContinue) {
         $hayRows = @(Remove-SigmaDuplicateEvents $hayRows | Where-Object { -not (Test-SigmaSelfNoise $_) })
@@ -5033,17 +5045,19 @@ td.clip{cursor:copy}
 .sbar{margin:8px 0}.sbar input,.sbar select{background:#181b21;border:1px solid #2a2f3a;color:#d7dce3;padding:4px 8px;border-radius:4px;font-size:12px}
 .pgr{margin:6px 0}.pgr button{background:#232833;border:1px solid #333b49;color:#9ec1f0;border-radius:4px;padding:2px 10px;cursor:pointer;margin-left:4px}
 tr.techrow{cursor:pointer}
-@media print{body{background:#fff;color:#111;font-size:11px}.nav,#copied,.sbar,.pgr,button,details{display:none!important}h1,h2{color:#111;border-color:#999}pre.ioc{background:#f4f4f4;color:#111;border-color:#bbb}table{font-size:10px}th{background:#eee;color:#111}tr:nth-child(even){background:#fafafa}.vbanner,.lead,.rec{background:#fafafa}.meta,.foot{color:#444}a{color:#111;text-decoration:none}.swall{display:none!important}}
+@media print{body{background:#fff;color:#111;font-size:11px}.nav,#copied,.sbar,.pgr,button{display:none!important}h1,h2{color:#111;border-color:#999}pre.ioc{background:#f4f4f4;color:#111;border-color:#bbb}table{font-size:10px}th{background:#eee;color:#111}tr:nth-child(even){background:#fafafa}.vbanner,.lead,.rec{background:#fafafa}.meta,.foot{color:#444}a{color:#111;text-decoration:none}.swall{display:none!important}}
 </style>
 '@
 
     $sb = New-Object System.Text.StringBuilder
-    $null = $sb.AppendLine("<!DOCTYPE html><html><head><meta charset='utf-8'><title>Ophira - $Computer</title>$css</head><body>")
+    $null = $sb.AppendLine("<!DOCTYPE html><html><head><meta charset='utf-8'><title>Ophira - $(ConvertTo-HtmlEsc $Computer)</title>$css</head><body>")
     $null = $sb.AppendLine("<h1>OPHIRA COMPROMISE ASSESSMENT REPORT</h1>")
     $caseAdmin = $null
     try { $caseAdmin = (Get-Content -LiteralPath (Join-Path $CaseDir 'case.json') -Raw -ErrorAction Stop | ConvertFrom-Json).AdminElevated } catch { }
-    $elevLabel = if ($null -ne $caseAdmin) { if ($caseAdmin) { 'yes' } else { 'NO' } } elseif (Test-IsAdmin) { 'yes' } else { 'NO' }
-    $null = $sb.AppendLine("<div class='meta'>Host: $Computer &nbsp;|&nbsp; Case: $(ConvertTo-HtmlEsc $script:CurrentCaseID) &nbsp;|&nbsp; Analyst: $(ConvertTo-HtmlEsc $script:CurrentAnalyst) &nbsp;|&nbsp; Collected: $($StartTime.ToString('u')) &nbsp;|&nbsp; Ophira v$ScriptVersion &nbsp;|&nbsp; Sysmon: $(if ($Sysmon) { 'yes' } else { 'no' }) &nbsp;|&nbsp; Elevated: $elevLabel</div>")
+    # v2.63: no AdminElevated in case.json -> 'unknown'; NEVER live-probe at render time
+    # (the analyst box's elevation is not the endpoint's - the v2.55 bug class)
+    $elevLabel = if ($null -ne $caseAdmin) { if ($caseAdmin) { 'yes' } else { 'NO' } } else { 'unknown' }
+    $null = $sb.AppendLine("<div class='meta'>Host: $(ConvertTo-HtmlEsc $Computer) &nbsp;|&nbsp; Case: $(ConvertTo-HtmlEsc $script:CurrentCaseID) &nbsp;|&nbsp; Analyst: $(ConvertTo-HtmlEsc $script:CurrentAnalyst) &nbsp;|&nbsp; Collected: $($StartTime.ToString('u')) &nbsp;|&nbsp; Ophira v$ScriptVersion &nbsp;|&nbsp; Sysmon: $(if ($Sysmon) { 'yes' } else { 'no' }) &nbsp;|&nbsp; Elevated: $elevLabel</div>")
     $null = $sb.AppendLine("<div class='nav'><a href='#leads'>Leads</a><a href='#verdict'>Verdict</a><a href='#coverage'>Coverage</a><a href='#attack'>ATT&CK</a><a href='#ioc'>IOCs</a><a href='#tactics'>Findings by tactic</a><a href='#yara'>YARA</a><a href='#processes'>Processes</a><a href='#sigma'>Sigma</a><a href='#logons'>Logons</a><a href='#persistence'>Persistence</a><a href='#filesystem'>File system</a><a href='#beacons'>Beaconing</a><a href='#network'>Network</a><a href='#timeline'>Timeline</a><a href='#snapshot'>Snapshot</a><a href='#drivers'>Drivers</a><a href='#hunt'>Hunt</a><a href='#entities'>Connections</a><a href='#focus'>Focus</a><a href='#recommendations'>Recommendations</a><a href='#evidence'>Evidence index</a></div>")
 
     # ---------- assessment at a glance (v2.61: the banner answers "infected or not?") ----------
@@ -5097,7 +5111,7 @@ tr.techrow{cursor:pointer}
         }
         # v2.61: negative evidence - every check that ran and found NOTHING, with counts
         $clean = @()
-        try { $clean = @(Get-CleanCheckSummary) } catch { }
+        try { $clean = @(Get-CleanCheckSummary -HayRows $hayRows) } catch { }
         if ($clean.Count -gt 0) {
             $null = $sb.AppendLine("<p style='margin-top:14px'><b>Checked and clean</b> (a clean verdict is only as good as the checks behind it)</p>")
             foreach ($cc in $clean) {
@@ -5106,7 +5120,7 @@ tr.techrow{cursor:pointer}
         }
         # v2.61: incident window from the master timeline
         try {
-            $tlGlance = @(Import-CaseCsv 'supertimeline' | ForEach-Object { $tg = $null; try { $tg = [datetime]"$($_.Timestamp)" } catch { }; if ($tg) { $tg } })
+            $tlGlance = @($tlRows | ForEach-Object { $tg = $null; try { $tg = [datetime]"$($_.Timestamp)" } catch { }; if ($tg) { $tg } })
             if ($tlGlance.Count -gt 1) {
                 $tlSorted2 = @($tlGlance | Sort-Object)
                 $days2 = @{}
@@ -5256,7 +5270,7 @@ tr.techrow{cursor:pointer}
 
     # ---------- MITRE ATT&CK ----------
     $null = $sb.AppendLine("<a name='attack'></a><h2>MITRE ATT&CK observed (from Sigma detections)</h2>")
-    $techRows = @()
+    $techRows = New-Object System.Collections.Generic.List[object]
     $tacticCounts = @{}
     $tacticMaxRank = @{}
     foreach ($r in $hayRows) {
@@ -5269,7 +5283,7 @@ tr.techrow{cursor:pointer}
             if ($rk -gt $tacticMaxRank[$t]) { $tacticMaxRank[$t] = $rk }
         }
         foreach ($tg in ($tags | Where-Object { $_ -match '^T\d{4}' })) {
-            $techRows += [pscustomobject]@{ Tech = $tg; Tactic = ($tacs -join ','); Rank = $rk; Rule = "$($r.RuleTitle)"; Level = "$($r.Level)"; Last = "$($r.Timestamp)" }
+            $techRows.Add([pscustomobject]@{ Tech = $tg; Tactic = ($tacs -join ','); Rank = $rk; Rule = "$($r.RuleTitle)"; Level = "$($r.Level)"; Last = "$($r.Timestamp)" })
         }
     }
     if ($tacticCounts.Count -gt 0) {
@@ -5289,7 +5303,7 @@ tr.techrow{cursor:pointer}
             $lvlClass = switch -Regex ("$($best.Level)") { 'crit' { 'crit'; break } 'high' { 'high'; break } 'med' { 'med'; break } default { 'info' } }
             $tacLbl = (@(Split-TagList $best.Tactic | ForEach-Object { Get-TacticLabel $_ }) -join ', ')
             $safeTech = "$($g.Tech)" -replace '[^A-Za-z0-9_]', ''
-            $null = $sb.AppendLine("<tr class='techrow' title='click to show/hide the matched events' onclick=""var r=document.getElementById('ev_$safeTech'); r.style.display=(r.style.display==='none'?'':'none');""><td><b>$($g.Tech)</b></td><td>$(ConvertTo-HtmlEsc $tacLbl)</td><td>$($g.Count)</td><td class='$lvlClass'>$($best.Level)</td><td>$(ConvertTo-HtmlEsc $best.Rule)</td><td>$(ConvertTo-HtmlEsc $best.Last)</td></tr>")
+            $null = $sb.AppendLine("<tr class='techrow' title='click to show/hide the matched events' onclick=""var r=document.getElementById('ev_$safeTech'); r.style.display=(r.style.display==='none'?'':'none');""><td><b>$($g.Tech)</b></td><td>$(ConvertTo-HtmlEsc $tacLbl)</td><td>$($g.Count)</td><td class='$lvlClass'>$(ConvertTo-HtmlEsc $best.Level)</td><td>$(ConvertTo-HtmlEsc $best.Rule)</td><td>$(ConvertTo-HtmlEsc $best.Last)</td></tr>")
             $null = $sb.AppendLine("<tr id='ev_$safeTech' style='display:none'><td colspan='6'><table>")
             $null = $sb.AppendLine("<tr><th>Time</th><th>Alert</th><th>Level</th></tr>")
             foreach ($e in (@($g.Group | Sort-Object { "$($_.Last)" } -Descending) | Select-Object -First 25)) {
@@ -5379,7 +5393,7 @@ tr.techrow{cursor:pointer}
                 $best = @($g.Group | Sort-Object { Get-LvlRank "$($_.Level)" } -Descending | Select-Object -First 1)
                 $lvlClass = switch -Regex ("$($best.Level)") { 'crit' { 'crit'; break } 'high' { 'high'; break } 'med' { 'med'; break } default { 'info' } }
                 $last = (@($g.Group | ForEach-Object { "$($_.Timestamp)" } | Sort-Object -Descending | Select-Object -First 1) -join '')
-                $null = $sb.AppendLine("<tr><td>$(ConvertTo-HtmlEsc $g.Name)</td><td class='$lvlClass'>$($best.Level)</td><td>$($g.Count)</td><td>$(ConvertTo-HtmlEsc $last)</td></tr>")
+                $null = $sb.AppendLine("<tr><td>$(ConvertTo-HtmlEsc $g.Name)</td><td class='$lvlClass'>$(ConvertTo-HtmlEsc $best.Level)</td><td>$($g.Count)</td><td>$(ConvertTo-HtmlEsc $last)</td></tr>")
             }
             $null = $sb.AppendLine("</table></details>")
         }
@@ -5421,7 +5435,7 @@ tr.techrow{cursor:pointer}
                 $lvl = "$($best.Level)"
                 $lvlClass = switch -Regex ($lvl) { 'crit' { 'crit'; break } 'high' { 'high'; break } 'med' { 'med'; break } default { 'info' } }
                 $last = (@($g.Group | ForEach-Object { "$($_.Timestamp)" } | Sort-Object -Descending | Select-Object -First 1) -join '')
-                $null = $sb.AppendLine("<tr><td>$(ConvertTo-HtmlEsc $g.Name)</td><td>$($g.Count)</td><td class='$lvlClass'>$lvl</td><td>$(ConvertTo-HtmlEsc $last)</td></tr>")
+                $null = $sb.AppendLine("<tr><td>$(ConvertTo-HtmlEsc $g.Name)</td><td>$($g.Count)</td><td class='$lvlClass'>$(ConvertTo-HtmlEsc $lvl)</td><td>$(ConvertTo-HtmlEsc $last)</td></tr>")
             }
             $null = $sb.AppendLine("</table>")
         }
@@ -5449,8 +5463,8 @@ tr.techrow{cursor:pointer}
                 }
                 $embedBudget -= $take
                 $null = $ruleJs.Add("'$safe':[$($parts -join ',')]")
-                $lvlOpts = (@("$($g.Group | ForEach-Object { "$($_.Level)" } | Sort-Object -Unique)") | ForEach-Object { "<option>$($_)</option>" }) -join ''
-                $null = $sb.AppendLine("<details><summary><span class='$lvlClass'><b>$(ConvertTo-HtmlEsc $g.Name)</b></span> - $($g.Count) hit(s), max <span class='$lvlClass'>$lvl</span> &nbsp;<span class='meta'>$csvLink</span></summary>")
+                $lvlOpts = (@($g.Group | ForEach-Object { "$($_.Level)" } | Sort-Object -Unique) | ForEach-Object { "<option>$(ConvertTo-HtmlEsc $_)</option>" }) -join ''
+                $null = $sb.AppendLine("<details><summary><span class='$lvlClass'><b>$(ConvertTo-HtmlEsc $g.Name)</b></span> - $($g.Count) hit(s), max <span class='$lvlClass'>$(ConvertTo-HtmlEsc $lvl)</span> &nbsp;<span class='meta'>$csvLink</span></summary>")
                 $null = $sb.AppendLine("<div class='sbar'>filter <input id='q_$safe' oninput=""renderRule('$safe')"" style='width:260px' placeholder='text in details/time/host'> level <select id='l_$safe' onchange=""renderRule('$safe')""><option value='all'>all</option>$lvlOpts</select> <span class='meta'>click a detail = copy raw - double-click = expand</span><input type='hidden' id='p_$safe' value='1'></div><div id='b_$safe'></div>")
                 $null = $sb.AppendLine("</details>")
             }
@@ -5475,7 +5489,8 @@ tr.techrow{cursor:pointer}
             $txtAttr = (ConvertTo-HtmlEsc $txt) -replace '"', '&quot;'
             $null = $sb.AppendLine("<tr><td>$(ConvertTo-HtmlEsc $t)</td><td>$(ConvertTo-HtmlEsc $src)</td><td class='path clip' title='click = copy raw - show all expands' data-full=""$txtAttr"">$(ConvertTo-HtmlEsc $txtShow)</td></tr>")
         }
-        $null = $sb.AppendLine("</table><div class='meta'>First $($psCmds.Count) recovered commands (hayabusa extract-base64 over the exported PowerShell event logs). Source: csv\ps_decoded_commands.csv</div>")
+        $psCap = if ($psCmds.Count -gt 30) { "First 30 of $($psCmds.Count)" } else { "First $($psCmds.Count)" }
+        $null = $sb.AppendLine("</table><div class='meta'>$psCap recovered commands (hayabusa extract-base64 over the exported PowerShell event logs). Source: csv\ps_decoded_commands.csv</div>")
     }
 
     # ---------- logon & account analysis ----------
@@ -5741,7 +5756,7 @@ tr.techrow{cursor:pointer}
         # master-timeline context for the top cards: rows within +/-15 min of the entity's first seen
         $tlPre = @()
         try {
-            $tlPre = @(Import-CaseCsv 'supertimeline' | ForEach-Object { $t = $null; try { $t = [datetime]$_.Timestamp } catch { }; if ($t) { [pscustomobject]@{ T = $t; Row = $_ } } })
+            $tlPre = @($tlRows | ForEach-Object { $t = $null; try { $t = [datetime]$_.Timestamp } catch { }; if ($t) { [pscustomobject]@{ T = $t; Row = $_ } } })
         } catch { }
         foreach ($e in $entTop) {
             $vCls = switch -Regex ("$($e.Verdict)") { 'HIGH' { 'crit'; break } 'MEDIUM' { 'med'; break } default { 'info' } }
@@ -5923,7 +5938,7 @@ tr.techrow{cursor:pointer}
     if (-not $snapAny) { $null = $sb.AppendLine("<div class='meta'>No snapshot data captured (relevant modules skipped).</div>") }
 
     # ---------- timeline (v2.42: rendered chronology + filter, CSV stays the source of truth) ----------
-    $tlAll = @(Import-CaseCsv 'supertimeline.csv')
+    $tlAll = $tlRows
     $tlSources = @($tlAll | ForEach-Object { "$($_.Source)" } | Sort-Object -Unique)
     $null = $sb.AppendLine("<a name='timeline'></a><h2>Master timeline (gathered evidence chronology)</h2>")
     $null = $sb.AppendLine("<div class='card'>The full chronology lives in <b>csv\$(ConvertTo-HtmlEsc (Get-CaseCsvPath 'supertimeline'))</b> ($(ConvertTo-HtmlEsc $tlAll.Count) events from $($tlSources.Count) evidence sources - open it in Excel/Timeline Explorer and filter by Timestamp). Evidence sources woven: $(ConvertTo-HtmlEsc ($tlSources -join ', ')). Scanner conclusions (Sigma detections, hunt findings, beacons) are intentionally NOT part of it - they have their own sections above. For windowed pivots with per-source/busiest-minute summaries run <b>-Mode Timeline</b>.</div>")
@@ -6114,7 +6129,9 @@ tr.techrow{cursor:pointer}
     if (-not (Test-Path (Join-Path $RawDir 'evtx'))) {
         $recs.Add('Event logs were not exported (module 4.x skipped or access denied) - rerun elevated with the Standard preset for Sigma/ATT&CK coverage.')
     }
-    $recElev = if ($null -ne $caseAdmin) { -not $caseAdmin } else { -not (Test-IsAdmin) }
+    # v2.63: unknown elevation never live-probes and never asserts the unverified
+    # negative "ran WITHOUT admin rights" - the coverage table already lists gaps
+    $recElev = if ($null -ne $caseAdmin) { -not $caseAdmin } else { $false }
     if ($recElev) {
         $recs.Add('This collection ran WITHOUT admin rights - rerun elevated to include registry hives, amcache, Security log and other key sources.')
     }
@@ -6304,8 +6321,10 @@ tr.techrow{cursor:pointer}
     foreach ($f in @(Get-ChildItem -Path $CsvDir -Filter '*.csv' -File -Recurse -ErrorAction SilentlyContinue | Where-Object { @('sigma_rules', 'evtx_ecmd', 'recmd_out') -notcontains $_.Directory.Name } | Sort-Object Name)) {
         $rows = 0
         try {
-            $first = Get-Content -LiteralPath $f.FullName -First 1
-            if ($first -and $first -notmatch '^#') { $rows = @(Get-Content -LiteralPath $f.FullName | Select-Object -Skip 1).Count }
+            # v2.63: stream lines via ReadLines - some case CSVs are tens of MB, never load one just to count it
+            $first = $null; $n = 0
+            foreach ($line in [System.IO.File]::ReadLines($f.FullName)) { if ($null -eq $first) { $first = $line }; $n++ }
+            if ($first -and $first -notmatch '^#') { $rows = $n - 1 }
         } catch { }
         $base = $f.BaseName
         $d = if ($desc.ContainsKey($base)) { $desc[$base] } else { '' }
@@ -6340,7 +6359,7 @@ tr.techrow{cursor:pointer}
     $null = $sb.AppendLine("<div class='meta'>Also in the case: $($alsoIn -join ', ')</div>")
 
     # shared client-side helpers: click-to-copy / double-click-expand + per-rule Sigma browsers
-    $ruleJsText = '{' + ($ruleJs -join ',') + '}'
+    $ruleJsText = ('{' + ($ruleJs -join ',') + '}') -replace '<', '\u003c'
     $null = $sb.AppendLine("<div id='copied'></div>")
     $null = $sb.AppendLine(@"
       <script>
@@ -6400,6 +6419,16 @@ tr.techrow{cursor:pointer}
           b.addEventListener('click',function(e){e.stopPropagation();t.textContent=f;t.classList.add('open');});
           t.appendChild(br);t.appendChild(b);
         }
+      });
+      // v2.63: printing shows collapsed <details> content - open them for print, restore after
+      var printClosed=[];
+      window.addEventListener('beforeprint',function(){
+        printClosed=[];
+        document.querySelectorAll('details:not([open])').forEach(function(d){d.setAttribute('open','open');printClosed.push(d);});
+      });
+      window.addEventListener('afterprint',function(){
+        printClosed.forEach(function(d){d.removeAttribute('open');});
+        printClosed=[];
       });
       </script>
 "@)
@@ -8364,7 +8393,7 @@ function Invoke-RegenerateOutputs {
 }
 
 function New-Package {
-    Write-Host ""
+    if (-not $script:SimpleUI -and $script:Verbosity -ge 1) { Write-Host "" }
     Write-CaseLog "Packaging case folder..." 'Cyan'
     $os = Get-WmiOrCim -Class Win32_OperatingSystem
     $case = [pscustomobject]@{
@@ -11000,7 +11029,7 @@ $script:CurrentAnalyst = $Analyst
 
 $IsAdmin = Test-IsAdmin
 $Sysmon = Get-SysmonState
-Clear-Host
+if (-not $script:SimpleUI) { Clear-Host }
 Write-Host "================================================================" -ForegroundColor Cyan
 Write-Host "   ___  ___  ___ _  _ ___ _____ _   ___ ___   " -ForegroundColor Cyan
 Write-Host "  | _ \/ _ \| __| \| | _ \_   _/_\ | _ \ _ \ " -ForegroundColor Cyan
@@ -11025,7 +11054,7 @@ Invoke-FlashTriage
 
 $selection = Get-PresetSelection -P $Preset
 if ($NoMenu -or $script:SimpleUI) {
-    Write-Host ""
+    if (-not $script:SimpleUI -and $script:Verbosity -ge 1) { Write-Host "" }
     if ($script:SimpleUI) {
         Write-Host "  First quick check done - details are saved for the IR team." -ForegroundColor Cyan
         Write-Host "  Now collecting the full evidence. This usually takes 3-5 minutes." -ForegroundColor Cyan
