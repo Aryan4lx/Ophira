@@ -1,5 +1,5 @@
 ﻿<#
-Ophira v2.64  -  Windows Incident Response Triage Toolkit
+Ophira v2.65  -  Windows Incident Response Triage Toolkit
 READ-ONLY by design: never modifies the system, only reads and copies data
 into its own output folder. Intended to be handed to a system owner or run
 by a responder during early triage / threat hunting.
@@ -47,7 +47,7 @@ param(
     [switch]$ExitVerdict
 )
 
-$ScriptVersion = "2.64"
+$ScriptVersion = "2.65"
 $ErrorActionPreference = 'Continue'
 $ProgressPreference = 'SilentlyContinue'
 
@@ -272,6 +272,8 @@ function Get-CaseCsvPath {
 function Test-CaseCsv {
     # Existence check for a case CSV: flat first (old cases, native-tool leftovers, wildcards),
     # then the mapped subfolder. Wildcard names keep working through the flat branch.
+    # v2.65: this wildcard-awareness is INTENTIONAL - jumplist_parsed*-style lookups resolve
+    # here. Import-CaseCsv reads -LiteralPath instead; that asymmetry is by design, don't unify.
     param([string]$Name)
     if ($Name -notmatch '\.csv$') { $Name = "$Name.csv" }
     if (Test-Path (Join-Path $CsvDir $Name)) { return $true }
@@ -1979,18 +1981,22 @@ $script:SharedFunctions = @(
     'Test-IsPublicIp', 'Test-IsUserWritablePath', 'Get-SignatureInfo', 'Get-SysmonState',
     'Get-UserProfileList', 'Get-UserAssistRows', 'ConvertTo-Rot13', 'Get-FilteredEvents', 'Export-Evtx',
     'Import-CaseCsv', 'Invoke-BrowserIocXref', 'Get-EventDataRows', 'Get-IisW3cRows', 'Get-StartupInfoRows', 'Get-WerReportRows', 'Test-SigmaSelfNoise', 'Remove-SigmaDuplicateEvents', 'Get-IpCloudClass', 'Get-LocalAdminMembers',
-    'Find-AdsOnPe', 'Test-WebshellContent'
+    'Find-AdsOnPe', 'Test-WebshellContent', 'Test-IsAdmin', 'Out-Flash', 'Get-DotNetRelease'
 )
 
 $script:ModuleWorkerText = @'
 param($PreambleText, $ModuleDef)
-Invoke-Expression $PreambleText
 $sw = [System.Diagnostics.Stopwatch]::StartNew()
 $err = ''
-try {
-    $sb = [scriptblock]::Create($ModuleDef.RunText)
-    & $sb
-} catch { $err = $_.Exception.Message }
+# v2.65 (C5): a poisoned preamble must fail this ONE module, not kill the worker - the
+# dispatcher paths only see the returned Error field, and both log it identically.
+try { Invoke-Expression $PreambleText } catch { $err = 'preamble failed: ' + $_.Exception.Message }
+if (-not $err) {
+    try {
+        $sb = [scriptblock]::Create($ModuleDef.RunText)
+        & $sb
+    } catch { $err = $_.Exception.Message }
+}
 $sw.Stop()
 return [pscustomobject]@{ Id = $ModuleDef.Id; Name = $ModuleDef.Name; Seconds = [math]::Round($sw.Elapsed.TotalSeconds, 1); Error = $err }
 '@
@@ -2025,6 +2031,17 @@ function New-WorkerPreamble {
     [void]$sb.AppendLine("`$script:LogStartDT = $(if ($script:LogStartDT) { "[datetime]'" + $script:LogStartDT.ToString('o') + "'" } else { '$null' })")
     [void]$sb.AppendLine("`$script:LogEndDT = $(if ($script:LogEndDT) { "[datetime]'" + $script:LogEndDT.ToString('o') + "'" } else { '$null' })")
     [void]$sb.AppendLine("`$script:SimpleUI = `$$([bool]$script:SimpleUI)")
+    # v2.65: seed the branch-state pooled workers actually read (v2.58-class gap): Verbosity
+    # gates the Invoke-NativeTool tail (-NoConsole), Sysmon/IsAdmin/EndpointAdmin/HostRole gate
+    # module paths, FlashLines backs Out-Flash. The Write-CaseLog override below stays file-only
+    # regardless of Verbosity - workers still never write the console.
+    [void]$sb.AppendLine("`$script:Verbosity = $([int]$script:Verbosity)")
+    [void]$sb.AppendLine("`$Sysmon = `$$([bool]$Sysmon)")
+    [void]$sb.AppendLine("`$IsAdmin = `$$([bool]$IsAdmin)")
+    [void]$sb.AppendLine("`$script:EndpointAdmin = $(if ($null -ne $script:EndpointAdmin) { "`$$([bool]$script:EndpointAdmin)" } else { '$null' })")
+    $roleLit = "'" + ("$script:HostRole" -replace "'", "''") + "'"
+    [void]$sb.AppendLine("`$script:HostRole = $roleLit")
+    [void]$sb.AppendLine('$script:FlashLines = New-Object System.Collections.Generic.List[string]')
     $wl = $WorkerLog -replace "'", "''"
     $override = "function Write-CaseLog { param([string]`$Message,[string]`$Color = 'Gray',[switch]`$NoConsole) Add-Content -LiteralPath '$wl' -Value (`"[{0}] {1}`" -f (Get-Date -Format 'HH:mm:ss'), `$Message) -Encoding UTF8 } "
     [void]$sb.AppendLine($override)
@@ -2035,20 +2052,31 @@ function Invoke-ModuleBatch {
     param([object[]]$Batch, [int]$Workers = 4)
     $results = @()
     if (-not $Batch -or $Batch.Count -eq 0) { return $results }
-    if ($Batch.Count -eq 1 -or $Sequential) {
+    # v2.65 (C8): no Count==1 shortcut - advanced-mode singleton phases exercise the SAME
+    # pooled dispatcher as full batches (the shortcut hid worker/pool-only failures from every
+    # small batch - the v2.58 masking class). -Sequential keeps the synchronous inline
+    # dispatcher; the SimpleUI front-screen path never reaches this function (see
+    # Invoke-SelectedModules: it returns inline before phases are built).
+    if ($Sequential) {
         foreach ($m in $Batch) {
             $wlog = Join-Path $CaseDir ("worker_{0}.log" -f $m.Id)
             $pre = New-WorkerPreamble -WorkerLog $wlog
             $md = @{ Id = $m.Id; Name = $m.Name; RunText = $m.Run.ToString() }
             $ps = [powershell]::Create()
             $null = $ps.AddScript($script:ModuleWorkerText).AddArgument($pre).AddArgument($md)
-            $r = $ps.Invoke() | Select-Object -First 1
+            # v2.65 (C5): mirror the parallel EndInvoke path - a synchronous worker failure is
+            # logged and skipped, never propagated (it used to crash the whole inline batch).
+            try {
+                # v2.65 (C8): filter to the result record before First 1 - a module that leaks
+                # pipeline output must not shadow the result (a leak comes first in the stream)
+                $r = @($ps.Invoke()) | Where-Object { $_ -is [pscustomobject] -and $_.PSObject.Properties['Error'] -and $_.PSObject.Properties['Seconds'] } | Select-Object -First 1
+                if ($r) {
+                    $results += $r
+                    if ($r.Error) { Write-CaseLog ("Module {0} ({1}) ERROR: {2}" -f $r.Id, $r.Name, $r.Error) 'Red' }
+                    else { Write-CaseLog ("Module {0} ({1}) done in {2:N1}s [inline]" -f $r.Id, $r.Name, $r.Seconds) 'DarkGray' -NoConsole }
+                }
+            } catch { Write-CaseLog ("Module {0} worker failed: {1}" -f $m.Id, $_.Exception.Message) 'Red' }
             $ps.Dispose()
-            if ($r) {
-                $results += $r
-                if ($r.Error) { Write-CaseLog ("Module {0} ({1}) ERROR: {2}" -f $r.Id, $r.Name, $r.Error) 'Red' }
-                else { Write-CaseLog ("Module {0} ({1}) done in {2:N1}s [inline]" -f $r.Id, $r.Name, $r.Seconds) 'DarkGray' -NoConsole }
-            }
             Merge-WorkerLog $wlog
         }
         return $results
@@ -2071,7 +2099,8 @@ function Invoke-ModuleBatch {
         foreach ($i in ($doneIdx | Sort-Object -Descending)) {
             $j = $jobs[$i]
             try {
-                $r = @($j.PS.EndInvoke($j.Handle)) | Select-Object -First 1
+                # v2.65 (C8): same result-record filter as the inline dispatcher (leak must not shadow)
+                $r = @($j.PS.EndInvoke($j.Handle)) | Where-Object { $_ -is [pscustomobject] -and $_.PSObject.Properties['Error'] -and $_.PSObject.Properties['Seconds'] } | Select-Object -First 1
                 if ($r) {
                     $results += $r
                     if ($r.Error) { Write-CaseLog ("Module {0} ({1}) ERROR: {2}" -f $r.Id, $r.Name, $r.Error) 'Red' }
@@ -4777,14 +4806,14 @@ function Invoke-SelectedModules {
         foreach ($m in $phases.A) { & $runInline $m }
     }
     if ($phases.B.Count -gt 0) {
-        Write-Host "`n--- Phase B: collection ($(if ($phases.B.Count -gt 1) { 'parallel' } else { 'inline' }): $(($phases.B.Id) -join ' ') ---" -ForegroundColor Cyan
+        Write-Host "`n--- Phase B: collection (parallel): $(($phases.B.Id) -join ' ') ---" -ForegroundColor Cyan
         $script:Progress += 0
         $r = Invoke-ModuleBatch -Batch $phases.B -Workers 4
         foreach ($x in $r) { $script:ModuleTimings += [pscustomobject]@{ Id = $x.Id; Seconds = $x.Seconds; Mode = 'parallel' } }
         $script:Progress += $phases.B.Count
     }
     if ($phases.C.Count -gt 0) {
-        Write-Host "`n--- Phase C: heavy analytics ($(if ($phases.C.Count -gt 1) { 'parallel' } else { 'inline' })): $(($phases.C.Id) -join ' ') ---" -ForegroundColor Cyan
+        Write-Host "`n--- Phase C: heavy analytics (parallel): $(($phases.C.Id) -join ' ') ---" -ForegroundColor Cyan
         $r = Invoke-ModuleBatch -Batch $phases.C -Workers 4
         foreach ($x in $r) { $script:ModuleTimings += [pscustomobject]@{ Id = $x.Id; Seconds = $x.Seconds; Mode = 'parallel' } }
         $script:Progress += $phases.C.Count
@@ -4915,9 +4944,20 @@ function Import-CaseCsv {
     if ($Name -notmatch '\.csv$') { $Name = "$Name.csv" }
     $f = Join-Path $CsvDir $Name
     if (-not (Test-Path -LiteralPath $f)) { $f = Join-Path $CsvDir (Get-CaseCsvPath $Name) }
-    if ((Test-Path -LiteralPath $f) -and -not ((Get-Content $f -First 1) -match '^#')) {
-        try { return @(Import-Csv $f) } catch { return @() }
-    }
+    # v2.65: -LiteralPath (case paths can carry [ ] wildcard chars) and the whole read inside
+    # the try - a file locked by another process yields @(), it never kills the caller.
+    # Asymmetry with Test-CaseCsv is intentional (see there). A Save-Rows failure marker
+    # ("FAILED: <reason>", whole file) is not a parseable CSV: return @() and warn honestly.
+    try {
+        if (Test-Path -LiteralPath $f) {
+            $first = Get-Content -LiteralPath $f -First 1
+            if ("$first" -match '^FAILED:') {
+                Write-CaseLog ("    csv\{0}: artifact FAILED to save during collection - {1}" -f $Name, ("$first" -replace '^(?i)FAILED:\s*', '')) 'DarkYellow'
+                return @()
+            }
+            if ("$first" -notmatch '^#') { return @(Import-Csv -LiteralPath $f) }
+        }
+    } catch { return @() }
     return @()
 }
 
@@ -6370,8 +6410,15 @@ tr.techrow{cursor:pointer}
         # v2.58: zero-row artifacts explain themselves instead of showing a naked 0
         $dTxt = $d
         if ($rows -eq 0) {
-            $why = $emptyWhy[$base]
-            if (-not $why) { foreach ($wk in $emptyWhy.Keys) { if ($wk.EndsWith('*') -and $base.StartsWith($wk.TrimEnd('*'))) { $why = $emptyWhy[$wk]; break } } }
+            # v2.65: a Save-Rows failure marker is not "empty" - the file's own FAILED line is
+            # the explanation and outranks the static why-empty map (a failed yara_hits must
+            # not claim "the rules matched nothing")
+            $why = $null
+            if ($first -and "$first" -match '^FAILED:') { $why = "artifact FAILED to save during collection: $(("$first" -replace '^(?i)FAILED:\s*', ''))" }
+            if (-not $why) {
+                $why = $emptyWhy[$base]
+                if (-not $why) { foreach ($wk in $emptyWhy.Keys) { if ($wk.EndsWith('*') -and $base.StartsWith($wk.TrimEnd('*'))) { $why = $emptyWhy[$wk]; break } } }
+            }
             if ($why) { $dTxt = "$d <div class='meta' style='margin-top:4px'><b>why empty:</b> $(ConvertTo-HtmlEsc $why)</div>" }
         }
         $null = $sb.AppendLine("<tr><td>$(ConvertTo-CaseFileLink $f.FullName $evLbl)</td><td>$rows</td><td>$dTxt</td></tr>")
