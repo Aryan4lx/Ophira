@@ -106,7 +106,8 @@ $v = Get-CompromiseVerdict
 $script:Verdict = $v
 Check "verdict: malfind signal (floor 2)" (@($v.Signals | Where-Object { $_.Signal -match 'malfind' }).Count -eq 1)
 Check "verdict: browser IOC signal (floor 2)" (@($v.Signals | Where-Object { $_.Signal -match 'browser history' }).Count -eq 1)
-Check "verdict = LIKELY (two strong signals escalate)" ($v.LevelRank -eq 3)
+# v2.64: two strong signals no longer escalate - the gate needs >=3 distinct weight-2s (see test_v264.ps1)
+Check "verdict = SUSPICIOUS (two strong signals no longer escalate under the v2.64 gate)" ($v.LevelRank -eq 2)
 $null = New-HtmlReport
 $html = Get-Content -LiteralPath (Join-Path $CaseDir 'report.html') -Raw
 Check "report: posture table" ($html -match 'Security posture \(hardening audit\)')

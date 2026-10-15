@@ -189,7 +189,7 @@ Invoke-Expression $mVerdict.Value
 $v = Get-CompromiseVerdict
 Check "verdict: DNS beacon signal floor 3 present" (@($v.Signals | Where-Object { "$($_.Signal)" -match 'DNS beaconing' -and $_.Weight -eq 3 }).Count -eq 1)
 Check "verdict: LOLDrivers malicious signal present" (@($v.Signals | Where-Object { "$($_.Signal)" -match 'LOLDrivers' }).Count -eq 1)
-Check "verdict: rank escalated to LIKELY COMPROMISED (two signals)" ($v.LevelRank -ge 3)
+Check "verdict: rank escalated to LIKELY COMPROMISED" ($v.LevelRank -ge 3) # v2.64: label fixed - the weight comes from the floor-3 DNS beacon fixture, not from "two signals"
 Check "verdict: counts expose DnsBeaconHigh + LolDriversMalicious" ($v.Counts.DnsBeaconHigh -eq 1 -and $v.Counts.LolDriversMalicious -eq 1)
 Check "verdict: DNS + LOLDrivers coverage rows present" (@($v.Coverage | Where-Object { "$($_.Source)" -match 'DNS query telemetry|LOLDrivers' }).Count -eq 2)
 

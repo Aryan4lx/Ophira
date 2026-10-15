@@ -1,5 +1,5 @@
 ﻿<#
-Ophira v2.63  -  Windows Incident Response Triage Toolkit
+Ophira v2.64  -  Windows Incident Response Triage Toolkit
 READ-ONLY by design: never modifies the system, only reads and copies data
 into its own output folder. Intended to be handed to a system owner or run
 by a responder during early triage / threat hunting.
@@ -47,7 +47,7 @@ param(
     [switch]$ExitVerdict
 )
 
-$ScriptVersion = "2.63"
+$ScriptVersion = "2.64"
 $ErrorActionPreference = 'Continue'
 $ProgressPreference = 'SilentlyContinue'
 
@@ -2530,10 +2530,36 @@ $script:Modules = @(
                     }
                 }
             }
-            # PowerShell profiles (user-profile scripts auto-run in every PS session)
+            # PowerShell profiles (user-profile scripts auto-run in every PS session).
+            # v2.64 skeleton gate: a <=200-byte profile containing none of the suspicious
+            # keywords is a default shell put there by the PS installer - report-visible only
+            # (no user-path flag, so it cannot ride the persistence verdict signal). Size alone
+            # is NOT the gate: big-but-benign files keep the flag, keyword content keeps it too.
+            # The same basename under BOTH Documents\WindowsPowerShell (5.1) and Documents\PowerShell
+            # (7+) is ONE profile, not two persistence hits - one row, both paths in Location.
+            $psSkeletonKw = @('Invoke-Expression', 'IEX ', 'DownloadString', 'DownloadFile', 'FromBase64String', 'EncodedCommand', 'Start-Process', 'Net.WebClient', '-Hidden', 'WScript.Shell')
             foreach ($u in $fsUsers) {
+                $ppByBase = @{}
                 foreach ($pp in @((Join-Path $u.FullName 'Documents\WindowsPowerShell\profile.ps1'), (Join-Path $u.FullName 'Documents\WindowsPowerShell\Microsoft.PowerShell_profile.ps1'), (Join-Path $u.FullName 'Documents\PowerShell\profile.ps1'), (Join-Path $u.FullName 'Documents\PowerShell\Microsoft.PowerShell_profile.ps1'))) {
-                    if (Test-Path -LiteralPath $pp -PathType Leaf) { $fi = Get-Item -LiteralPath $pp; Add-Asep 'PsProfile' $pp $fi.Name "$($fi.Length) bytes" @('user-path') }
+                    if (-not (Test-Path -LiteralPath $pp -PathType Leaf)) { continue }
+                    $b = [IO.Path]::GetFileName($pp)
+                    if (-not $ppByBase.ContainsKey($b)) { $ppByBase[$b] = New-Object System.Collections.Generic.List[object] }
+                    $ppByBase[$b].Add((Get-Item -LiteralPath $pp))
+                }
+                foreach ($b in $ppByBase.Keys) {
+                    $fis = $ppByBase[$b].ToArray()
+                    $locs = @($fis | ForEach-Object { $_.FullName })
+                    $sizes = @($fis | ForEach-Object { $_.Length } | Sort-Object -Unique)
+                    $val = "$(($(($sizes | Select-Object -First 2) | ForEach-Object { "$_ bytes" }) -join ' / '))"
+                    $skeleton = $true
+                    foreach ($fi in $fis) {
+                        if ($fi.Length -gt 200) { $skeleton = $false; break }
+                        $content = ''
+                        try { $content = (Get-Content -LiteralPath $fi.FullName -Raw -ErrorAction Stop) } catch { $skeleton = $false; break }
+                        foreach ($kw in $psSkeletonKw) { if ($content -match [regex]::Escape($kw)) { $skeleton = $false; break } }
+                        if (-not $skeleton) { break }
+                    }
+                    Add-Asep 'PsProfile' ($locs -join ' | ') $b $val $(if ($skeleton) { @() } else { @('user-path') })
                 }
             }
             foreach ($pp in @((Join-Path $env:SystemRoot 'System32\WindowsPowerShell\v1.0\profile.ps1'), (Join-Path $env:ProgramFiles 'PowerShell\7\profile.ps1'))) {
@@ -2906,7 +2932,9 @@ $script:Modules = @(
                 $hayArgs += @('--start-timeline', $script:LogStartDT.ToString('yyyy-MM-dd HH:mm:ss'))
                 if ($script:LogEndDT) { $hayArgs += @('--end-timeline', $script:LogEndDT.ToString('yyyy-MM-dd HH:mm:ss')) }
                 $huntNote = "from $($script:LogStartDT.ToString('yyyy-MM-dd HH:mm'))$(if ($script:LogEndDT) { " to $($script:LogEndDT.ToString('yyyy-MM-dd HH:mm'))" })"
-            } elseif ($LogHours -gt 0) { $hayArgs += @('--time-offset', "$($LogHours)h"); $huntNote = "last $($LogHours)h" }
+                # v2.64: worker-seeded script var - an unscoped read here is only
+                # value-correct via inline dynamic scoping, not by construction
+            } elseif ($script:LogHours -gt 0) { $hayArgs += @('--time-offset', "$($script:LogHours)h"); $huntNote = "last $($script:LogHours)h" }
             Write-CaseLog "    hayabusa dfir-timeline Sigma hunt ($huntNote)..." 'Cyan'
             $null = Invoke-NativeTool -ExePath $h.FullName -ToolArgs $hayArgs -WorkingDirectory $h.DirectoryName
             if (Test-Path $out) {
@@ -4342,7 +4370,7 @@ public class OphiraDump {
                     $auth = ''; if ($d -match 'Authentication\s*:\s*(\S+)') { $auth = $Matches[1] }
                     $hasKey = $d -match 'Key Content\s*:\s*(\S)'
                     Out-RawText -SubDir 'wifi' -Name ("wlan_" + ($p -replace '[^\w\.-]', '_') + ".txt") -Text ($d -split "`n")
-                    $rows += [pscustomobject]@{ Item = "WLAN profile '$p'"; Detail = "auth $auth, key $(if ($hasKey) { 'CAPTURED -> raw\wifi' } else { 'not stored' })"; Risk = $(if ($hasKey) { 'MEDIUM' } else { 'LOW' }) }
+                    $rows += [pscustomobject]@{ Item = "WLAN profile '$p'"; Detail = "auth $auth, key $(if ($hasKey) { 'CAPTURED -> raw\wifi' } else { 'not stored' })"; Risk = 'LOW' } # v2.64: dead ternary collapsed (both branches LOW)
                 } catch { }
             }
             # DPAPI vault + protect blobs (analyst-side decryption) per user
@@ -4926,9 +4954,10 @@ function Get-CleanCheckSummary {
         $feedN = $feed.Hashes.Count + $feed.Ips.Count + $feed.Domains.Count + $feed.Names.Count
         if ($iHit -eq 0 -and $feedN -gt 0) { & $add 'IOC feed cross-reference' "$feedN indicators checked across live system, amcache, DNS, network, MFT, hashes and browser history - 0 matches" }
     }
-    # Beaconing (only meaningful when network telemetry exists at all)
-    $netRows = @(Import-CaseCsv 'flash_public_connections') + @(Import-CaseCsv 'sysmon_network') + @(Import-CaseCsv 'connections')
-    if ($netRows.Count -gt 0 -and @(Import-CaseCsv 'beacon_candidates').Count -eq 0 -and @(Import-CaseCsv 'dns_beacon_candidates').Count -eq 0) {
+    # Beaconing (only meaningful when network telemetry exists at all - v2.64: presence-based,
+    # same inputs the verdict's beacon checks depend on: live connections + Sysmon DNS telemetry.
+    # Both absent = no sensor = claiming "no beacons" would overstate health.)
+    if (((Test-CaseCsv 'flash_public_connections') -or (Test-CaseCsv 'sysmon_dns')) -and @(Import-CaseCsv 'beacon_candidates').Count -eq 0 -and @(Import-CaseCsv 'dns_beacon_candidates').Count -eq 0) {
         & $add 'Beacon detection' 'no periodic-callback candidates in network or DNS telemetry'
     }
     # Technique hunt (the engine always writes the CSV during regen - row absence = 0 findings)
@@ -4938,11 +4967,14 @@ function Get-CleanCheckSummary {
     # Brute force (only meaningful with logon telemetry)
     $auth = @(Import-CaseCsv 'security_auth_events')
     if ($auth.Count -gt 0 -and @(Import-CaseCsv 'security_bruteforce_candidates').Count -eq 0) { & $add 'Brute-force analysis' "$($auth.Count) logon events analyzed, 0 brute-force source candidates" }
-    # Log integrity: tamper = clear/stop markers inside logged gaps (same rule as the verdict)
+    # Log integrity: v2.64 - SAME predicate as the verdict's tamper count (EventId 1102/104,
+    # Meaning clear|stop fallback). The old Detail-based filter read a column logging_gaps
+    # doesn't have, so real clear events never suppressed this row.
     $gaps = @(Import-CaseCsv 'logging_gaps')
-    if ((Test-CaseCsv 'logging_gaps') -and @($gaps | Where-Object { "$($_.Detail)" -match '(?i)clear|stop' }).Count -eq 0) { & $add 'Log integrity' 'no security log clear/stop events found' }
-    # Credential exposure
-    if ((Test-CaseCsv 'credential_sweep') -and @(@(Import-CaseCsv 'credential_sweep') | Where-Object { "$($_.Risk)" -eq 'HIGH' }).Count -eq 0) { & $add 'Credential exposure sweep' 'no HIGH-risk exposure (auto-logon secrets, LSASS dumps on disk, key material)' }
+    if ((Test-CaseCsv 'logging_gaps') -and @($gaps | Where-Object { "$($_.EventId)" -match '^(1102|104)$' -or "$($_.Meaning)" -match 'clear|stop' }).Count -eq 0) { & $add 'Log integrity' 'no security log clear/stop events found' }
+    # Credential exposure: v2.64 - same ^high$ filter the verdict's credential signal keys on
+    # (case-insensitive exact match; a MEDIUM-only sweep is still a clean row)
+    if ((Test-CaseCsv 'credential_sweep') -and @(@(Import-CaseCsv 'credential_sweep') | Where-Object { "$($_.Risk)" -match '(?i)^high$' }).Count -eq 0) { & $add 'Credential exposure sweep' 'no HIGH-risk exposure (auto-logon secrets, LSASS dumps on disk, key material)' }
     if ((Test-CaseCsv 'svchost_audit') -and @(Import-CaseCsv 'svchost_audit').Count -eq 0) { & $add 'svchost masquerade audit' 'every running svchost instance runs from System32' }
     if ((Test-CaseCsv 'wmi_event_consumers') -and @(Import-CaseCsv 'wmi_event_consumers').Count -eq 0) { & $add 'WMI event subscriptions' 'no permanent persistence subscriptions' }
     if ((Test-CaseCsv 'ads_findings') -and @(Import-CaseCsv 'ads_findings').Count -eq 0) { & $add 'ADS scan' 'no non-Zone.Identifier streams on checked executables' }
@@ -5066,8 +5098,8 @@ tr.techrow{cursor:pointer}
         $v = $script:Verdict
         $null = $sb.AppendLine("<div class='vbanner v$($v.LevelRank)'>")
         $null = $sb.AppendLine("<p class='vtitle'>$(ConvertTo-HtmlEsc $v.Level)</p>")
-        $null = $sb.AppendLine("<p class='vowner'>$(ConvertTo-HtmlEsc $v.OwnerLine) &nbsp; Evidence coverage: $($v.ConfidencePercent)% (how much of the case was collected, not a probability of compromise)</p>")
-        $null = $sb.AppendLine("<div class='confwrap'><div class='confbar' style='width:$([math]::Min(100, [int]$v.ConfidencePercent))%;background:#b93'></div><div class='conftext'>$($v.ConfidencePercent)% of weighted evidence sources collected</div></div>")
+        $null = $sb.AppendLine("<p class='vowner'>$(ConvertTo-HtmlEsc $v.OwnerLine) &nbsp; Evidence coverage: $($v.ConfidencePercent)% ($($v.CoverageSourcesCollected)/$($v.CoverageSourcesTotal) sources - how much of the case was collected, not a probability of compromise)</p>")
+        $null = $sb.AppendLine("<div class='confwrap'><div class='confbar' style='width:$([math]::Min(100, [int]$v.ConfidencePercent))%;background:#b93'></div><div class='conftext'>$($v.ConfidencePercent)% of weighted evidence sources collected ($($v.CoverageSourcesCollected)/$($v.CoverageSourcesTotal) sources)</div></div>")
         # v2.61: what the level means - and what it does NOT mean
         $vmean = @{
             4 = 'Multiple independent high-confidence indicators agree - treat this host as compromised until proven otherwise.'
@@ -5239,7 +5271,7 @@ tr.techrow{cursor:pointer}
             $mark = if ($c.Collected) { "<span class='cov-ok'>yes</span>" } else { "<span class='cov-miss'>NO</span>" }
             $null = $sb.AppendLine("<tr><td>$(ConvertTo-HtmlEsc $c.Source)</td><td>$mark</td><td>$($c.Weight)</td></tr>")
         }
-        $null = $sb.AppendLine("</table><div class='meta'>Coverage confidence: $($script:Verdict.ConfidencePercent)% - missing sources narrow what can be ruled out.</div>")
+        $null = $sb.AppendLine("</table><div class='meta'>Coverage confidence: $($script:Verdict.ConfidencePercent)% ($($script:Verdict.CoverageSourcesCollected)/$($script:Verdict.CoverageSourcesTotal) sources) - missing sources narrow what can be ruled out.</div>")
     } else {
         $null = $sb.AppendLine("<div class='meta'>Coverage data not available.</div>")
     }
@@ -7964,7 +7996,8 @@ function Get-CompromiseVerdict {
     # corroboration (>=3 events from >=2 rules) earns floor 2; single-rule highs stay
     # report-only (weight 0 row keeps the story visible in the verdict).
     $highFloor = if ($hayHigh.Count -ge 3 -and $hayHighRules -ge 2) { 2 } else { 0 }
-    $procHigh = @($proc | Where-Object { "$($_.Verdict)" -eq 'HIGH' }).Count
+    # v2.64: score honesty - rows kept, gate applied at the signal (corroboration vars defined there)
+    $procHighRows = @($proc | Where-Object { "$($_.Verdict)" -eq 'HIGH' })
     $procMed = @($proc | Where-Object { "$($_.Verdict)" -eq 'MEDIUM' }).Count
     $yaraHi = @($yara | Where-Object { "$($_.Severity)" -match '^(?i)(high|critical)$' }).Count
     $yaraMed = @($yara | Where-Object { "$($_.Severity)" -match '^(?i)medium$' }).Count
@@ -7974,26 +8007,41 @@ function Get-CompromiseVerdict {
     $dnsHi = @($dnsBeacons | Where-Object { "$($_.Severity)" -match '^(?i)high$' }).Count
     $dnsMed = @($dnsBeacons | Where-Object { "$($_.Severity)" -match '^(?i)medium$' }).Count
     $lolMal = @($lol | Where-Object { $_.Status -eq 'malicious' }).Count
+    # v2.55: posture gaps + credential exposure now carry verdict weight (previously report-only).
+    # v2.64: imported BEFORE the hunt filter so the EcsConfigs exclusion can cross-check posture.
+    $posture = Import-CaseCsv 'posture'
+    $postureBad = @($posture | Where-Object { "$($_.Status)" -eq 'BAD' })
+    $credSweep = Import-CaseCsv 'credential_sweep'
     $hunt = Import-CaseCsv 'hunt_findings'
     $huntHi = @($hunt | Where-Object { "$($_.Severity)" -eq 'high' -and "$($_.Rule)" -match 'Renamed LOLBin|side-load|Downloaded then executed|LSASS access|Office app spawned|proxy-execution|Admin-share staging|Defender (real-time|exclusion)|DCSync|Password spray|Web server spawned|Remote-access tunnel|ServiceDll tamper|authorized_keys|Svchost masquerade|Cross-process injection|C2-style named pipe|image tampering|Direct volume access|WMI event subscription' })
+    # v2.64: EcsConfigs-only 5007 exclusion - Features\EcsConfigs is Defender's tamper-protected,
+    # platform-managed cloud-config key (rewritten on every engine sync), NOT a user-set exclusion.
+    # A 'Defender exclusion configuration changed' finding that only touches EcsConfigs paths is
+    # dropped from the VERDICT input unless posture says real exclusions exist (the 'Defender
+    # exclusions' check is WARN/BAD). The report keeps all hunt findings - this is verdict-input
+    # honesty only.
+    $postureExclusions = @($posture | Where-Object { "$($_.Check)" -match '(?i)Defender exclusion' -and "$($_.Status)" -ne 'GOOD' }).Count -gt 0
+    $huntHi = @($huntHi | Where-Object {
+        $hd = "$($_.Evidence)" # v2.64: hunt rows carry no Detail column - read Evidence only (the old Detail-prefix read was always empty)
+        if ("$($_.Rule)" -notmatch '(?i)Defender exclusion' -or $hd -notmatch 'EcsConfigs' -or $postureExclusions) { return $true }
+        # keep UNLESS every Defender registry path the finding mentions lives under EcsConfigs
+        $hp = @([regex]::Matches($hd, '(?i)Windows Defender\\[\w\\]+') | ForEach-Object { $_.Value })
+        -not (@($hp).Count -gt 0 -and @($hp | Where-Object { $_ -notmatch '\\EcsConfigs\\' }).Count -eq 0)
+    })
     $usnBurstN = @($usnBursts).Count
     $rExt = ((@($usnBursts) | Where-Object { "$($_.RansomExt)" } | ForEach-Object { "$($_.RansomExt)" } | Sort-Object -Unique) -join ',')
     # ponytail: COM hijacks + StartupApproved excluded from the signal (per-user COM has many legit users, e.g. Teams/OneDrive); they stay report-visible
     $asepHotN = @($asep | Where-Object { $_.Flags -match 'user-path|nondefault' -and "$($_.Category)" -notmatch 'ComHijack|StartupApproved' }).Count
-    # v2.55: posture gaps + credential exposure now carry verdict weight (previously report-only)
-    $posture = Import-CaseCsv 'posture'
-    $postureBad = @($posture | Where-Object { "$($_.Status)" -eq 'BAD' })
-    $credSweep = Import-CaseCsv 'credential_sweep'
     # v2.60 fix: module 8.15 writes Item/Detail/Risk - the old Severity/Description filter matched
     # nothing, so this floor-2 signal had silently never fired on any case
-    $credMed = @($credSweep | Where-Object { "$($_.Risk)" -match '(?i)med|high' })
+    $credMed = @($credSweep | Where-Object { "$($_.Risk)" -match '(?i)^high$' })
 
     Add-Signal 'IOC hit - historical execution (amcache SHA1)' 4 @($iocAmc).Count "near-certain true positive evidence"
     Add-Signal 'YARA hit - high/critical rule' 4 $yaraHi (($yara | Where-Object { "$($_.Severity)" -match '^(?i)(high|critical)$' } | Select-Object -First 3 | ForEach-Object { $_.Rule }) -join '; ')
     Add-Signal 'C2 beaconing - highly regular callbacks' 3 $beaconHi (($beacons | Where-Object { "$($_.Severity)" -match '^(?i)high$' } | Select-Object -First 3 | ForEach-Object { "$($_.Process) -> $($_.RemoteIp):$($_.Port) every ~$($_.MedianIntervalSec)s" }) -join '; ')
     Add-Signal 'C2 DNS beaconing - highly regular domain queries' 3 $dnsHi (($dnsBeacons | Where-Object { "$($_.Severity)" -match '^(?i)high$' } | Select-Object -First 3 | ForEach-Object { "$($_.Process) -> $($_.Domain) every ~$($_.MedianIntervalSec)s" }) -join '; ')
     Add-Signal 'Known-malicious driver on disk (LOLDrivers)' 2 $lolMal (($lol | Where-Object { $_.Status -eq 'malicious' } | Select-Object -First 3 | ForEach-Object { "$($_.Name): $($_.Path)" }) -join '; ')
-    Add-Signal 'Security posture gaps' 1 @($postureBad).Count (($postureBad | ForEach-Object { "$($_.Setting): $($_.Detail)" }) -join '; ')
+    Add-Signal 'Security posture gaps' 1 @($postureBad).Count (($postureBad | ForEach-Object { "$($_.Check): $($_.Detail)" }) -join '; ') # v2.64: was $_.Setting - that column never existed, the detail lost the check name
     Add-Signal 'Credential material exposure' 2 @($credMed).Count (($credMed | Select-Object -First 3 | ForEach-Object { "$($_.Item): $($_.Detail)" }) -join '; ')
     Add-Signal 'Hunt technique - renamed binary / side-load / download-exec / LSASS access / Office chain / proxy-exec / share staging / Defender tamper / DCSync / spray / webshell / tunnel / RDP hijack / SSH keys / svchost masquerade / injection / C2 pipe / hollowing / raw volume / WMI persistence' 2 $huntHi.Count (($huntHi | Select-Object -First 3 | ForEach-Object { $_.Rule }) -join '; ')
     Add-Signal 'Ransomware-like mass file modification (USN journal)' 3 $usnBurstN ((($usnBursts | Select-Object -First 3 | ForEach-Object { "$($_.WindowStart): $($_.WriteEvents) writes / $($_.DistinctFiles) files" }) -join '; ') + $(if ($rExt) { " - RANSOM EXTENSIONS: $rExt" }))
@@ -8017,7 +8065,23 @@ function Get-CompromiseVerdict {
     # naming (usually admin automation, sometimes real). Floor 0 = visible, no verdict weight.
     $hayStorm = @($hay | Group-Object RuleTitle | Where-Object { $_.Count -ge 100 -and @($_.Group | Where-Object { (Get-LvlRank "$($_.Level)") -le 2 } | Select-Object -First 1) } | Sort-Object Count -Descending)
     Add-Signal 'Sigma volume signal' 0 @($hayStorm).Count (($hayStorm | Select-Object -First 3 | ForEach-Object { "$($_.Name) ($($_.Count) events - review sample, then tune if benign)" }) -join '; ')
-    Add-Signal 'Process anomaly verdict HIGH' 2 $procHigh (($proc | Where-Object { "$($_.Verdict)" -eq 'HIGH' } | Select-Object -First 3 | ForEach-Object { $_.Name }) -join '; ')
+    # v2.64: score honesty for the HIGH signal. The correlation score needs 8+ before a HIGH
+    # verdict carries weight 2 alone; a sub-8 HIGH (observed: score 6 on a signed-by-nobody proxy
+    # client - unsigned + one public connection) only counts when the SAME verdict pass
+    # corroborates it (YARA hit, IOC hit, beacon candidate, weight-carrying Sigma crit/high, or
+    # hunt high). Demoted rows stay visible at weight 1 with the reason in the detail.
+    $procHighStrong = @($procHighRows | Where-Object { $s = 0; [void][int]::TryParse("$($_.Score)", [ref]$s); $s -ge 8 })
+    $procHighWeak = @($procHighRows | Where-Object { $s = 0; [void][int]::TryParse("$($_.Score)", [ref]$s); $s -lt 8 })
+    # Sigma corroboration uses the verdict's own storm gates: single-rule high storms carry weight 0
+    # and must not corroborate; crit rows always carry weight.
+    $procCorroborated = (@($yara).Count -gt 0) -or (@($iocLive).Count -gt 0) -or (@($iocAmc).Count -gt 0) -or (@($browserIoc).Count -gt 0) -or (@($dnsIoc).Count -gt 0) -or (@($netIoc).Count -gt 0) -or (@($mftIoc).Count -gt 0) -or (@($hashIoc).Count -gt 0) -or (@($beacons).Count -gt 0) -or (@($dnsBeacons).Count -gt 0) -or ($hayCrit.Count -gt 0) -or ($highFloor -gt 0) -or ($huntHi.Count -gt 0)
+    $procHighCount = if ($procCorroborated) { $procHighRows.Count } else { $procHighStrong.Count }
+    $procHighFloor = if ($procHighCount -gt 0) { 2 } else { 1 }
+    $procHighCount = if ($procHighCount -gt 0) { $procHighCount } else { $procHighWeak.Count }
+    $procHighDetail = (@($procHighStrong | Select-Object -First 3 | ForEach-Object { $_.Name }) -join '; ')
+    if ($procCorroborated) { $procHighDetail = (@($procHighRows | Select-Object -First 3 | ForEach-Object { $_.Name }) -join '; ') }
+    elseif ($procHighWeak.Count -gt 0) { if ($procHighDetail) { $procHighDetail += '; ' }; $procHighDetail += "$($procHighWeak.Count) sub-score-8 HIGH demoted - no corroboration (YARA/IOC/beacon/Sigma/hunt)" }
+    Add-Signal 'Process anomaly verdict HIGH' $procHighFloor $procHighCount $procHighDetail
     # v2.60 FP fix: weight honesty for Defender detections. The live catalog is current, and
     # 1116 history inside the log window is fresh - both keep weight 2. Only explicitly-tagged
     # evtx-history (v2.55+ merge) outside the window drops to weight 1 report-only, so an old
@@ -8031,6 +8095,13 @@ function Get-CompromiseVerdict {
         if ("$($t.Source)" -eq 'evtx-history') {
             $fresh = $false
             try { $fresh = ([datetime]"$($t.DetectedUTC)") -gt $defWinCutoff } catch { }
+        }
+        # v2.64: dateless inactive live-catalog remnant - Source 'live-catalog' with NO detection
+        # time, an INACTIVE threat and NO resource is the leftover of an already-cleaned detection
+        # (observed on the live case: a months-old Trojan stayed 'fresh' -> weight 2 forever).
+        # Genuinely schema-less rows (pre-v2.55 cases: no Source column at all) keep the fresh default.
+        elseif ("$($t.Source)" -eq 'live-catalog' -and -not "$($t.DetectedUTC)" -and "$($t.IsActive)" -match '^(?i)false$' -and -not "$($t.Resources)") {
+            $fresh = $false
         }
         if ($fresh) { $defFresh.Add($t) } else { $defStale.Add($t) }
     }
@@ -8079,10 +8150,23 @@ function Get-CompromiseVerdict {
     Add-Cov 'LOLDrivers driver hash check' (Test-CaseCsv 'loldrivers_hits') 3
     Add-Cov 'Sysmon telemetry (bonus)' ([bool]$Sysmon) 5
     Add-Cov 'RAM capture (bonus)' (Test-Path $MemDir) 3
-    $coverageRaw = 0
-    foreach ($c in $cov) { if ($c.Collected) { $coverageRaw += $c.Weight } }
+    # v2.64: coverage as an honest fraction - the denominator is the TOTAL possible weight
+    # (collected + not), so a case missing sources reads <100% instead of the old capped sum
+    # that hit 100% with 8 of 32 sources missing. N/M source counts ride the verdict object
+    # (CoverageSourcesCollected/Total) next to the percent.
+    $covTotal = 0
+    foreach ($c in $cov) { $covTotal += $c.Weight }
+    $covGot = 0
+    foreach ($c in $cov) { if ($c.Collected) { $covGot += $c.Weight } }
+    $covN = @($cov | Where-Object { $_.Collected }).Count
+    $covM = $cov.Count
     $isAdminRun = if ($null -ne $script:EndpointAdmin) { [bool]$script:EndpointAdmin } else { Test-IsAdmin }
-    if (-not $isAdminRun) { $coverageRaw -= 15 }
+    # v2.55: non-elevated runs under-collect - the -15 correction applies to the collected sum
+    # AFTER both sums (net = covGot - 15), then the fraction is taken.
+    $covNet = $covGot
+    if (-not $isAdminRun) { $covNet -= 15 }
+    $coverageRaw = 0
+    if ($covTotal -gt 0) { $coverageRaw = [Math]::Round(100 * [Math]::Max(0, $covNet) / $covTotal) }
     if ($coverageRaw -gt 100) { $coverageRaw = 100 }
     if ($coverageRaw -lt 0) { $coverageRaw = 0 }
 
@@ -8090,7 +8174,9 @@ function Get-CompromiseVerdict {
     $rank = 0
     foreach ($s in $signals) { if ($s.Weight -gt $rank) { $rank = $s.Weight } }
     $distinctStrong = @($signals | Where-Object { $_.Weight -ge 2 }).Count
-    if ($rank -eq 2 -and $distinctStrong -ge 2) { $rank = 3 }
+    # v2.64: escalation to LIKELY needs >=3 distinct weight-2 signals when nothing weight-3+
+    # exists - two weak weight-2s (stored WiFi + a posture gap) must not declare compromise
+    if ($rank -eq 2 -and $distinctStrong -ge 3) { $rank = 3 }
     if ($rank -eq 0) {
         if ($coverageRaw -lt 40) { $rank = 0 } else { $rank = 1 }
     }
@@ -8137,7 +8223,7 @@ function Get-CompromiseVerdict {
 
     $counts = [pscustomobject]@{
         IocLive = @($iocLive).Count; IocAmcache = @($iocAmc).Count; YaraHigh = $yaraHi; YaraMedium = $yaraMed
-        SigmaCritical = $hayCrit.Count; SigmaHigh = $hayHigh.Count; ProcessHigh = $procHigh; ProcessMedium = $procMed
+        SigmaCritical = $hayCrit.Count; SigmaHigh = $hayHigh.Count; ProcessHigh = $procHighRows.Count; ProcessMedium = $procMed
         DefenderDetections = @($def).Count; TamperEvents = $gapTamper; BruteForceSources = @($brute).Count
         BeaconHigh = $beaconHi; BeaconMedium = $beaconMed
         DnsBeaconHigh = $dnsHi; DnsBeaconMedium = $dnsMed; LolDriversMalicious = $lolMal
@@ -8153,6 +8239,8 @@ function Get-CompromiseVerdict {
         Caveats = $caveats.ToArray()
         Coverage = $cov.ToArray()
         CoveragePercentUnadjusted = $coverageRaw
+        CoverageSourcesCollected = $covN
+        CoverageSourcesTotal = $covM
         Counts = $counts
         GeneratedUTC = (Get-Date).ToUniversalTime().ToString('o')
     }
@@ -8167,7 +8255,7 @@ function Get-CaseNarrative {
     $L.Add("")
     if (-not $script:Verdict) { $L.Add("The verdict engine did not run - this draft has no assessment. Review the evidence sections."); return $L.ToArray() }
     $v = $script:Verdict
-    $L.Add("ASSESSMENT: $($v.Level) (evidence coverage $($v.ConfidencePercent)% of expected sources - not a probability of compromise). $($v.OwnerLine)")
+    $L.Add("ASSESSMENT: $($v.Level) (evidence coverage $($v.ConfidencePercent)% of expected sources - $($v.CoverageSourcesCollected)/$($v.CoverageSourcesTotal) sources, not a probability of compromise). $($v.OwnerLine)")
     $L.Add("")
     $strong = @($v.Signals | Where-Object { $_.Weight -ge 3 })
     $notable = @($v.Signals | Where-Object { $_.Weight -eq 2 })
@@ -8336,7 +8424,7 @@ function Invoke-RegenerateOutputs {
                 }) -Force
             }
             $vColor = switch ($script:Verdict.LevelRank) { 4 { 'Red' } 3 { 'Red' } 2 { 'Yellow' } 1 { 'Green' } default { 'DarkYellow' } }
-            Write-CaseLog "    VERDICT: $($script:Verdict.Level) (evidence coverage $($script:Verdict.ConfidencePercent)%) - $($script:Verdict.Signals.Count) signal(s), $($script:Verdict.Caveats.Count) caveat(s) -> verdict.json" $vColor
+            Write-CaseLog "    VERDICT: $($script:Verdict.Level) (evidence coverage $($script:Verdict.ConfidencePercent)%, $($script:Verdict.CoverageSourcesCollected)/$($script:Verdict.CoverageSourcesTotal) sources) - $($script:Verdict.Signals.Count) signal(s), $($script:Verdict.Caveats.Count) caveat(s) -> verdict.json" $vColor
         }
     } catch { Write-CaseLog "    verdict engine failed: $($_.Exception.Message)" 'DarkYellow' }
     # v2.45 auto-correlation: when the scoring calls a process malicious (HIGH) - or a YARA-high
@@ -8512,7 +8600,7 @@ function New-Package {
         Write-Host "  Memory dump : $(if (Test-Path $MemDir) { "$MemDir (NOT in zip - send separately)" } else { 'not captured' })"
         if ($script:Verdict) {
             $vColor = switch ($script:Verdict.LevelRank) { 4 { 'Red' } 3 { 'Red' } 2 { 'Yellow' } 1 { 'Green' } default { 'DarkYellow' } }
-            Write-Host "  VERDICT     : $($script:Verdict.Level)  (evidence coverage $($script:Verdict.ConfidencePercent)%)  - details: report.html / verdict.json" $vColor
+            Write-Host "  VERDICT     : $($script:Verdict.Level)  (evidence coverage $($script:Verdict.ConfidencePercent)%, $($script:Verdict.CoverageSourcesCollected)/$($script:Verdict.CoverageSourcesTotal) sources)  - details: report.html / verdict.json" $vColor
         }
         Write-Host ""
         Write-Host "  Send the ZIP file (and memory dump if captured) to the analyst." -ForegroundColor Yellow

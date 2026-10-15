@@ -23,7 +23,9 @@ $fx['hayabusa_timeline'] = @(1..40 | ForEach-Object { [pscustomobject]@{ Timesta
 $fx['yara_scanned'] = @([pscustomobject]@{ File = 'a.exe'; SHA256 = 'x'; Hits = 0; Rules = '' })
 $fx['security_auth_events'] = @(1..12 | ForEach-Object { [pscustomobject]@{ Time = '2026-10-01 10:00:00'; EventId = 4624; Account = 'u' } })
 $fx['flash_public_connections'] = @([pscustomobject]@{ RemoteAddress = '1.2.3.4'; RemotePort = 443 })
-$existing = @{ hunt_findings = $true; usn_write_bursts = $true; loldrivers_hits = $true; logging_gaps = $true; credential_sweep = $true; svchost_audit = $true; wmi_event_consumers = $true }
+# v2.64: the beacon clean row keys on telemetry PRESENCE (Test-CaseCsv, same inputs the verdict
+# uses) instead of row counts - so the fixture must mark flash_public_connections collected.
+$existing = @{ hunt_findings = $true; usn_write_bursts = $true; loldrivers_hits = $true; logging_gaps = $true; credential_sweep = $true; svchost_audit = $true; wmi_event_consumers = $true; flash_public_connections = $true }
 $feed = @{ Hashes = @{ 'deadbeef' = $true }; Ips = @{}; Domains = @{ 'bad.example' = $true }; Names = @{} }
 function Import-CaseCsv([string]$name) { if ($fx.ContainsKey($name)) { return $fx[$name] }; return @() }
 $clean = @(Get-CleanCheckSummary)
@@ -49,7 +51,10 @@ Check "hunt findings present (even info-level) -> NO clean row" ($byName2['Techn
 Check "unrelated clean rows still render" ($byName2['Mass file modification scan'] -ne $null)
 
 # case 3: no network telemetry -> beacon check must NOT claim clean
+# v2.64: the gate is presence-based, so the fixture drops flash_public_connections from the
+# collected map (removing the row data alone no longer changes the verdict-input view)
 $fx.Remove('flash_public_connections')
+$existing.Remove('flash_public_connections')
 $fx['hayabusa_timeline'] = @()
 $fx['credential_sweep'] = @()
 $clean3 = @(Get-CleanCheckSummary)
