@@ -1,5 +1,5 @@
 ﻿<#
-Ophira v2.65  -  Windows Incident Response Triage Toolkit
+Ophira v2.66  -  Windows Incident Response Triage Toolkit
 READ-ONLY by design: never modifies the system, only reads and copies data
 into its own output folder. Intended to be handed to a system owner or run
 by a responder during early triage / threat hunting.
@@ -47,7 +47,7 @@ param(
     [switch]$ExitVerdict
 )
 
-$ScriptVersion = "2.65"
+$ScriptVersion = "2.66"
 $ErrorActionPreference = 'Continue'
 $ProgressPreference = 'SilentlyContinue'
 
@@ -4864,15 +4864,29 @@ function Get-SectionAnchorForSource {
 }
 
 function ConvertTo-CaseFileLink {
-    # v2.56: render a case file path as a clickable file:// link (falls back to plain
-    # text when the file does not exist - a report may be copied off the analyst box).
+    # v2.56: render a case file path as a clickable link (falls back to plain text when the
+    # file does not exist - a report may be copied off the analyst box).
+    # v2.66 (B2): hrefs are case-RELATIVE - absolute file:///E:/ hrefs were dead in an emailed
+    # report, leaked the analyst's disk layout, and broke when the case folder moved. The report
+    # sits at the case root, so children resolve to csv/..., raw/... with forward slashes. The
+    # visible label text and the file-exists link-vs-plain-text decision are unchanged; anything
+    # outside the case root (or a missing case root) degrades to plain text - never an absolute path.
     param([string]$Path, [string]$Text = '')
     $txt = if ($Text) { $Text } else { $Path }
     if (-not "$Path" -or -not (Test-Path -LiteralPath $Path)) { return (ConvertTo-HtmlEsc $txt) }
-    $href = ''
-    try { $href = ([Uri]"$Path").AbsoluteUri } catch { }
-    if (-not $href) { return (ConvertTo-HtmlEsc $txt) }
-    return "<a href='$href'>$(ConvertTo-HtmlEsc $txt)</a>"
+    $rel = ''
+    try {
+        $full = [IO.Path]::GetFullPath("$Path")
+        if ("$CaseDir") {
+            $root = [IO.Path]::GetFullPath("$CaseDir").TrimEnd('\', '/')
+            if ($root -and $full.StartsWith("$root\", [StringComparison]::OrdinalIgnoreCase)) {
+                $rel = $full.Substring($root.Length + 1) -replace '\\', '/'
+                if (Test-Path -LiteralPath $full -PathType Container) { $rel += '/' } # keep the old file:/// dir semantics (trailing slash)
+            }
+        }
+    } catch { }
+    if (-not $rel) { return (ConvertTo-HtmlEsc $txt) }
+    return "<a href='$rel'>$(ConvertTo-HtmlEsc $txt)</a>"
 }
 
 function Get-LvlRank {
@@ -5078,6 +5092,8 @@ h1{font-size:22px;margin:0 0 4px} h2{font-size:16px;margin:32px 0 10px;color:#8a
 .meta{color:#7d8590;font-size:12px}
 .nav{position:sticky;top:0;background:#0f1115ee;border-bottom:1px solid #2a2f3a;padding:8px 0;z-index:9}
 .nav a{color:#8ab4f8;font-size:12px;text-decoration:none;margin-right:14px}
+.mkey{position:sticky;top:33px;z-index:5;background:#0f1115;border-bottom:1px solid #2a2f3a;padding:3px 0;font-size:11px;color:#7d8590}
+.mkey i{display:inline-block;width:9px;height:9px;border-radius:2px;border:1px solid;margin:0 3px 0 10px;vertical-align:middle}
 .chips{margin:16px 0}.chip{display:inline-block;padding:6px 14px;border-radius:16px;margin-right:8px;font-size:14px;font-weight:600}
 .card{background:#181b21;border:1px solid #2a2f3a;border-radius:8px;padding:14px;margin:10px 0}
 .badge{display:inline-block;padding:3px 10px;border-radius:10px;font-size:12px;font-weight:700;margin-right:8px}
@@ -5104,6 +5120,7 @@ a{color:#8ab4f8} .foot{margin-top:40px;color:#565e6b;font-size:11px}
 .leadtitle{font-size:15px;font-weight:700;color:#e8ecf2}
 .leadclass{font-size:12px;font-weight:400;color:#9aa6b6;margin-left:8px}
 .chip{display:inline-block;background:#243447;color:#9ec1f0;border-radius:10px;padding:2px 10px;margin:2px 4px 2px 0;font-size:11px}
+.chip.chipdead{background:#232833;color:#7d8590;border:1px solid #333b49}
 .cov-ok{color:#7ee2a8}.cov-miss{color:#ff8789}
 .tac{display:inline-block;padding:5px 12px;border-radius:14px;margin:3px 6px 3px 0;font-size:12px;font-weight:600;background:#243447;color:#9ec1f0}
 .tac.hi{background:#5c1a1e;color:#ff8789}.tac.md{background:#5c470f;color:#ffce6b}
@@ -5117,7 +5134,7 @@ td.clip{cursor:copy}
 .sbar{margin:8px 0}.sbar input,.sbar select{background:#181b21;border:1px solid #2a2f3a;color:#d7dce3;padding:4px 8px;border-radius:4px;font-size:12px}
 .pgr{margin:6px 0}.pgr button{background:#232833;border:1px solid #333b49;color:#9ec1f0;border-radius:4px;padding:2px 10px;cursor:pointer;margin-left:4px}
 tr.techrow{cursor:pointer}
-@media print{body{background:#fff;color:#111;font-size:11px}.nav,#copied,.sbar,.pgr,button{display:none!important}h1,h2{color:#111;border-color:#999}pre.ioc{background:#f4f4f4;color:#111;border-color:#bbb}table{font-size:10px}th{background:#eee;color:#111}tr:nth-child(even){background:#fafafa}.vbanner,.lead,.rec{background:#fafafa}.meta,.foot{color:#444}a{color:#111;text-decoration:none}.swall{display:none!important}}
+@media print{body{background:#fff;color:#111;font-size:11px}.nav,#copied,.sbar,.pgr,.mkey,button{display:none!important}h1,h2{color:#111;border-color:#999}pre.ioc{background:#f4f4f4;color:#111;border-color:#bbb}table{font-size:10px}th{background:#eee;color:#111}tr:nth-child(even){background:#fafafa}.vbanner,.lead,.rec{background:#fafafa}.meta,.foot{color:#444}a{color:#111;text-decoration:none}.swall{display:none!important}}
 </style>
 '@
 
@@ -5129,8 +5146,16 @@ tr.techrow{cursor:pointer}
     # v2.63: no AdminElevated in case.json -> 'unknown'; NEVER live-probe at render time
     # (the analyst box's elevation is not the endpoint's - the v2.55 bug class)
     $elevLabel = if ($null -ne $caseAdmin) { if ($caseAdmin) { 'yes' } else { 'NO' } } else { 'unknown' }
-    $null = $sb.AppendLine("<div class='meta'>Host: $(ConvertTo-HtmlEsc $Computer) &nbsp;|&nbsp; Case: $(ConvertTo-HtmlEsc $script:CurrentCaseID) &nbsp;|&nbsp; Analyst: $(ConvertTo-HtmlEsc $script:CurrentAnalyst) &nbsp;|&nbsp; Collected: $($StartTime.ToString('u')) &nbsp;|&nbsp; Ophira v$ScriptVersion &nbsp;|&nbsp; Sysmon: $(if ($Sysmon) { 'yes' } else { 'no' }) &nbsp;|&nbsp; Elevated: $elevLabel</div>")
-    $null = $sb.AppendLine("<div class='nav'><a href='#leads'>Leads</a><a href='#verdict'>Verdict</a><a href='#coverage'>Coverage</a><a href='#attack'>ATT&CK</a><a href='#ioc'>IOCs</a><a href='#tactics'>Findings by tactic</a><a href='#yara'>YARA</a><a href='#processes'>Processes</a><a href='#sigma'>Sigma</a><a href='#logons'>Logons</a><a href='#persistence'>Persistence</a><a href='#filesystem'>File system</a><a href='#beacons'>Beaconing</a><a href='#network'>Network</a><a href='#timeline'>Timeline</a><a href='#snapshot'>Snapshot</a><a href='#drivers'>Drivers</a><a href='#hunt'>Hunt</a><a href='#entities'>Connections</a><a href='#focus'>Focus</a><a href='#recommendations'>Recommendations</a><a href='#evidence'>Evidence index</a></div>")
+    # v2.66 (B14): blank identity slots rendered as "Case:  |" - same fallback pattern as the
+    # elevation fix above (never live-probe, never leave an empty slot)
+    $caseLbl = if ("$($script:CurrentCaseID)") { "$($script:CurrentCaseID)" } else { 'unknown' }
+    $analystLbl = if ("$($script:CurrentAnalyst)") { "$($script:CurrentAnalyst)" } else { 'not recorded' }
+    # v2.66 (B13): ONE dialect for Ophira's own generated stamps - yyyy-MM-dd HH:mm + ' UTC'.
+    # Raw evidence strings (event timestamps copied from CSVs into table cells) stay as-is.
+    $null = $sb.AppendLine("<div class='meta'>Host: $(ConvertTo-HtmlEsc $Computer) &nbsp;|&nbsp; Case: $(ConvertTo-HtmlEsc $caseLbl) &nbsp;|&nbsp; Analyst: $(ConvertTo-HtmlEsc $analystLbl) &nbsp;|&nbsp; Collected: $($StartTime.ToUniversalTime().ToString('yyyy-MM-dd HH:mm')) UTC &nbsp;|&nbsp; Ophira v$ScriptVersion &nbsp;|&nbsp; Sysmon: $(if ($Sysmon) { 'yes' } else { 'no' }) &nbsp;|&nbsp; Elevated: $elevLabel</div>")
+    # v2.66: nav order mirrors the actual rendered section order (B1) - it promised Leads before
+    # Verdict and Timeline before Snapshot/Drivers/Hunt/Entities; the document is the truth standard.
+    $null = $sb.AppendLine("<div class='nav'><a href='#verdict'>Verdict</a><a href='#leads'>Leads</a><a href='#coverage'>Coverage</a><a href='#attack'>ATT&CK</a><a href='#ioc'>IOCs</a><a href='#tactics'>Findings by tactic</a><a href='#yara'>YARA</a><a href='#processes'>Processes</a><a href='#sigma'>Sigma</a><a href='#logons'>Logons</a><a href='#persistence'>Persistence</a><a href='#filesystem'>File system</a><a href='#beacons'>Beaconing</a><a href='#network'>Network</a><a href='#drivers'>Drivers</a><a href='#hunt'>Hunt</a><a href='#entities'>Connections</a><a href='#snapshot'>Snapshot</a><a href='#timeline'>Timeline</a><a href='#focus'>Focus</a><a href='#recommendations'>Recommendations</a><a href='#evidence'>Evidence index</a></div>")
 
     # ---------- assessment at a glance (v2.61: the banner answers "infected or not?") ----------
     $null = $sb.AppendLine("<a name='verdict'></a><h2>Assessment at a glance</h2>")
@@ -5174,6 +5199,8 @@ tr.techrow{cursor:pointer}
                 elseif ("$($s.Signal)" -match '^Defender detection') { $anc = 'snapshot' }
                 elseif ("$($s.Signal)" -match '^Security tooling') { $anc = 'coverage' }
                 elseif ("$($s.Signal)" -match '^Brute') { $anc = 'logons' }
+                elseif ("$($s.Signal)" -match '^Security posture gaps') { $anc = 'snapshot' } # v2.66: was a dead anchor - the posture table renders in the snapshot section
+                elseif ("$($s.Signal)" -match '^Credential material exposure') { $anc = 'snapshot' } # v2.66: was a dead anchor - the credential sweep renders in the snapshot section
                 $sigTxt = "$(ConvertTo-HtmlEsc $s.Signal) x$($s.Count)$(if ("$($s.Detail)") { " - <span class='path'>$(ConvertTo-HtmlEsc $s.Detail)</span>" })"
                 if ($anc) { $null = $sb.AppendLine("<div class='sig'><span class='$wcol'>[w$($s.Weight)]</span> <a href='#$anc' style='color:inherit'>$sigTxt</a></div>") }
                 else { $null = $sb.AppendLine("<div class='sig'><span class='$wcol'>[w$($s.Weight)]</span> $sigTxt</div>") }
@@ -5198,7 +5225,7 @@ tr.techrow{cursor:pointer}
                 $days2 = @{}
                 foreach ($t2 in $tlGlance) { $k2 = $t2.ToString('yyyy-MM-dd'); if (-not $days2.ContainsKey($k2)) { $days2[$k2] = 0 }; $days2[$k2]++ }
                 $top2 = @($days2.Keys | Sort-Object { $days2[$_] } -Descending | Select-Object -First 1)[0]
-                $null = $sb.AppendLine("<p class='meta' style='margin-top:10px'><b>Evidence window:</b> $($tlSorted2[0].ToString('yyyy-MM-dd HH:mm')) to $($tlSorted2[$tlSorted2.Count - 1].ToString('yyyy-MM-dd HH:mm')) ($($tlGlance.Count) events) - busiest day $top2 ($($days2[$top2]) events). Full chronology: <a href='#timeline'>master timeline</a></p>")
+                $null = $sb.AppendLine("<p class='meta' style='margin-top:10px'><b>Evidence window:</b> $($tlSorted2[0].ToString('yyyy-MM-dd HH:mm')) UTC to $($tlSorted2[$tlSorted2.Count - 1].ToString('yyyy-MM-dd HH:mm')) UTC ($($tlGlance.Count) events) - busiest day $top2 ($($days2[$top2]) events). Full chronology: <a href='#timeline'>master timeline</a></p>")
             }
         } catch { }
         if (@($v.Caveats).Count -gt 0) {
@@ -5211,6 +5238,32 @@ tr.techrow{cursor:pointer}
         $null = $sb.AppendLine("<div class='vbanner v0'><p class='vtitle'>VERDICT UNAVAILABLE</p><p class='vowner'>The verdict engine did not run - review the raw sections below.</p></div>")
     }
 
+    # v2.66 (B6/B7): which Sigma rules got a per-rule drill-down (top 12 by hit count). The
+    # ATT&CK expansion and the sigma lead deep-link into those drill-downs, so the set is
+    # resolved here - before the leads section renders.
+    # v2.66 (B10): the shared 5000-row embed budget is spent in this same top-12 order, so
+    # the walk happens here too: $drillTake holds each rule's embedded-row share. A rule with
+    # a zero share gets no drill-down UI at all - so deep links must not target it either.
+    $drillSafeNames = New-Object 'System.Collections.Generic.HashSet[string]'
+    $drillTake = @{}
+    if ($hayRows.Count -gt 0) {
+        $alertColPre = $null
+        foreach ($cand in @('RuleTitle', 'Alert', 'RuleFile')) {
+            if ($hayRows[0].PSObject.Properties[$cand]) { $alertColPre = $cand; break }
+        }
+        if ($alertColPre) {
+            $budgetWalk = 5000
+            foreach ($g2 in ($hayRows | Group-Object $alertColPre | Sort-Object Count -Descending | Select-Object -First 12)) {
+                $s2 = ("$($g2.Name)" -replace '[^A-Za-z0-9\._-]+', '_') -replace '^_+|_+$', ''
+                if (-not $s2) { $s2 = 'unnamed_rule' }
+                if ($s2.Length -gt 80) { $s2 = $s2.Substring(0, 80) }
+                $take2 = [Math]::Min($g2.Count, [Math]::Max(0, $budgetWalk))
+                $budgetWalk -= $take2
+                $drillTake[$s2] = $take2
+                if ($take2 -gt 0) { $null = $drillSafeNames.Add($s2) }
+            }
+        }
+    }
     # ---------- triage leads (v2.45: decide these first) ----------
     # The 30-minute TP/FP workflow: the strongest signals as ranked lead cards, pure evidence -
     # identity, why it was flagged, which evidence categories corroborate it, and the auto-built
@@ -5237,7 +5290,8 @@ tr.techrow{cursor:pointer}
         $hayMed = @($hayRows | Where-Object { "$($_.Level)" -match '^(?i)(medium|high|crit)$' })
         if ($hayMed.Count -ge 20) {
             $hayTop = @($hayMed | Group-Object RuleTitle | Sort-Object Count -Descending | Select-Object -First 3)
-            $leads.Add([pscustomobject]@{ Rank = 'med'; Title = "Sigma storm: $([int]$hayMed.Count) detection rows"; Class = "review: sigma volume spike"; Why = (($hayTop | ForEach-Object { "$($_.Name) ($($_.Count) hits)" }) -join '; '); Ident = ''; Extra = ''; Anchor = 'sigma' })
+            # v2.66 (B7): Rule = the noisiest rule, so the lead link can open that drill-down
+            $leads.Add([pscustomobject]@{ Rank = 'med'; Title = "Sigma storm: $([int]$hayMed.Count) detection rows"; Class = "review: sigma volume spike"; Why = (($hayTop | ForEach-Object { "$($_.Name) ($($_.Count) hits)" }) -join '; '); Ident = ''; Extra = ''; Anchor = 'sigma'; Rule = "$($hayTop[0].Name)" })
         }
         foreach ($ch2 in @(Import-CaseCsv 'process_chains' | Where-Object { "$($_.Child)" } | Select-Object -First 2)) {
             $leads.Add([pscustomobject]@{ Rank = 'crit'; Title = "$($ch2.Parent) -> $($ch2.Child)"; Class = "process lineage: spawned child process"; Why = "$($ch2.Evidence)"; Ident = "$($ch2.Child)"; Extra = ''; Anchor = 'entities' })
@@ -5282,7 +5336,15 @@ tr.techrow{cursor:pointer}
                 if ($focusHit) {
                     $null = $sb.AppendLine("<div style='margin-top:5px'><a href='#focus'>-> full correlation story (instances, activity graph, everything it did) in the Focus section</a></div>")
                 } else {
-                    $null = $sb.AppendLine("<div style='margin-top:5px'><a href='#$($ld.Anchor)'>-> evidence in the $(ConvertTo-HtmlEsc $ld.Anchor) section</a></div>")
+                    # v2.66 (B7): when the target section hosts a filter this lead can drive,
+                    # carry the entity into it (sigma drill-down = data-rule); sections without
+                    # a filter keep the plain section-top jump as today.
+                    $deepAttr = ''
+                    if ($ld.Anchor -eq 'sigma' -and "$($ld.Rule)") {
+                        $lsafe = ("$($ld.Rule)" -replace '[^A-Za-z0-9\._-]+', '_') -replace '^_+|_+$', ''
+                        if ($lsafe -and $drillSafeNames.Contains($lsafe)) { $deepAttr = " data-rule='$lsafe'" }
+                    }
+                    $null = $sb.AppendLine("<div style='margin-top:5px'><a href='#$($ld.Anchor)'$deepAttr>-> evidence in the $(ConvertTo-HtmlEsc $ld.Anchor) section</a></div>")
                 }
                 $null = $sb.AppendLine("</div>")
             }
@@ -5316,9 +5378,16 @@ tr.techrow{cursor:pointer}
         $null = $sb.AppendLine("<div class='meta'>Coverage data not available.</div>")
     }
     if ($gapRows.Count -gt 0) {
+        # v2.66 (B15c): rows whose Time/Event cells are blank (chainsaw gap findings) get the raw
+        # gaps output linked straight into the empty cells - never a blank cell to stare at
+        $gapLink = ConvertTo-CaseFileLink (Join-Path $RawDir 'analysis\evtx_gaps.txt') 'raw\analysis\evtx_gaps.txt'
         $null = $sb.AppendLine("<h3>Logging continuity (check for tampering)</h3><table><tr><th>Time</th><th>Event</th><th>Meaning</th></tr>")
         foreach ($g in ($gapRows | Select-Object -First 25)) {
-            $null = $sb.AppendLine("<tr><td>$(ConvertTo-HtmlEsc $g.Time)</td><td>$($g.EventId)</td><td>$(ConvertTo-HtmlEsc $g.Meaning)</td></tr>")
+            if (-not "$($g.Time)" -and -not "$($g.EventId)") {
+                $null = $sb.AppendLine("<tr><td colspan='2'>$gapLink</td><td>$(ConvertTo-HtmlEsc $g.Meaning)</td></tr>")
+            } else {
+                $null = $sb.AppendLine("<tr><td>$(ConvertTo-HtmlEsc $g.Time)</td><td>$($g.EventId)</td><td>$(ConvertTo-HtmlEsc $g.Meaning)</td></tr>")
+            }
         }
         $null = $sb.AppendLine("</table>")
     }
@@ -5355,7 +5424,9 @@ tr.techrow{cursor:pointer}
             if ($rk -gt $tacticMaxRank[$t]) { $tacticMaxRank[$t] = $rk }
         }
         foreach ($tg in ($tags | Where-Object { $_ -match '^T\d{4}' })) {
-            $techRows.Add([pscustomobject]@{ Tech = $tg; Tactic = ($tacs -join ','); Rank = $rk; Rule = "$($r.RuleTitle)"; Level = "$($r.Level)"; Last = "$($r.Timestamp)" })
+            # v2.66 (B6): Eid/Rid ride along so the expansion can deep-link into the rule's
+            # drill-down pre-filtered to the exact event (RecordID preferred, EID fallback)
+            $techRows.Add([pscustomobject]@{ Tech = $tg; Tactic = ($tacs -join ','); Rank = $rk; Rule = "$($r.RuleTitle)"; Level = "$($r.Level)"; Last = "$($r.Timestamp)"; Eid = "$($r.EventID)"; Rid = $(if ($r.PSObject.Properties['RecordID']) { "$($r.RecordID)" } else { '' }) })
         }
     }
     if ($tacticCounts.Count -gt 0) {
@@ -5380,7 +5451,14 @@ tr.techrow{cursor:pointer}
             $null = $sb.AppendLine("<tr><th>Time</th><th>Alert</th><th>Level</th></tr>")
             foreach ($e in (@($g.Group | Sort-Object { "$($_.Last)" } -Descending) | Select-Object -First 25)) {
                 $evCls = switch -Regex ("$($e.Level)") { 'crit' { 'crit'; break } 'high' { 'high'; break } 'med' { 'med'; break } default { 'info' } }
-                $null = $sb.AppendLine("<tr><td>$(ConvertTo-HtmlEsc $e.Last)</td><td>$(ConvertTo-HtmlEsc $e.Rule)</td><td class='$evCls'>$(ConvertTo-HtmlEsc $e.Level)</td></tr>")
+                # v2.66 (B6): same-rule drill-down deep link - opens the rule's browser with the
+                # filter box pre-filled to this exact event (RecordID, else EID). Rules without
+                # a rendered drill-down stay plain text - never a dead link.
+                $safeRl = ("$($e.Rule)" -replace '[^A-Za-z0-9\._-]+', '_') -replace '^_+|_+$', ''
+                if ($safeRl.Length -gt 80) { $safeRl = $safeRl.Substring(0, 80) }
+                $qv6 = if ("$($e.Rid)") { "$($e.Rid)" } else { "$($e.Eid)" }
+                $alertCell = if ($safeRl -and $drillSafeNames.Contains($safeRl) -and "$($qv6)") { "<a href='#sigma' class='a-drill' data-rule='$safeRl' data-q=""$(ConvertTo-HtmlEsc $qv6)"" title='open the Sigma drill-down for this rule, pre-filtered'>$(ConvertTo-HtmlEsc $e.Rule)</a>" } else { ConvertTo-HtmlEsc $e.Rule }
+                $null = $sb.AppendLine("<tr><td>$(ConvertTo-HtmlEsc $e.Last)</td><td>$alertCell</td><td class='$evCls'>$(ConvertTo-HtmlEsc $e.Level)</td></tr>")
             }
             $extra = $g.Count - [Math]::Min(25, $g.Count)
             if ($extra -gt 0) { $null = $sb.AppendLine("<tr><td colspan='3' class='meta'>first 25 of $($g.Count) - all events: csv\hayabusa_timeline.csv (filter MitreTags = $($g.Tech)) | drill-downs below in the Sigma section</td></tr>") }
@@ -5458,17 +5536,21 @@ tr.techrow{cursor:pointer}
                 $byTactic[$t].Add($r)
             }
         }
+        # v2.66 (B12): shared text filter over the tactic blocks
+        $null = $sb.AppendLine("<div class='sbar'><input id='tacf' data-secfilter='1' data-wrap='tacwrap' data-sel='div.tacblk' data-cnt='cnt_tac' placeholder='filter tactics / alerts...' style='width:340px'> <span class='meta' id='cnt_tac'></span></div>")
+        $null = $sb.AppendLine("<div id='tacwrap'>")
         foreach ($tk in ($byTactic.Keys | Sort-Object)) {
             $rows = @($byTactic[$tk])
-            $null = $sb.AppendLine("<h3>$(ConvertTo-HtmlEsc (Get-TacticLabel $tk)) ($($rows.Count) events)</h3><details><summary>show alerts</summary><table><tr><th>Alert</th><th>Level</th><th>Hits</th><th>Last seen</th></tr>")
+            $null = $sb.AppendLine("<div class='tacblk'><h3>$(ConvertTo-HtmlEsc (Get-TacticLabel $tk)) ($($rows.Count) events)</h3><details><summary>show alerts</summary><table><tr><th>Alert</th><th>Level</th><th>Hits</th><th>Last seen</th></tr>")
             foreach ($g in @($rows | Group-Object RuleTitle | Sort-Object Count -Descending | Select-Object -First 15)) {
                 $best = @($g.Group | Sort-Object { Get-LvlRank "$($_.Level)" } -Descending | Select-Object -First 1)
                 $lvlClass = switch -Regex ("$($best.Level)") { 'crit' { 'crit'; break } 'high' { 'high'; break } 'med' { 'med'; break } default { 'info' } }
                 $last = (@($g.Group | ForEach-Object { "$($_.Timestamp)" } | Sort-Object -Descending | Select-Object -First 1) -join '')
                 $null = $sb.AppendLine("<tr><td>$(ConvertTo-HtmlEsc $g.Name)</td><td class='$lvlClass'>$(ConvertTo-HtmlEsc $best.Level)</td><td>$($g.Count)</td><td>$(ConvertTo-HtmlEsc $last)</td></tr>")
             }
-            $null = $sb.AppendLine("</table></details>")
+            $null = $sb.AppendLine("</table></details></div>")
         }
+        $null = $sb.AppendLine("</div>")
     } else {
         $null = $sb.AppendLine("<div class='meta'>No medium+ severity Sigma alerts in the analyzed window.</div>")
     }
@@ -5488,9 +5570,21 @@ tr.techrow{cursor:pointer}
 
     # ---------- process verdicts ----------
     $null = $sb.AppendLine("<a name='processes'></a><h2>Process verdicts (correlation scored)</h2>")
-    foreach ($p in ($scored | Sort-Object { [int]$_.Score } -Descending | Select-Object -First 30)) {
-        $evs = ($p.Evidence -split ';' | Where-Object { $_ }) | ForEach-Object { "<span class='ev'>$(ConvertTo-HtmlEsc $_)</span>" }
-        $null = $sb.AppendLine("<div class='card'><span class='badge $($p.Verdict)'>$($p.Verdict) &nbsp;$($p.Score)</span><b>$(ConvertTo-HtmlEsc $p.Name)</b> <span class='meta'>PID $(ConvertTo-HtmlEsc $p.PID)</span> $(New-VtLink $p.Name)<br><span class='path'>$(ConvertTo-HtmlEsc $p.Path)</span><br>$($evs -join ' ')</div>")
+    # v2.66 (B12): shared text filter (one generic JS function, bound per section via data-attrs)
+    $procTop = @($scored | Sort-Object { [int]$_.Score } -Descending | Select-Object -First 30)
+    if ($procTop.Count -gt 0) {
+        $null = $sb.AppendLine("<div class='sbar'><input id='procf' data-secfilter='1' data-wrap='procwrap' data-sel='div.card' data-cnt='cnt_proc' placeholder='filter processes (name / path / evidence)...' style='width:340px'> <span class='meta' id='cnt_proc'></span></div>")
+        $null = $sb.AppendLine("<div id='procwrap'>")
+        foreach ($p in $procTop) {
+            $evs = ($p.Evidence -split ';' | Where-Object { $_ }) | ForEach-Object { "<span class='ev'>$(ConvertTo-HtmlEsc $_)</span>" }
+            $null = $sb.AppendLine("<div class='card'><span class='badge $($p.Verdict)'>$($p.Verdict) &nbsp;$($p.Score)</span><b>$(ConvertTo-HtmlEsc $p.Name)</b> <span class='meta'>PID $(ConvertTo-HtmlEsc $p.PID)</span> $(New-VtLink $p.Name)<br><span class='path'>$(ConvertTo-HtmlEsc $p.Path)</span><br>$($evs -join ' ')</div>")
+        }
+        $null = $sb.AppendLine("</div>")
+    } else {
+        # v2.66 (B15a): an empty Processes section used to render as nothing but the heading -
+        # say WHY it is empty, honestly distinguishing "did not run" from "ran, nothing scored"
+        $procWhy = if (Test-CaseCsv 'flash_process_scored') { 'the scoring module ran but recorded no processes above the reporting threshold' } else { 'source CSV flash_process_scored.csv is absent - the process scoring module did not run in this collection' }
+        $null = $sb.AppendLine("<div class='meta'>No scored processes to show - $procWhy.</div>")
     }
 
     if ($hayRows.Count -gt 0) {
@@ -5511,12 +5605,11 @@ tr.techrow{cursor:pointer}
             }
             $null = $sb.AppendLine("</table>")
         }
-        # per-rule drill-down: ALL matched events per rule (capped embed), client-side
-        # search + pager + click-to-copy - rendered by the shared script at the end
+        # per-rule drill-down: matched events per rule (shared 5000-row embed budget),
+        # client-side search + pager + click-to-copy - rendered by the shared script at the end
         $ruleJs = New-Object System.Collections.Generic.List[string]
         if ($hayRows.Count -gt 0) {
             $drill = @($hayRows | Group-Object $alertCol | Sort-Object Count -Descending | Select-Object -First 12)
-            $embedBudget = 5000
             foreach ($g in $drill) {
                 $best = @($g.Group | Sort-Object { Get-LvlRank "$($_.Level)" } -Descending | Select-Object -First 1)
                 $lvl = "$($best.Level)"
@@ -5525,22 +5618,37 @@ tr.techrow{cursor:pointer}
                 if (-not $safe) { $safe = 'unnamed_rule' }
                 if ($safe.Length -gt 80) { $safe = $safe.Substring(0, 80) }
                 $csvLink = "csv\sigma_rules\$safe.csv"
+                $csvFull = Join-Path $CsvDir "sigma_rules\$safe.csv"
+                # v2.66 (B10): this rule's share of the embed budget (precomputed with drillSafeNames)
+                $take = [int]$drillTake[$safe]
                 $parts = New-Object System.Collections.Generic.List[string]
-                $take = [Math]::Min($g.Count, [Math]::Max(0, $embedBudget))
+                $eids = New-Object System.Collections.Generic.List[string]
                 foreach ($r in (@($g.Group | Sort-Object Timestamp) | Select-Object -First $take)) {
                     $d = ("$($r.Details)") -replace '\s+', ' '
                     if ($d.Length -gt 800) { $d = $d.Substring(0, 800) + '...' }
                     $lc = switch -Regex ("$($r.Level)") { 'crit' { 'crit'; break } 'high' { 'high'; break } 'med' { 'med'; break } default { 'info' } }
-                    try { $parts.Add(([pscustomobject]@{ t = "$($r.Timestamp)"; c = "$($r.Computer)"; e = "$($r.EventID)"; l = "$($r.Level)"; lc = $lc; d = $d } | ConvertTo-Json -Compress)) } catch { }
+                    # v2.66 (B6): RecordID rides in the embed so a deep-linked q=RecordID hits
+                    $rid6 = if ($r.PSObject.Properties['RecordID']) { "$($r.RecordID)" } else { '' }
+                    try { $parts.Add(([pscustomobject]@{ t = "$($r.Timestamp)"; c = "$($r.Computer)"; e = "$($r.EventID)"; l = "$($r.Level)"; lc = $lc; d = $d; rid = $rid6 } | ConvertTo-Json -Compress)) } catch { }
+                    $null = $eids.Add("$($r.EventID)")
                 }
-                $embedBudget -= $take
-                $null = $ruleJs.Add("'$safe':[$($parts -join ',')]")
-                $lvlOpts = (@($g.Group | ForEach-Object { "$($_.Level)" } | Sort-Object -Unique) | ForEach-Object { "<option>$(ConvertTo-HtmlEsc $_)</option>" }) -join ''
-                $null = $sb.AppendLine("<details><summary><span class='$lvlClass'><b>$(ConvertTo-HtmlEsc $g.Name)</b></span> - $($g.Count) hit(s), max <span class='$lvlClass'>$(ConvertTo-HtmlEsc $lvl)</span> &nbsp;<span class='meta'>$csvLink</span></summary>")
-                $null = $sb.AppendLine("<div class='sbar'>filter <input id='q_$safe' oninput=""renderRule('$safe')"" style='width:260px' placeholder='text in details/time/host'> level <select id='l_$safe' onchange=""renderRule('$safe')""><option value='all'>all</option>$lvlOpts</select> <span class='meta'>click a detail = copy raw - double-click = expand</span><input type='hidden' id='p_$safe' value='1'></div><div id='b_$safe'></div>")
+                # v2.66 (B10): the summary tells the truth - the drill-down holds the embedded
+                # share, the rule's total match count lives in the (always linked) per-rule CSV
+                $trunc6 = if ($take -lt $g.Count) { ", showing $take of $($g.Count) embedded" } else { '' }
+                $null = $sb.AppendLine("<details><summary><span class='$lvlClass'><b>$(ConvertTo-HtmlEsc $g.Name)</b></span> - $($g.Count) hit(s)$trunc6, max <span class='$lvlClass'>$(ConvertTo-HtmlEsc $lvl)</span> &nbsp;<span class='meta'>$(ConvertTo-CaseFileLink $csvFull $csvLink)</span></summary>") # v2.66: pointer was a bare span - same case-file link as the neighbors
+                if ($take -le 0) {
+                    # v2.66 (B10): budget exhausted before this rule - filter/pager controls over
+                    # an empty table would lie; summary + per-rule CSV pointer stay
+                    $null = $sb.AppendLine("<div class='meta'>Embed budget exhausted before this rule - its $($g.Count) matched event(s) are not browsable inline. The full untruncated list is in the per-rule CSV above.</div>")
+                } else {
+                    $null = $ruleJs.Add("'$safe':[$($parts -join ',')]")
+                    $lvlOpts = (@($g.Group | ForEach-Object { "$($_.Level)" } | Sort-Object -Unique) | ForEach-Object { "<option>$(ConvertTo-HtmlEsc $_)</option>" }) -join ''
+                    $eidOpts = (@($eids | Sort-Object -Unique) | ForEach-Object { "<option>$(ConvertTo-HtmlEsc $_)</option>" }) -join ''
+                    $null = $sb.AppendLine("<div class='sbar'>filter <input id='q_$safe' list='ed_$safe' oninput=""renderRule('$safe')"" style='width:260px' placeholder='text in details/time/host/EID/RecordID'> level <select id='l_$safe' onchange=""renderRule('$safe')""><option value='all'>all</option>$lvlOpts</select> page <select id='ps_$safe' onchange=""renderRule('$safe')""><option>50</option><option>100</option><option>200</option><option value='all'>all embedded</option></select> <datalist id='ed_$safe'>$eidOpts</datalist> <span class='meta'>click a detail = copy raw - double-click = expand</span><input type='hidden' id='p_$safe' value='1'></div><div id='b_$safe'></div>")
+                }
                 $null = $sb.AppendLine("</details>")
             }
-            if ($drill.Count -gt 0) { $null = $sb.AppendLine("<div class='meta'>Expand a rule to browse ALL matched events (search + page + copy). Details text is capped in the embed - the full untruncated text is always in the per-rule CSV. RecordID locates the exact record in the matching evtx under raw\evtx\.</div>") }
+            if ($drill.Count -gt 0) { $null = $sb.AppendLine("<div class='meta'>Expand a rule to browse its matched events (search + page + copy). Rules truncated by the shared embed budget say so in their summary line - the full untruncated text is always in the per-rule CSV. RecordID locates the exact record in the matching evtx under raw\evtx\.</div>") }
         }
         $null = $sb.AppendLine("<div class='meta'>Full timeline: csv\hayabusa_timeline.csv &nbsp;|&nbsp; per-rule event CSVs: csv\sigma_rules\ &nbsp;|&nbsp; hayabusa's own summary: csv\hayabusa_report.html</div>")
     }
@@ -5607,7 +5715,7 @@ tr.techrow{cursor:pointer}
         $null = $sb.AppendLine("</table>")
     }
     if ($brute.Count -gt 0) {
-        $null = $sb.AppendLine("<h3>Brute-force candidates</h3><table><tr><th>Source IP</th><th>Failed logons</th><th></th></tr>")
+        $null = $sb.AppendLine("<h3>Brute-force candidates</h3><table><tr><th>Source IP</th><th>Failed logons</th><th>VT</th></tr>") # v2.66 (B15b): the VT-links column was an unnamed <th></th>
         foreach ($b in $brute) { $null = $sb.AppendLine("<tr><td>$(ConvertTo-HtmlEsc $b.SourceIp)</td><td><b>$($b.FailedLogons)</b></td><td>$(New-VtLink $b.SourceIp)</td></tr>") }
         $null = $sb.AppendLine("</table>")
     } else {
@@ -5826,10 +5934,15 @@ tr.techrow{cursor:pointer}
             $null = $sb.AppendLine("<div class='meta'>Showing the top $($entTop.Count) of <b>$($entAll.Count)</b> multi-source binaries - full list: $ebLink</div>")
         }
         # master-timeline context for the top cards: rows within +/-15 min of the entity's first seen
+        # (supertimeline Timestamps are UTC wall-clock per the weave contract - compare raw ticks
+        # against the converted $fs below; do NOT re-shift either side)
         $tlPre = @()
         try {
             $tlPre = @($tlRows | ForEach-Object { $t = $null; try { $t = [datetime]$_.Timestamp } catch { }; if ($t) { [pscustomobject]@{ T = $t; Row = $_ } } })
         } catch { }
+        # v2.66 (B12): shared text filter over the entity cards
+        $null = $sb.AppendLine("<div class='sbar'><input id='entf' data-secfilter='1' data-wrap='entwrap' data-sel='details' data-cnt='cnt_ent' placeholder='filter entities (name / path / evidence)...' style='width:340px'> <span class='meta' id='cnt_ent'></span></div>")
+        $null = $sb.AppendLine("<div id='entwrap'>")
         foreach ($e in $entTop) {
             $vCls = switch -Regex ("$($e.Verdict)") { 'HIGH' { 'crit'; break } 'MEDIUM' { 'med'; break } default { 'info' } }
             $vTxt = if ("$($e.Verdict)") { ", verdict <span class='$vCls'>$($e.Verdict)</span>" } else { '' }
@@ -5837,13 +5950,15 @@ tr.techrow{cursor:pointer}
             $null = $sb.AppendLine("<table><tr><th>Path</th><th>First seen</th><th>Last seen</th><th>Signer</th><th>Hashes</th></tr>")
             $null = $sb.AppendLine("<tr><td class='path'>$(ConvertTo-HtmlEsc $e.Path)</td><td>$(ConvertTo-HtmlEsc $e.FirstSeen)</td><td>$(ConvertTo-HtmlEsc $e.LastSeen)</td><td>$(ConvertTo-HtmlEsc $e.Signer)</td><td class='path'>$(ConvertTo-HtmlEsc $e.Hashes)</td></tr></table>")
             # v2.56: "appears in" chips - each category links to the section carrying its evidence
+            # v2.66 (B8): unmapped categories render as grey/dead chips (informational, not
+            # broken); chip order is name-sorted via Sort-Object -Unique (stable across renders)
             $entSrcs = @(("$($e.Evidence)" -split ' \| ') | ForEach-Object { ("$_" -split ': ', 2)[0] } | Sort-Object -Unique)
             if ($entSrcs.Count -gt 0) {
                 $null = $sb.AppendLine("<div style='margin:4px 0'>appears in:")
                 foreach ($src2 in $entSrcs) {
                     $anc2 = Get-SectionAnchorForSource $src2
                     if ($anc2) { $null = $sb.AppendLine("<a href='#$anc2'><span class='chip'>$(ConvertTo-HtmlEsc $src2)</span></a>") }
-                    else { $null = $sb.AppendLine("<span class='chip'>$(ConvertTo-HtmlEsc $src2)</span>") }
+                    else { $null = $sb.AppendLine("<span class='chip chipdead'>$(ConvertTo-HtmlEsc $src2)</span>") }
                 }
                 $null = $sb.AppendLine("</div>")
             }
@@ -5853,7 +5968,10 @@ tr.techrow{cursor:pointer}
                 $parts = "$ev" -split ': ', 2
                 $srcAnc = Get-SectionAnchorForSource $parts[0]
                 $srcCell = if ($srcAnc) { "<a href='#$srcAnc'><b>$(ConvertTo-HtmlEsc $parts[0])</b></a>" } else { "<b>$(ConvertTo-HtmlEsc $parts[0])</b>" }
-                $null = $sb.AppendLine("<tr><td>$srcCell</td><td class='path'>$(ConvertTo-HtmlEsc ($parts[1..($parts.Length-1)] -join ': '))</td></tr>")
+                # v2.66 (B8): the Detail cell links to the section too when the source is mapped
+                $det6 = ($parts[1..($parts.Length-1)] -join ': ')
+                $detCell = if ($srcAnc) { "<a href='#$srcAnc'>$(ConvertTo-HtmlEsc $det6)</a>" } else { ConvertTo-HtmlEsc $det6 }
+                $null = $sb.AppendLine("<tr><td>$srcCell</td><td class='path'>$detCell</td></tr>")
             }
             $null = $sb.AppendLine("</table>")
             # +/-15 min context window around first seen, pulled from the master timeline
@@ -5865,7 +5983,7 @@ tr.techrow{cursor:pointer}
                 if ($ctx.Count -gt 0) {
                     $stLbl = "csv\$(Get-CaseCsvPath 'supertimeline')"
                     $stLink = ConvertTo-CaseFileLink (Join-Path $CsvDir (Get-CaseCsvPath 'supertimeline')) $stLbl
-                    $null = $sb.AppendLine("<div class='meta'><b>Context: everything else happening &plusmn;30 min around first seen $($fs.ToString('yyyy-MM-dd HH:mm:ss'))</b> (full window: $stLink - build a per-entity dossier with <b>-Mode Focus -ProcessName $($e.Name)</b>)</div>")
+                    $null = $sb.AppendLine("<div class='meta'><b>Context: everything else happening &plusmn;30 min around first seen $($fs.ToString('yyyy-MM-dd HH:mm')) UTC</b> (full window: $stLink - build a per-entity dossier with <b>-Mode Focus -ProcessName $($e.Name)</b>)</div>")
                     $null = $sb.AppendLine("<table><tr><th>Time</th><th>Type</th><th>Actor</th><th>Detail</th></tr>")
                     foreach ($c2 in $ctx) {
                         $r2 = $c2.Row
@@ -5876,6 +5994,7 @@ tr.techrow{cursor:pointer}
             }
             $null = $sb.AppendLine("</details>")
         }
+        $null = $sb.AppendLine("</div>")
     } else {
         $null = $sb.AppendLine("<div class='meta'>No multi-source binary correlations in this case (a binary must appear in 2+ independent evidence sources to be listed here).</div>")
     }
@@ -6047,13 +6166,17 @@ tr.techrow{cursor:pointer}
         $tlShow = @(@($tlAll | Sort-Object { "$($_.Timestamp)" } | Select-Object -Last 150))
         [array]::Reverse($tlShow)
         $null = $sb.AppendLine("<div class='meta'>Newest 150 of $($tlAll.Count) events, newest first:</div>")
-        $null = $sb.AppendLine("<input id='tlf' placeholder='filter events (entity / detail / source / actor)...' oninput='tlFilter()' style='width:96%;padding:6px;margin:6px 0;background:#1d2330;color:#cdd3dc;border:1px solid #2a3040;border-radius:4px'>")
+        # v2.66 (B11): text + source + from/to date filters compose (AND) - inline table only,
+        # the full CSV / -Mode Timeline stay the pivoting surface
+        $tlSrcOpts = (@($tlShow | ForEach-Object { "$($_.Source)" } | Where-Object { "$_" } | Sort-Object -Unique) | ForEach-Object { "<option>$(ConvertTo-HtmlEsc $_)</option>" }) -join ''
+        $null = $sb.AppendLine("<div class='sbar'>filter <input id='tlf' placeholder='entity / detail / source / actor...' oninput='tlFilter()' style='width:240px'> source <select id='tls' onchange='tlFilter()'><option value=''>all sources</option>$tlSrcOpts</select> from <input type='date' id='tlfrom' onchange='tlFilter()'> to <input type='date' id='tlto' onchange='tlFilter()'> <span class='meta'>inline table only - full pivoting: -Mode Timeline</span></div>")
         $null = $sb.AppendLine("<table id='tlt'><thead><tr><th>Timestamp</th><th>Source</th><th>Type</th><th>Actor</th><th>Entity</th><th>Detail</th></tr></thead><tbody>")
         foreach ($t in $tlShow) {
             $null = $sb.AppendLine("<tr><td>$(ConvertTo-HtmlEsc $t.Timestamp)</td><td>$(ConvertTo-HtmlEsc $t.Source)</td><td>$(ConvertTo-HtmlEsc $t.Type)</td><td>$(ConvertTo-HtmlEsc $t.Actor)</td><td class='path'>$(ConvertTo-HtmlEsc $t.Entity)</td><td>$(ConvertTo-HtmlEsc $t.Detail)</td></tr>")
         }
         $null = $sb.AppendLine("</tbody></table><div class='meta' id='tlcount'></div>")
-        $null = $sb.AppendLine("<script>function tlFilter(){var q=document.getElementById('tlf').value.toLowerCase();var n=0;var rs=document.querySelectorAll('#tlt tbody tr');for(var i=0;i<rs.length;i++){var hit=rs[i].textContent.toLowerCase().indexOf(q)>=0;rs[i].style.display=hit?'':'none';if(hit)n++;}document.getElementById('tlcount').textContent=q?('showing '+n+' matching of 150 shown'):'';}</script>")
+        # v2.66 (B11): substring AND source AND from/to date window (YYYY-MM-DD prefix compare)
+        $null = $sb.AppendLine("<script>function tlFilter(){var q=document.getElementById('tlf').value.toLowerCase();var s=document.getElementById('tls').value;var f=document.getElementById('tlfrom').value;var t=document.getElementById('tlto').value;var n=0;var rs=document.querySelectorAll('#tlt tbody tr');for(var i=0;i<rs.length;i++){var c=rs[i].cells;var d=c[0].textContent.substring(0,10);var hit=rs[i].textContent.toLowerCase().indexOf(q)>=0&&(!s||c[1].textContent===s)&&(!f||d>=f)&&(!t||d<=t);rs[i].style.display=hit?'':'none';if(hit)n++;}document.getElementById('tlcount').textContent=(q||s||f||t)?('showing '+n+' matching of 150 shown'):'';}</script>")
     }
 
     # ---------- focus dossier (v2.40: built by -Mode Focus / menu option 9) ----------
@@ -6117,7 +6240,9 @@ tr.techrow{cursor:pointer}
             # (from focus_instances_detail.json, written by the focus engine core)
             $fDetail = $null
             try { $fDetail = Get-Content -LiteralPath (Join-Path $focusDirP 'focus_instances_detail.json') -Raw -ErrorAction Stop | ConvertFrom-Json } catch { }
+            $hasGraph = $false
             if ($fDetail -and "$($fDetail.GraphSvg)") {
+                $hasGraph = $true
                 $null = $sb.AppendLine("<h3>Activity graph (parents -> instances -> children -> what they did)</h3>")
                 $null = $sb.AppendLine("$($fDetail.GraphSvg)")
                 $null = $sb.AppendLine("<div class='meta'>Chips per instance: INJECT/THREAD (cross-process remote threads), PIPE, drops/deletions, network / DNS / DLLs / file / registry / persistence / beacons. Full-size version: focus\focus_report.html</div>")
@@ -6125,6 +6250,11 @@ tr.techrow{cursor:pointer}
             foreach ($cn3 in @($fDetail.CorrNotes)) {
                 if (-not "$cn3") { continue }
                 $null = $sb.AppendLine("<div class='lead lead-med' style='padding:6px 12px'><b>$(ConvertTo-HtmlEsc $cn3)</b></div>")
+            }
+            # v2.66 (B9): sticky mini-key - the graph's own color vocabulary travels with the
+            # analyst through the per-instance tables (the full legend scrolls away with the graph)
+            if ($hasGraph -and @($fDetail.Instances).Count -gt 0) {
+                $null = $sb.AppendLine("<div class='mkey' id='focusminikey'>activity-graph key: <i style=""background:#1f2a3d;border-color:#3a5a83""></i>parent process <i style=""background:#3a1518;border-color:#a33""></i>focused instance <i style=""background:#33290f;border-color:#c93""></i>child process <i style=""background:#1f2a3d;border-color:#a33""></i>artifact chip (red border = INJECT/TAMPER)</div>")
             }
             foreach ($pd2 in @($fDetail.Instances)) {
                 if (-not $pd2) { continue }
@@ -6208,7 +6338,7 @@ tr.techrow{cursor:pointer}
         $recs.Add('This collection ran WITHOUT admin rights - rerun elevated to include registry hives, amcache, Security log and other key sources.')
     }
     if ($script:LogStartDT) {
-        $recs.Add("Analysis window started at $($script:LogStartDT.ToString('yyyy-MM-dd HH:mm'))$(if ($script:LogEndDT) { " (ends $($script:LogEndDT.ToString('yyyy-MM-dd HH:mm')))" }) - rerun with an earlier -LogStart/-LogWindow if the intrusion may be older.")
+        $recs.Add("Analysis window started at $($script:LogStartDT.ToString('yyyy-MM-dd HH:mm')) UTC$(if ($script:LogEndDT) { " (ends $($script:LogEndDT.ToString('yyyy-MM-dd HH:mm')) UTC)" }) - rerun with an earlier -LogStart/-LogWindow if the intrusion may be older.")
     } elseif ($LogHours -gt 0 -and $LogHours -le 168) {
         $recs.Add("Analysis window was only the last $([int]($LogHours/24)) day(s) - rerun with a wider window (e.g. -LogWindow 30d, -LogWindow 3m or 0 = all) if the intrusion may be older.")
     }
@@ -6456,6 +6586,22 @@ tr.techrow{cursor:pointer}
         var t=e.target.closest?e.target.closest('.clip'):null;
         if(t){t.classList.toggle('open');}
       });
+      // v2.66 (B6+B7): deep links into the per-rule Sigma drill-downs (ATT&CK expansion rows,
+      // lead cards). Jump to the Sigma section via the href, then open that rule's drill-down,
+      // pre-fill its text filter (data-q) and re-run it. No drill-down for the rule -> the
+      // plain section-top anchor jump stands.
+      document.addEventListener('click',function(e){
+        var a=e.target.closest?e.target.closest('a[data-rule]'):null;
+        if(!a)return;
+        var id=a.getAttribute('data-rule');
+        var inp=document.getElementById('q_'+id);
+        if(!inp)return;
+        var dd=inp.closest?inp.closest('details'):null;
+        if(dd&&!dd.open)dd.setAttribute('open','open');
+        var q=a.getAttribute('data-q')||'';
+        if(q)inp.value=q;
+        if(typeof renderRule==='function')renderRule(id);
+      });
       function copyIocAll(btn){
         var p=document.getElementById('iocblock');
         if(!p)return;
@@ -6469,11 +6615,15 @@ tr.techrow{cursor:pointer}
         var rows=RULES[id]||[];
         var q=((document.getElementById('q_'+id)||{}).value||'').toLowerCase();
         var lv=(document.getElementById('l_'+id)||{}).value||'all';
-        var pg=parseInt((document.getElementById('p_'+id)||{}).value)||1, per=50;
+        var pg=parseInt((document.getElementById('p_'+id)||{}).value)||1;
+        // v2.66 (B10): page-size jump - 50/100/200 or all embedded rows
+        var psv=(document.getElementById('ps_'+id)||{}).value||'50';
+        var per=(psv==='all')?Math.max(1,rows.length):(parseInt(psv)||50);
         var f=[],i;
         for(i=rows.length-1;i>=0;i--){var r=rows[i];
           if(lv!=='all'&&r.l!==lv)continue;
-          if(q&&((r.d+' '+r.t+' '+r.c).toLowerCase().indexOf(q)<0))continue;
+          // v2.66 (B6): EID + RecordID joined to the searched text so a deep-linked query hits the exact event
+          if(q&&((r.d+' '+r.t+' '+r.c+' '+(r.e||'')+' '+(r.rid||'')).toLowerCase().indexOf(q)<0))continue;
           f.push(r);
         }
         var pages=Math.max(1,Math.ceil(f.length/per)); if(pg>pages)pg=pages; if(pg<1)pg=1;
@@ -6489,6 +6639,10 @@ tr.techrow{cursor:pointer}
           +'<button onclick="pgRule(\''+id+'\',-1)">prev</button><button onclick="pgRule(\''+id+'\',1)">next</button></div>'+h;}
       }
       Object.keys(RULES).forEach(function(k){renderRule(k);});
+      // v2.66 (B12): one generic section filter (the timeline pattern) - filters any container's
+      // items by substring and updates the section's count line. Bound per section below.
+      function secFilter(box,wrap,sel,cnt){var q=document.getElementById(box).value.toLowerCase();var its=document.querySelectorAll('#'+wrap+' '+sel);var n=0;for(var i=0;i<its.length;i++){var hit=!q||its[i].textContent.toLowerCase().indexOf(q)>=0;its[i].style.display=hit?'':'none';if(hit)n++;}var c=document.getElementById(cnt);if(c)c.textContent=q?(n+' of '+its.length+' shown'):'';}
+      document.querySelectorAll('input[data-secfilter]').forEach(function(b){b.addEventListener('input',function(){secFilter(b.id,b.getAttribute('data-wrap'),b.getAttribute('data-sel'),b.getAttribute('data-cnt'));});});
       // v2.53: visible show-all toggle on every truncated cell (full text rides data-full)
       document.querySelectorAll('td.clip[data-full]').forEach(function(t){
         var f=t.getAttribute('data-full')||'';
@@ -6511,7 +6665,7 @@ tr.techrow{cursor:pointer}
       });
       </script>
 "@)
-    $null = $sb.AppendLine("<div class='foot'>Generated $(Get-Date -Format u) by Ophira v$ScriptVersion - all verdicts are correlation heuristics; verify against raw CSV/evtx evidence before acting.</div>")
+    $null = $sb.AppendLine("<div class='foot'>Generated $((Get-Date).ToUniversalTime().ToString('yyyy-MM-dd HH:mm')) UTC by Ophira v$ScriptVersion - all verdicts are correlation heuristics; verify against raw CSV/evtx evidence before acting.</div>") # v2.66 (B13): same stamp dialect as the banner; ToUniversalTime so the UTC label is true
     $null = $sb.AppendLine("</body></html>")
     $reportPath = Join-Path $CaseDir 'report.html'
     $sb.ToString() | Set-Content -LiteralPath $reportPath -Encoding UTF8
