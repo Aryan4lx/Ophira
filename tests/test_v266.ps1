@@ -93,11 +93,11 @@ New-Item -ItemType Directory -Path (Join-Path $case 'focus') -Force | Out-Null
 "R8 User-path LOLBin","high","C:\mal\evil.exe","T1059","binary ran from user path and spawned cmd"
 '@ | Set-Content -LiteralPath (Join-Path $csvDir 'hunt_findings.csv') -Encoding UTF8
 
-# B8: entity card with one mapped (sigma) and one unmapped (hunt - the correlation builder's
-# short category vocabulary does not match the artifact-name map) evidence source
+# B8: entity card with mapped (sigma, hunt - v2.67 B2 links category tokens) and one
+# unmapped (legacy-agent - no artifact name, no category token) evidence source
 @'
 "Path","Name","CatCount","Categories","Verdict","Signer","FirstSeen","LastSeen","Hashes","Bytes","Evidence"
-"C:\mal\evil.exe","evil.exe","2","sigma;hunt","HIGH","","2026-09-24 10:00:00","2026-09-24 11:19:00","","","sigma: [medium] Storm Rule: storm detail 1 | hunt: [high] R8 User-path LOLBin: binary ran from user path"
+"C:\mal\evil.exe","evil.exe","3","sigma;hunt;legacy-agent","HIGH","","2026-09-24 10:00:00","2026-09-24 11:19:00","","","sigma: [medium] Storm Rule: storm detail 1 | hunt: [high] R8 User-path LOLBin: binary ran from user path | legacy-agent: custom feed note"
 '@ | Set-Content -LiteralPath (Join-Path $csvDir 'entities_binaries.csv') -Encoding UTF8
 
 # B11: real supertimeline rows -> the newest-150 inline table renders with its filters
@@ -203,8 +203,14 @@ Check "B7: sigma lead link carries its top rule into the drill-down filter (data
 Check "B7: lead targeting a section without a filter keeps the plain section-top link" ($html.Contains("<a href='#hunt'>-> evidence in the hunt section</a>"))
 
 # ---- B8: entity chips polish ----
-Check "B8: unmapped-source chip renders with the grey/dead class" ($html.Contains("<span class='chip chipdead'>hunt</span>"))
+Check "B8: hunt chip links to the hunt section (v2.67 B2: category tokens link)" ($html.Contains("<a href='#hunt'><span class='chip'>hunt</span></a>"))
 Check "B8: mapped chip stays a normal linked chip" ($html.Contains("<a href='#sigma'><span class='chip'>sigma</span></a>"))
+Check "B8: unknown-category chip renders with the grey/dead class" ($html.Contains("<span class='chip chipdead'>legacy-agent</span>"))
+# v2.67 (B2): lead-card "corroborated by" chips route through the anchor mapper too
+# (no @() wrap here - a 1-element array's .Contains is membership, not substring)
+$corr = $html -split 'corroborated by' | Select-Object -Skip 1 | Select-Object -First 1
+Check "B2: lead-card corroboration chips render as links" (($null -ne $corr) -and $corr.Contains("<a href='#sigma'><span class='chip'>sigma</span></a>") -and $corr.Contains("<a href='#hunt'><span class='chip'>hunt</span></a>"))
+Check "B2: lead-card unmapped category stays a grey/dead chip" (($null -ne $corr) -and $corr.Contains("<span class='chip chipdead'>legacy-agent</span>"))
 $chips1 = @([regex]::Matches(([regex]::Match($html, '(?s)appears in:(.*?)</div>').Groups[1].Value), "class='chip[^']*'>([^<]+)<") | ForEach-Object { $_.Groups[1].Value })
 $null = New-HtmlReport
 $html2 = Get-Content -LiteralPath (Join-Path $CaseDir 'report.html') -Raw
@@ -213,7 +219,8 @@ Check "B8: chip sequence deterministic across two renders (sorted by category na
 $chipIdxH = [array]::IndexOf($chips1, 'hunt'); $chipIdxS = [array]::IndexOf($chips1, 'sigma')
 Check "B8: chips sort by category name (hunt before sigma, not insertion order)" (($chipIdxH -ge 0) -and ($chipIdxS -gt $chipIdxH))
 Check "B8: mapped evidence Detail cell renders as a section link" ($html.Contains("<td class='path'><a href='#sigma'>[medium] Storm Rule: storm detail 1</a></td>"))
-Check "B8: unmapped evidence Detail cell stays plain" ($html.Contains("<td class='path'>[high] R8 User-path LOLBin: binary ran from user path</td>"))
+Check "B8: hunt evidence Detail cell links to the hunt section (v2.67 B2)" ($html.Contains("<td class='path'><a href='#hunt'>[high] R8 User-path LOLBin: binary ran from user path</a></td>"))
+Check "B8: unknown-category evidence Source + Detail cells stay plain" ($html.Contains("<td><b>legacy-agent</b></td><td class='path'>custom feed note</td>"))
 
 # ---- B9: sticky mini-key above the per-instance section ----
 Check "B9: sticky mini-key markup present with the graph's own color vocabulary" (($html -match "class='mkey'") -and ($html.Contains('background:#3a1518;border-color:#a33')) -and ($html.Contains('background:#33290f;border-color:#c93')))

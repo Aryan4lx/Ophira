@@ -12,7 +12,7 @@ function Assert-Has([string]$needle, [string]$label) {
 Assert-Has 'function Get-SectionAnchorForSource' '9a anchor helper exists'
 Assert-Has "appears in:" '9d appears-in chip row'
 Assert-Has 'Showing the top $($entTop.Count) of <b>$($entAll.Count)</b>' '9c of-N label'
-Assert-Has 'Sort-Object { [int]"$($_.CatCount)" } -Descending' '9c entity cards sorted by CatCount'
+Assert-Has 'Sort-Object { ConvertTo-SafeInt $_.CatCount } -Descending' '9c entity cards sorted by CatCount'
 Assert-Has '$srcAnc = Get-SectionAnchorForSource $parts[0]' '9a evidence Source cells link'
 Assert-Has '$chainParent[(Split-Path "$($i.Image)" -Leaf).ToLower()]' '9b focus parent from process_chains'
 

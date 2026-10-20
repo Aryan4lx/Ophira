@@ -1,5 +1,5 @@
 ﻿<#
-Ophira v2.66  -  Windows Incident Response Triage Toolkit
+Ophira v2.67  -  Windows Incident Response Triage Toolkit
 READ-ONLY by design: never modifies the system, only reads and copies data
 into its own output folder. Intended to be handed to a system owner or run
 by a responder during early triage / threat hunting.
@@ -47,7 +47,7 @@ param(
     [switch]$ExitVerdict
 )
 
-$ScriptVersion = "2.66"
+$ScriptVersion = "2.67"
 $ErrorActionPreference = 'Continue'
 $ProgressPreference = 'SilentlyContinue'
 
@@ -4831,19 +4831,61 @@ function ConvertTo-HtmlEsc {
 }
 
 function New-VtLink {
+    # v2.67 (B1): file paths and executable/document filenames no longer become VT search
+    # links - the old dotted-suffix test matched ANY dotted filename (OneDrive.exe rendered
+    # as a VT link in real reports). Hashes, IPv4 addresses and real domains still link.
+    # ponytail: '.com'/'.zip' stay domain-only (real TLDs); a bare 'file.com' filename links too.
     param([string]$Indicator, [string]$Label = '')
     $i = ConvertTo-HtmlEsc $Indicator
     $lbl = if ($Label) { ConvertTo-HtmlEsc $Label } else { $i }
-    if ($Indicator -match '^[a-fA-F0-9]{32,64}$' -or $Indicator -match '^(\d{1,3}\.){3}\d{1,3}$' -or $Indicator -match '\.[a-z]{2,}$') {
+    $isPathy = ("$Indicator") -match '[\\/]' -or ("$Indicator") -match '\s'
+    $isExeName = ("$Indicator") -match '\.(exe|dll|sys|ps1|psm1|psd1|bat|cmd|vbs|vbe|js|jse|wsf|wsh|jar|scr|pif|hta|msi|msp|mst|cpl|drv|ocx|lnk|mui|tmp|dat|log|txt|doc|docx|xls|xlsx|pdf|zip|7z|rar|gz|iso|img|bin)$'
+    if (-not $isPathy -and -not $isExeName -and ($Indicator -match '^[a-fA-F0-9]{32,64}$' -or $Indicator -match '^(\d{1,3}\.){3}\d{1,3}$' -or $Indicator -match '\.[a-z]{2,}$')) {
         return "<a target='_blank' href='https://www.virustotal.com/gui/search/$i'>VT&nearr;</a>"
     }
     return $lbl
 }
 
+# v2.67 (B5): blank CSV cells must not abort New-HtmlReport - one non-numeric/overflowing
+# cell (e.g. a 5-billion SRUM counter) used to throw mid-render and silently drop an entire
+# report block (the leads try/catch swallowed it whole). Blank/whitespace means "no data" -
+# return the caller's default; anything unparsable degrades to it too.
+function ConvertTo-SafeInt {
+    param([string]$Value, [int]$Default = 0)
+    if ([string]::IsNullOrWhiteSpace($Value)) { return $Default }
+    try { return [int]$Value } catch { return $Default }
+}
+
+function ConvertTo-SafeDbl {
+    param([string]$Value, [double]$Default = 0)
+    if ([string]::IsNullOrWhiteSpace($Value)) { return $Default }
+    try { return [double]$Value } catch { return $Default }
+}
+
 function Get-SectionAnchorForSource {
     # v2.56: maps an artifact/source name to the report section that shows its evidence,
     # so entity cards and evidence rows can link "this row came from X" straight to X.
+    # v2.67 (B2): entity evidence uses CATEGORY tokens (svc-persist, 4688-exec, ...) the
+    # artifact-name regex never matched - almost every chip rendered dead. Exact-match
+    # vocabulary first (plain hash lookup; artifact names still fall through to the switch
+    # unchanged). Token targets verified against the rendered report: 4688 / share-access rows
+    # render only in the supertimeline weave (iis_anomalies renders nowhere - its underlying
+    # iis_requests rows render in the weave); SRUM's "Top network consumers" table
+    # renders inside the entities section, not network.
+    # v2.67 (B4): memory_live_scan renders in the hunt section (live memory triage table), not
+    # the snapshot - exact entry wins over the generic ^(entities_|memory_) arm. memory_netscan
+    # stays unmapped (CSV-only, never rendered - honest grey chip); memory_malfind keeps snapshot.
     param([string]$Source)
+    $catMap = @{
+        'running' = 'processes'; 'hash' = 'processes'; 'verdict' = 'processes'
+        '4688-exec' = 'timeline'; 'share-staging' = 'timeline'; 'web-anomaly' = 'timeline'
+        'beacon' = 'beacons'; 'conn' = 'network'; 'srum-usage' = 'entities'
+        'svc-persist' = 'persistence'; 'task-persist' = 'persistence'; 'autorun-persist' = 'persistence'
+        'mft-created' = 'filesystem'; 'loldriver' = 'drivers'; 'ioc' = 'ioc'; 'yara' = 'yara'
+        'sigma' = 'sigma'; 'hunt' = 'hunt'
+        'memory_live_scan' = 'hunt'; 'memory_netscan' = ''
+    }
+    if ($catMap.ContainsKey("$Source")) { return $catMap["$Source"] }
     switch -Regex ("$Source") {
         '^(hayabusa|sigma)'                            { 'sigma'; break }
         '^yara'                                        { 'yara'; break }
@@ -5037,6 +5079,12 @@ function Get-CleanCheckSummary {
 }
 
 function New-HtmlReport {
+    # v2.67 (B5): fixture harnesses rehydrate this function without the standalone safe-cast
+    # helpers - define function-scoped fallbacks when they are missing (no-op in the full script)
+    if (-not (Get-Command ConvertTo-SafeInt -ErrorAction SilentlyContinue)) {
+        function ConvertTo-SafeInt { param([string]$Value, [int]$Default = 0) if ([string]::IsNullOrWhiteSpace($Value)) { return $Default }; try { return [int]$Value } catch { return $Default } }
+        function ConvertTo-SafeDbl { param([string]$Value, [double]$Default = 0) if ([string]::IsNullOrWhiteSpace($Value)) { return $Default }; try { return [double]$Value } catch { return $Default } }
+    }
     $scored = @(Import-CaseCsv 'flash_process_scored.csv')
     $iocHits = @(Import-CaseCsv 'flash_ioc_hits.csv')
     $hayRows = @(Import-CaseCsv 'hayabusa_timeline.csv')
@@ -5270,7 +5318,7 @@ tr.techrow{cursor:pointer}
     # correlation story one click away in the Focus section.
     try {
         $leads = New-Object System.Collections.Generic.List[object]
-        foreach ($p in @(Import-CaseCsv 'flash_process_scored' | Where-Object { "$($_.Verdict)" -eq 'HIGH' -and "$($_.Name)" } | Sort-Object { ([int]"$($_.Score)") } -Descending | Select-Object -First 3)) {
+        foreach ($p in @(Import-CaseCsv 'flash_process_scored' | Where-Object { "$($_.Verdict)" -eq 'HIGH' -and "$($_.Name)" } | Sort-Object { ConvertTo-SafeInt $_.Score } -Descending | Select-Object -First 3)) {
             $leads.Add([pscustomobject]@{ Rank = 'crit'; Title = "$($p.Name) (PID $($p.PID))"; Class = "malicious process - correlation score $($p.Score)"; Why = "$($p.Evidence)"; Ident = "$($p.Path)"; Extra = "signer: $(if ("$($p.Signer)") { $p.Signer } else { 'NONE' })"; Anchor = 'processes' })
         }
         foreach ($y in @(Import-CaseCsv 'yara_hits' | Where-Object { "$($_.File)" } | Select-Object -First 3)) {
@@ -5278,7 +5326,7 @@ tr.techrow{cursor:pointer}
             $leads.Add([pscustomobject]@{ Rank = $rk; Title = (Split-Path "$($y.File)" -Leaf); Class = "YARA $($y.Severity): $($y.Rule)"; Why = "$($y.Description)"; Ident = "$($y.File)"; Extra = ''; Anchor = 'yara' })
         }
         foreach ($b in @(Import-CaseCsv 'beacon_candidates' | Where-Object { "$($_.Severity)" -match '^(?i)high$' } | Select-Object -First 2)) {
-            $leads.Add([pscustomobject]@{ Rank = 'crit'; Title = "$($b.Process) -> $($b.RemoteIp):$($b.Port)"; Class = 'C2 beacon (regular callbacks)'; Why = "$($b.Events) connections over $($b.SpanMin) min, median interval ~$($b.MedianIntervalSec)s, regularity $([math]::Round(([double]"$($b.Regularity)"), 2))"; Ident = "$($b.RemoteIp)"; Extra = ''; Anchor = 'beacons' })
+            $leads.Add([pscustomobject]@{ Rank = 'crit'; Title = "$($b.Process) -> $($b.RemoteIp):$($b.Port)"; Class = 'C2 beacon (regular callbacks)'; Why = "$($b.Events) connections over $($b.SpanMin) min, median interval ~$($b.MedianIntervalSec)s, regularity $([math]::Round((ConvertTo-SafeDbl $b.Regularity), 2))"; Ident = "$($b.RemoteIp)"; Extra = ''; Anchor = 'beacons' })
         }
         foreach ($h2 in @(Import-CaseCsv 'hunt_findings' | Where-Object { "$($_.Severity)" -eq 'high' } | Select-Object -First 2)) {
             $leads.Add([pscustomobject]@{ Rank = 'crit'; Title = "$($h2.Entity)"; Class = "hunt rule: $($h2.Rule)"; Why = "$($h2.Evidence)"; Ident = "$($h2.Entity)"; Extra = "ATT&CK $($h2.Attck)"; Anchor = 'hunt' })
@@ -5296,7 +5344,7 @@ tr.techrow{cursor:pointer}
         foreach ($ch2 in @(Import-CaseCsv 'process_chains' | Where-Object { "$($_.Child)" } | Select-Object -First 2)) {
             $leads.Add([pscustomobject]@{ Rank = 'crit'; Title = "$($ch2.Parent) -> $($ch2.Child)"; Class = "process lineage: spawned child process"; Why = "$($ch2.Evidence)"; Ident = "$($ch2.Child)"; Extra = ''; Anchor = 'entities' })
         }
-        foreach ($pm in @(Import-CaseCsv 'flash_process_scored' | Where-Object { "$($_.Verdict)" -eq 'MEDIUM' -and "$($_.Name)" -and [int]"$($_.Score)" -ge 4 } | Sort-Object { ([int]"$($_.Score)") } -Descending | Select-Object -First 2)) {
+        foreach ($pm in @(Import-CaseCsv 'flash_process_scored' | Where-Object { "$($_.Verdict)" -eq 'MEDIUM' -and "$($_.Name)" -and (ConvertTo-SafeInt $_.Score) -ge 4 } | Sort-Object { ConvertTo-SafeInt $_.Score } -Descending | Select-Object -First 2)) {
             $leads.Add([pscustomobject]@{ Rank = 'med'; Title = "$($pm.Name) (PID $($pm.PID))"; Class = "review: medium process score $($pm.Score)"; Why = "$($pm.Evidence)"; Ident = "$($pm.Path)"; Extra = "signer: $(if ("$($pm.Signer)") { $pm.Signer } else { 'NONE' })"; Anchor = 'processes' })
         }
         foreach ($pc in @($pubConns | Where-Object { "$($_.RemoteAddress)" -and -not (Get-IpCloudClass "$($_.RemoteAddress)") } | Group-Object RemoteAddress, RemotePort | ForEach-Object { $_.Group[0] } | Select-Object -First 2)) {
@@ -5325,7 +5373,13 @@ tr.techrow{cursor:pointer}
                 if ($ent2 -and "$($ent2.Categories)") {
                     $chips = @("$($ent2.Categories)" -split ';' | Where-Object { $_ })
                     $null = $sb.AppendLine("<div style='margin-top:5px' class='meta'>corroborated by $($chips.Count) evidence categories:</div><div>")
-                    foreach ($ch in $chips) { $null = $sb.AppendLine("<span class='chip'>$(ConvertTo-HtmlEsc $ch)</span>") }
+                    # v2.67 (B2): lead-card chips link like entity chips - route through the
+                    # anchor mapper; unmapped categories keep the grey/dead chip styling
+                    foreach ($ch in $chips) {
+                        $anch = Get-SectionAnchorForSource $ch
+                        if ($anch) { $null = $sb.AppendLine("<a href='#$anch'><span class='chip'>$(ConvertTo-HtmlEsc $ch)</span></a>") }
+                        else { $null = $sb.AppendLine("<span class='chip chipdead'>$(ConvertTo-HtmlEsc $ch)</span>") }
+                    }
                     $null = $sb.AppendLine("</div>")
                 }
                 $focusHit = $false
@@ -5402,7 +5456,9 @@ tr.techrow{cursor:pointer}
         "<span class='chip HIGH'>Proc HIGH: $high</span><span class='chip MEDIUM'>Proc MED: $med</span><span class='chip LOW'>Proc LOW: $low</span>" +
         "<span class='chip INFO'>IOC hits: $($iocHits.Count)</span><span class='chip INFO'>YARA hits: $($yaraHits.Count)</span><span class='chip INFO'>Sigma rows: $($hayRows.Count) (crit:$hayCrit high:$hayHigh)</span></div>")
     if ($deltaRows.Count -gt 0) {
-        $null = $sb.AppendLine("<h2>NEW since previous collection ($(ConvertTo-HtmlEsc $script:DeltaBaseline))</h2><table><tr><th>Type</th><th>Item</th><th>Detail</th></tr>")
+        # v2.67 (B9): baseline unknown (re-parsed case, no previous-collection zip) -> no empty "()"
+        $deltaLbl = if ("$($script:DeltaBaseline)") { " ($(ConvertTo-HtmlEsc $script:DeltaBaseline))" } else { '' }
+        $null = $sb.AppendLine("<h2>NEW since previous collection$deltaLbl</h2><table><tr><th>Type</th><th>Item</th><th>Detail</th></tr>")
         foreach ($d in ($deltaRows | Select-Object -First 40)) {
             $null = $sb.AppendLine("<tr><td><b>$(ConvertTo-HtmlEsc $d.Type)</b></td><td>$(ConvertTo-HtmlEsc $d.Item)</td><td class='path'>$(ConvertTo-HtmlEsc $d.Detail)</td></tr>")
         }
@@ -5571,7 +5627,7 @@ tr.techrow{cursor:pointer}
     # ---------- process verdicts ----------
     $null = $sb.AppendLine("<a name='processes'></a><h2>Process verdicts (correlation scored)</h2>")
     # v2.66 (B12): shared text filter (one generic JS function, bound per section via data-attrs)
-    $procTop = @($scored | Sort-Object { [int]$_.Score } -Descending | Select-Object -First 30)
+    $procTop = @($scored | Sort-Object { ConvertTo-SafeInt $_.Score } -Descending | Select-Object -First 30)
     if ($procTop.Count -gt 0) {
         $null = $sb.AppendLine("<div class='sbar'><input id='procf' data-secfilter='1' data-wrap='procwrap' data-sel='div.card' data-cnt='cnt_proc' placeholder='filter processes (name / path / evidence)...' style='width:340px'> <span class='meta' id='cnt_proc'></span></div>")
         $null = $sb.AppendLine("<div id='procwrap'>")
@@ -5815,7 +5871,7 @@ tr.techrow{cursor:pointer}
         $exCol = @($pfParsed[0].PSObject.Properties.Name | Where-Object { $_ -match 'executable|^name$' } | Select-Object -First 1)[0]
         $null = $sb.AppendLine("<h3>Most-run programs (prefetch)</h3><table><tr><th>Executable</th><th>Run count</th><th>Last run</th></tr>")
         $sorted = $pfParsed
-        if ($rcCol) { $sorted = @($pfParsed | Sort-Object @{e = { [int]"$($_.$rcCol)" } } -Descending) }
+        if ($rcCol) { $sorted = @($pfParsed | Sort-Object @{e = { ConvertTo-SafeInt $_.$rcCol } } -Descending) }
         foreach ($p in ($sorted | Select-Object -First 25)) {
             $null = $sb.AppendLine("<tr><td class='path'>$(ConvertTo-HtmlEsc $p.$exCol)</td><td>$(ConvertTo-HtmlEsc $p.$rcCol)</td><td>$(ConvertTo-HtmlEsc $p.$lrCol)</td></tr>")
         }
@@ -5925,7 +5981,7 @@ tr.techrow{cursor:pointer}
     # ---------- connections: correlated entities ----------
     $null = $sb.AppendLine("<a name='entities'></a><h2>Connections - correlated entities</h2>")
     $null = $sb.AppendLine("<div class='meta'>Each entity below joins evidence from multiple independent sources (processes, execution history, persistence, network, SRUM usage, YARA, Sigma...) into one story. More categories touching one binary = stronger signal. Full data: csv\entities_binaries.csv / entities_accounts.csv / entities_remotes.csv</div>")
-    $entAll = @($entB | Where-Object { [int]"$($_.CatCount)" -ge 2 } | Sort-Object { [int]"$($_.CatCount)" } -Descending)
+    $entAll = @($entB | Where-Object { (ConvertTo-SafeInt $_.CatCount) -ge 2 } | Sort-Object { ConvertTo-SafeInt $_.CatCount } -Descending)
     $entTop = @($entAll | Select-Object -First 12)
     if ($entTop.Count -gt 0) {
         if ($entAll.Count -gt $entTop.Count) {
@@ -5998,19 +6054,19 @@ tr.techrow{cursor:pointer}
     } else {
         $null = $sb.AppendLine("<div class='meta'>No multi-source binary correlations in this case (a binary must appear in 2+ independent evidence sources to be listed here).</div>")
     }
-    if ($entA.Count -gt 0 -and @($entA | Where-Object { [int]$_.Logons -gt 0 -or [int]$_.Failed -gt 0 -or "$($_.RdpOutTargets)" -or [double]"$($_.ConsoleHistoryKB)" -gt 0 }).Count -gt 0) {
+    if ($entA.Count -gt 0 -and @($entA | Where-Object { (ConvertTo-SafeInt $_.Logons) -gt 0 -or (ConvertTo-SafeInt $_.Failed) -gt 0 -or "$($_.RdpOutTargets)" -or (ConvertTo-SafeDbl $_.ConsoleHistoryKB) -gt 0 }).Count -gt 0) {
         $null = $sb.AppendLine("<h3>Account activity</h3><table><tr><th>Account</th><th>Logons</th><th>Failed</th><th>Logon types</th><th>Source IPs</th><th>RDP out to</th><th>Console hist</th></tr>")
         foreach ($a2 in ($entA | Select-Object -First 10)) {
-            $fCls = if ([int]"$($a2.Failed)" -ge 5) { 'crit' } elseif ([int]"$($a2.Failed)" -gt 0) { 'med' } else { 'info' }
+            $fCls = if ((ConvertTo-SafeInt $a2.Failed) -ge 5) { 'crit' } elseif ((ConvertTo-SafeInt $a2.Failed) -gt 0) { 'med' } else { 'info' }
             $null = $sb.AppendLine("<tr><td><b>$(ConvertTo-HtmlEsc $a2.Account)</b></td><td>$($a2.Logons)</td><td class='$fCls'>$($a2.Failed)</td><td>$(ConvertTo-HtmlEsc $a2.LogonTypes)</td><td>$(ConvertTo-HtmlEsc $a2.Sources)</td><td class='path'>$(ConvertTo-HtmlEsc $a2.RdpOutTargets)</td><td>$($a2.ConsoleHistoryKB) KB</td></tr>")
         }
         $null = $sb.AppendLine("</table>")
     }
-    if ($entR.Count -gt 0 -and @($entR | Where-Object { [int]$_.Connections -gt 0 -or "$($_.Beacon)" -or [int]$_.FailedLogons -gt 0 -or [int]$_.RdpOutCount -gt 0 }).Count -gt 0) {
+    if ($entR.Count -gt 0 -and @($entR | Where-Object { (ConvertTo-SafeInt $_.Connections) -gt 0 -or "$($_.Beacon)" -or (ConvertTo-SafeInt $_.FailedLogons) -gt 0 -or (ConvertTo-SafeInt $_.RdpOutCount) -gt 0 }).Count -gt 0) {
         $null = $sb.AppendLine("<h3>Remote endpoints</h3><table><tr><th>Remote</th><th>Public</th><th>Conns</th><th>Talkers</th><th>Beacon</th><th>Failed logons</th><th>RDP out</th></tr>")
         foreach ($e in ($entR | Select-Object -First 12)) {
             $bCls = switch -Regex ("$($e.Beacon)") { 'high' { 'crit'; break } 'medium' { 'med'; break } default { 'info' } }
-            $null = $sb.AppendLine("<tr><td class='path'>$(ConvertTo-HtmlEsc $e.Remote) $(New-VtLink $e.Remote)</td><td>$(ConvertTo-HtmlEsc $e.Public)</td><td>$($e.Connections)</td><td class='path'>$(ConvertTo-HtmlEsc $e.Talkers)</td><td class='$bCls'>$(ConvertTo-HtmlEsc $e.Beacon)</td><td class='$(if ([int]"$($e.FailedLogons)" -gt 0) { 'crit' } else { 'info' })'>$($e.FailedLogons)</td><td>$($e.RdpOutCount)</td></tr>")
+            $null = $sb.AppendLine("<tr><td class='path'>$(ConvertTo-HtmlEsc $e.Remote) $(New-VtLink $e.Remote)</td><td>$(ConvertTo-HtmlEsc $e.Public)</td><td>$($e.Connections)</td><td class='path'>$(ConvertTo-HtmlEsc $e.Talkers)</td><td class='$bCls'>$(ConvertTo-HtmlEsc $e.Beacon)</td><td class='$(if ((ConvertTo-SafeInt $e.FailedLogons) -gt 0) { 'crit' } else { 'info' })'>$($e.FailedLogons)</td><td>$($e.RdpOutCount)</td></tr>")
         }
         $null = $sb.AppendLine("</table>")
     }
@@ -6021,7 +6077,7 @@ tr.techrow{cursor:pointer}
             $null = $sb.AppendLine("<h3>Top network consumers (SRUM - per-app history)</h3><table><tr><th>Application</th>$((($numCols | Select-Object -First 4) | ForEach-Object { "<th>$(ConvertTo-HtmlEsc $_)</th>" }) -join '')</tr>")
             $srumTop = $srumRows
             try {
-                $srumTop = @($srumRows | Sort-Object -Property @{e = { $t = 0L; foreach ($nc in ($numCols | Select-Object -First 4)) { $p2 = $_.PSObject.Properties[$nc]; if ($p2) { $t += [long]"$($p2.Value)" } }; $t }; Descending = $true } | Select-Object -First 12)
+                $srumTop = @($srumRows | Sort-Object -Property @{e = { $t = 0.0; foreach ($nc in ($numCols | Select-Object -First 4)) { $p2 = $_.PSObject.Properties[$nc]; if ($p2) { $t += (ConvertTo-SafeDbl $p2.Value) } }; $t }; Descending = $true } | Select-Object -First 12)
             } catch { }
             foreach ($s2 in $srumTop) {
                 $cells = ($numCols | Select-Object -First 4) | ForEach-Object { $p2 = $s2.PSObject.Properties[$_]; "<td>$(ConvertTo-HtmlEsc $(if ($p2) { $p2.Value }))</td>" }
@@ -6034,7 +6090,7 @@ tr.techrow{cursor:pointer}
     $chains = @(Import-CaseCsv 'process_chains')
     if ($chains.Count -gt 0) {
         $null = $sb.AppendLine("<h3>Process lineage (how flagged binaries got there)</h3><table><tr><th>Flagged binary</th><th>Hops</th><th>Ancestry chain</th></tr>")
-        foreach ($c in ($chains | Sort-Object { [int]"$($_.Steps)" } -Descending | Select-Object -First 15)) {
+        foreach ($c in ($chains | Sort-Object { ConvertTo-SafeInt $_.Steps } -Descending | Select-Object -First 15)) {
             $null = $sb.AppendLine("<tr><td class='path'>$(ConvertTo-HtmlEsc $c.Entity)</td><td>$($c.Steps)</td><td class='path'><b>$(ConvertTo-HtmlEsc $c.Chain)</b>$(if ("$($c.Evidence)") { "<br>$(ConvertTo-HtmlEsc $c.Evidence)" })</td></tr>")
         }
         $null = $sb.AppendLine("</table><div class='meta'>Rebuilt from 4688 parent-child + live PPID map. A user-path binary whose ancestry runs through office/browser/interpreter processes is a phishing/exploit story; ancestry from services.exe with no matching install event is suspicious. Source: csv\$(Get-CaseCsvPath 'process_chains')</div>")
@@ -6435,10 +6491,12 @@ tr.techrow{cursor:pointer}
         'ioc_hits_hash'                   = 'IOC-listed binary hashes found in execution history (process_hashes - hits even if the file is gone)'
         'ioc_export'                      = 'Case indicators exported for fleet memory (HIGH verdicts/YARA/high beacons) - copy raw\analysis\ioc_export.txt into tools\iocs\ to arm future collections (STIX 2.1 bundle next to it for MISP/OpenCTI)'
         'credential_sweep'                = 'Credential exposure: auto-logon, WLAN keys (raw\wifi), DPAPI vault (raw\vault), LSASS dumps on disk'
+        'remote_access'                   = 'Remote-access sweep: tunnels, RA tools (AnyDesk/TeamViewer class), SSH keys'
         'usn_write_bursts'                = 'USN journal: mass file-modification windows (ransomware)'
         'lnk_parsed'                      = 'LNK parse (Recent docs - what files were opened)'
         'jumplist_parsed*'                = 'Jump List parse (per-app recent files)'
         'shellbags'                       = 'ShellBags folder-browsing history - folder access incl. deleted/network/USB locations'
+        'browser_files'                   = 'Collected browser profile files (browser, profile, file, size)'
         'browser_history'                 = 'Parsed browser history (URLs, titles, visit times)'
         'browser_downloads'               = 'Parsed browser downloads (files, sources, times)'
         'browser_searches'                = 'Browser search keywords'
@@ -6518,7 +6576,87 @@ tr.techrow{cursor:pointer}
         'smb_mounted_shares'              = 'no mapped drives at collection time'
         'smb_active_connections'          = 'no live SMB sessions at collection time'
         'userassist'                      = 'empty on cases collected before v2.54 (the parser had a GUID-matching bug) - re-collect to populate'
+        # v2.67 (R1): every Save-Rows artifact that can render "0 rows" explains itself -
+        # log sources (window/auditing), Sysmon classes (endpoint config enables specific EIDs),
+        # Defender (service owned by third-party AV), tool-dependent parses, derived joins
+        'application_events'              = 'no application crashes (1000/1001/1002) or MSI installs (1033/11707/11724) in the window - mostly good, though crashed attacker tooling would also have shown here'
+        'powershell_events'               = 'no PowerShell operational events (4104 script blocks / 400 engine) in the window - script-block logging may be off (see posture), or PowerShell was simply not used'
+        'security_events'                 = 'no Security-log events in the window - auditing may be minimal, or the log was cleared (a cleared Security log is itself a finding - see logging_gaps)'
+        'security_auth_events'            = 'no logon events (4624/4625/4634/4647/4648) in the window - logon auditing may be disabled, or no sessions occurred'
+        'security_auth_summary'           = 'joins the auth events - nothing to summarize when 4624/4625 rows are absent'
+        'security_kerberos'               = 'no Kerberos ticket events (4768/4769/4771/4776) - normal off domain controllers; only DCs issue tickets (or the logon-auditing subcategories are off)'
+        'security_ds_access'              = 'no directory-service events (4662/5136) - DC-only telemetry, normal on member servers and workstations (or the DS-audit subcategory is off)'
+        'system_events'                   = 'no System-log events in the window - the System log is rarely this quiet; verify it was not cleared (see logging_gaps)'
+        'wer_reports'                     = 'no Windows Error Reports under ProgramData or the user profiles - nothing crashed hard enough to record (mostly good)'
+        'sysmon_events'                   = 'Sysmon is installed but produced no events in the window - the service was (re)started mid-window, the log rolled over, or the channel is genuinely empty (check raw\evtx\Sysmon_Operational.evtx)'
+        'sysmon_network'                  = 'no Sysmon EID 3 network-connection events - EID 3 may be disabled in the endpoint Sysmon config, or nothing connected out in the window'
+        'sysmon_dns'                      = 'no Sysmon EID 22 DNS-query events - EID 22 may be disabled in the endpoint Sysmon config, or no DNS lookups occurred'
+        'sysmon_image_load'               = 'no Sysmon EID 7 image loads - EID 7 is noisy and often trimmed from endpoint configs, or nothing side-loaded in the window'
+        'sysmon_process_access'           = 'no Sysmon EID 10 process-access events - EID 10 (the LSASS-access / injection data source) is not enabled in the endpoint Sysmon config'
+        'sysmon_registry'                 = 'no Sysmon EID 13 registry-set events - EID 13 may be disabled in the endpoint config, or nothing wrote registry values in the window'
+        'sysmon_file_time'                = 'no Sysmon EID 2 file-time events - nothing timestomped (empty is good), or EID 2 is disabled in the endpoint config'
+        'sysmon_proc_create'              = 'no Sysmon EID 1 process-create events - EID 1 may be disabled in the endpoint config, or no process started in the window'
+        'sysmon_file_create'              = 'no Sysmon EID 11 file-create events - EID 11 is noisy and often trimmed from endpoint configs, or nothing dropped files'
+        'sysmon_file_delete'              = 'no Sysmon EID 23/26 file-delete events - stock Sysmon does not enable those IDs, or nothing was deleted (deletion telemetry is an anti-forensics data source)'
+        'sysmon_remote_thread'            = 'no Sysmon EID 8 remote-thread events - EID 8 may be disabled in the endpoint config, or nothing injected cross-process (empty is good)'
+        'sysmon_pipes'                    = 'no Sysmon EID 17/18 named-pipe events - those IDs may be disabled in the endpoint config, or no pipes were created/connected (SMB-beacon channel data)'
+        'sysmon_proc_tamper'              = 'no Sysmon EID 25 process-tampering events - Sysmon saw no hollowing/image swaps (empty is good); needs Sysmon 13+ with EID 25 enabled'
+        'sysmon_raw_access'               = 'no Sysmon EID 9 raw-volume-access events - nothing read \\.\ devices directly (empty is good), or EID 9 is disabled in the endpoint config'
+        'sysmon_wmi'                      = 'no Sysmon EID 19/20/21 WMI-subscription events - no permanent-event persistence observed (empty is good), or those IDs are disabled in the endpoint config'
+        'defender_status'                 = 'Get-MpComputerStatus unavailable or failed - a third-party AV owns the endpoint, or the Defender service is broken/removed'
+        'defender_preferences'            = 'Get-MpPreference unavailable or failed - a third-party AV owns the endpoint (exclusions invisible to this collection), or the Defender service is broken'
+        'defender_threats'                = 'no Defender threat detections on record - the live catalog and the 1116 event history both came back clean (empty is good)'
+        'defender_events'                 = 'no Defender operational events (1116/1117 detections, 5001/5007 config changes) in the window - nothing detected, nothing toggled'
+        'defender_config_events'          = 'no Defender config-change events (5001/5007) in the window - protection settings were not touched (empty is good)'
+        'ads_findings'                    = 'no non-Zone.Identifier alternate data streams on the checked on-disk executables (empty is good)'
+        'arp_table'                       = 'no ARP neighbors - the host is isolated/offline or the cache was just flushed (a just-booted host looks the same)'
+        'autoruns_runkeys'                = 'no Run/RunOnce values in any hive - common on lean servers (empty is good); verify the sweep covered HKLM and every loaded user hive'
+        'autoruns_startup_folders'        = 'no Startup-folder entries for any user (empty is good - most clean workstations look like this)'
+        'bam_lastexec'                    = 'no BAM/DAM last-execution entries - the key is absent where SysMain never tracked user sessions, or no interactive session ran programs'
+        'beacon_candidates'               = 'needs 15+ combined Sysmon network/DNS events in the window to run (telemetry too thin), or no regular-interval C2-style beacons found'
+        'bits_jobs'                       = 'no BITS jobs at collection time (empty is good - BITS is a favorite malware transfer channel, so zero is the state you want)'
+        'browser_files'                   = 'no browser profile data for the collecting user - server build, browsers never used, or profiles wiped'
+        'connections_public_established'  = 'no established connections to public IPs at collection time (normal for an idle or internal-only host)'
+        'credential_sweep'                = 'no credential-exposure findings - no auto-logon, no stored WLAN keys, no DPAPI vault blobs, no LSASS-dump-like files on disk (empty is good)'
+        'delta_new'                       = 'nothing NEW since the previous collection (empty is good), or this is the first collection so there is no baseline to diff'
+        'dns_beacon_candidates'           = 'needs 15+ combined Sysmon network/DNS events in the window to run (telemetry too thin), or no regular-interval DNS beacons found'
+        'dns_cache'                       = 'resolver cache empty - flushed, just booted, or no name resolution since boot'
+        'domain_info'                     = 'Win32_ComputerSystem returned nothing - the WMI repository may be damaged on this host (itself an IR-relevant condition; check collection.log for other WMI failures)'
+        'entities_accounts'               = 'joins logons/RDP/console history per account - nothing to join when those sources are empty'
+        'entities_binaries'               = 'joins execution/persistence/network/verdict evidence per binary - nothing to join when the underlying sources are empty'
+        'entities_remotes'                = 'joins connections/beacons/brute-force/RDP targets per remote endpoint - nothing to join when those sources are empty'
+        'flash_public_connections'        = 'no connections to public IPs during the flash triage window (internal-only traffic)'
+        'hunt_findings'                   = 'no hunt-rule matches - every technique rule came back clean (empty is good)'
+        'iis_anomalies'                   = 'joins the parsed IIS requests - nothing anomalous in them, or no IIS logs were collected'
+        'iis_requests'                    = 'no IIS/HTTPERR logs found - the web-server role is absent, logs were purged, or they live on another volume (module 8.12 is opt-in WebServer/Full)'
+        'ioc_hits_amcache'                = 'no IOC-feed SHA1s in the Amcache execution history (empty is good, or the Amcache parse is pending - see parse_needed.csv)'
+        'ioc_hits_browser'                = 'no IOC-feed domains in the browser history (empty is good, or browser data was absent)'
+        'ioc_hits_dns'                    = 'no IOC-feed domains among the Sysmon DNS queries (empty is good, or the Sysmon DNS source is empty)'
+        'ioc_hits_hash'                   = 'no IOC-feed hashes in the process execution history (empty is good, or process_hashes is empty)'
+        'ioc_hits_mft'                    = 'no IOC-feed filenames born on disk per the $MFT extract (empty is good, or mft_recent is empty)'
+        'ioc_hits_network'                = 'no IOC-feed IPs among the Sysmon network destinations (empty is good, or the Sysmon network source is empty)'
+        'loldrivers_hits'                 = 'every hashed on-disk driver is absent from the LOLDrivers malicious/vulnerable sets (empty is good)'
+        'logging_gaps'                    = 'no log clears/stops/gaps - event logging was continuous across the window (empty is good)'
+        'memory_live_scan'                = 'no processes were minidumped - the memory module was not selected, no flagged process qualified, or the dumps failed (see collection.log)'
+        'mft_recent'                      = 'no $MFT entries kept - nothing born in the window on executable/user paths, or the MFTECmd parse did not run (see parse_needed.csv)'
+        'parse_needed'                    = 'everything collected was parsed with the bundled tools - nothing is pending analyst-side completion (empty is good)'
+        'powershell_console_history'      = 'no PSReadLine console history for any profile - the file only exists after interactive PowerShell console use (or history is disabled)'
+        'prefetch_index'                  = 'the Prefetch directory exists but holds no .pf files - Prefetch is disabled (common on servers and SSD-tweaked builds) or was wiped'
+        'processes_flagged'               = 'no processes tripped the suspicious-process heuristics (empty is good)'
+        'registry_recmd'                  = 'no registry hardening recommendations triggered for this host (empty is good)'
+        'saved_credentials'               = 'no stored credentials (cmdkey /list empty - nothing saved for RDP/terminal/web) - attackers add these, so empty is good'
+        'scheduled_tasks_flagged'         = 'no scheduled tasks tripped the suspicious-task heuristics (empty is good)'
+        'services_flagged'                = 'no services tripped the suspicious-service heuristics (empty is good)'
+        'shellbags'                       = 'SBECmd produced nothing - the parser was unavailable on the endpoint (see parse_needed.csv), the session was not elevated, or the profiles have no Explorer history'
+        'smb_hosted_shares'               = 'no hosted shares returned - the Server service may be stopped or Get-SmbShare failed (a normal host always exposes its admin shares, so empty is itself a config note)'
+        'ual_files'                       = 'the UAL directory exists but holds no .mts files - User Access Logging recorded nothing (UAL is typically only active on domain-joined servers)'
+        'usb_devices'                     = 'no USB storage device has EVER been connected on this install per USBSTOR (empty is good, but unusual on a workstation - verify this is not a stripped image)'
+        'webshell_candidates'             = 'no script files in the web roots matched webshell heuristics (empty is good - every hit is worth a baseline check)'
+        'wmi_event_filters'               = 'no WMI event filters registered (rare persistence mechanism - empty is good)'
+        'yara_scanned'                    = 'the YARA scan ran but no candidate files existed to scan (missing yara.exe never produces this file - run -Mode Setup)'
     }
+    # v2.67 (R1): sysmon partial-coverage mix - computed over the same rows the index renders
+    $sysHas = 0; $sysZero = 0
     $null = $sb.AppendLine("<table><tr><th>Artifact</th><th>Rows</th><th>What it is / what to look for</th></tr>")
     foreach ($f in @(Get-ChildItem -Path $CsvDir -Filter '*.csv' -File -Recurse -ErrorAction SilentlyContinue | Where-Object { @('sigma_rules', 'evtx_ecmd', 'recmd_out') -notcontains $_.Directory.Name } | Sort-Object Name)) {
         $rows = 0
@@ -6529,6 +6667,8 @@ tr.techrow{cursor:pointer}
             if ($first -and $first -notmatch '^#') { $rows = $n - 1 }
         } catch { }
         $base = $f.BaseName
+        # v2.67 (R1): track the sysmon has-rows/zero-row mix for the partial-coverage note
+        if ($base -match '^sysmon_') { if ($rows -gt 0) { $sysHas++ } else { $sysZero++ } }
         $d = if ($desc.ContainsKey($base)) { $desc[$base] } else { '' }
         if (-not $d) {
             # v2.54: wildcard map keys (logon_summary*, amcache_*, jumplist_parsed*...) - raw
@@ -6554,6 +6694,11 @@ tr.techrow{cursor:pointer}
         $null = $sb.AppendLine("<tr><td>$(ConvertTo-CaseFileLink $f.FullName $evLbl)</td><td>$rows</td><td>$dTxt</td></tr>")
     }
     $null = $sb.AppendLine("</table>")
+    # v2.67 (R1): some Sysmon classes present while others are empty = a config/coverage gap,
+    # not proof of absence. One honest line beats fifteen individually-ambiguous zero rows.
+    if ($sysHas -gt 0 -and $sysZero -gt 0) {
+        $null = $sb.AppendLine("<div class='meta'><b>Sysmon partial coverage:</b> some Sysmon artifact classes have events while others are empty - the endpoint's Sysmon config does not enable every event ID Ophira reads (or that activity class genuinely did not occur in the window). Read the empty Sysmon classes as blind spots to widen, not as proof nothing happened.</div>")
+    }
     $caseRoot = Split-Path -Parent $CsvDir
     $alsoIn = @()
     $alsoIn += "$(ConvertTo-CaseFileLink (Join-Path $caseRoot 'supertimeline.csv') 'supertimeline.csv') (MASTER chronology - every artifact, filter by time)"
@@ -9127,7 +9272,19 @@ function Open-CaseSession {
     try { if ("$($meta.LogStart)") { $script:LogStartDT = [datetime]$meta.LogStart } } catch { }
     try { if ("$($meta.LogEnd)") { $script:LogEndDT = [datetime]$meta.LogEnd } } catch { }
     $script:Sysmon = [bool]$meta.SysmonPresent
-    $script:EndpointAdmin = [bool]$meta.AdminElevated
+    # v2.67 (B3): legacy (pre-v2.55) case.json records AdminElevated as null (unknown) -
+    # [bool]$null collapsed it to $false, so the verdict took the non-admin -15 coverage
+    # penalty and claimed "Run was NOT elevated" while the report banner showed
+    # 'Elevated: unknown' from the same metadata. Tri-state: null (or missing property,
+    # which reads as $null on a ConvertFrom-Json object in PS 5.1) stays null - the
+    # verdict's coverage math falls back to live Test-IsAdmin for a null value.
+    $rawAdmin = $meta.AdminElevated
+    $script:EndpointAdmin = if ($null -ne $rawAdmin) { [bool]$rawAdmin } else { $null }
+    # v2.67 (B9): per-case reset - a re-parsed case without a previous-collection baseline
+    # must not render "NEW since previous collection ()" or inherit the prior case's
+    # baseline name from script scope.
+    $script:DeltaBaseline = ''
+    $script:DeltaCount = 0
     $st = $null
     try { $st = [datetime]"$($meta.StartedUTC)" } catch { }
     if (-not $st) { $st = Get-Date }
