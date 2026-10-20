@@ -160,7 +160,7 @@ Check "cleancheck: -HayRows renders the Sigma entry without re-reading the csv" 
 $v2 = Get-CompromiseVerdict; $script:Verdict = $v2
 $null = New-HtmlReport
 $html2 = Get-Content -LiteralPath (Join-Path $CaseDir 'report.html') -Raw
-Check "caption: 5-row fixture reads 'First 5 recovered commands'" ($html2.Contains('First 5 recovered commands'))
+Check "caption: 5-row fixture reads 'All 5 recovered commands' (v2.68 B13: N == M implies nothing hidden)" ($html2.Contains('All 5 recovered commands'))
 Check "caption: small case has no lying 'of 5' suffix" (-not $html2.Contains('First 5 of 5 recovered commands'))
 Remove-Item -LiteralPath $case2 -Recurse -Force -ErrorAction SilentlyContinue
 

@@ -1,5 +1,5 @@
 ﻿<#
-Ophira v2.67  -  Windows Incident Response Triage Toolkit
+Ophira v2.68  -  Windows Incident Response Triage Toolkit
 READ-ONLY by design: never modifies the system, only reads and copies data
 into its own output folder. Intended to be handed to a system owner or run
 by a responder during early triage / threat hunting.
@@ -47,7 +47,7 @@ param(
     [switch]$ExitVerdict
 )
 
-$ScriptVersion = "2.67"
+$ScriptVersion = "2.68"
 $ErrorActionPreference = 'Continue'
 $ProgressPreference = 'SilentlyContinue'
 
@@ -120,10 +120,10 @@ if (Test-Path -LiteralPath $cfgFile) {
                     'SHARE' { if (-not $PSBoundParameters.ContainsKey('SharePath') -and $val) { $SharePath = $val } }
                     'CASE' { if (-not $PSBoundParameters.ContainsKey('CaseID') -and $val) { $CaseID = $val } }
                     'ANALYST' { if (-not $PSBoundParameters.ContainsKey('Analyst') -and $val) { $Analyst = $val } }
-                    'ROLE' { if ($val -match '^(?i)(responder|owner)$') { $script:OphiraRole = $val.ToLower() } }
+                    'ROLE' { if ($val -match '^(responder|owner)$') { $script:OphiraRole = $val.ToLower() } }
                     'TARGETS' { $script:CfgTargets = $val }
-                    'PRESET' { if ($val -match '^(?i)(quick|standard)$') { $script:CfgDeployPreset = (Get-Culture).TextInfo.ToTitleCase($val.ToLower()) } }
-                    'PUSHTOOLS' { $script:CfgPushTools = ($val -match '^(?i)(1|y|yes|true|t)$') }
+                    'PRESET' { if ($val -match '^(quick|standard)$') { $script:CfgDeployPreset = (Get-Culture).TextInfo.ToTitleCase($val.ToLower()) } }
+                    'PUSHTOOLS' { $script:CfgPushTools = ($val -match '^(1|y|yes|true|t)$') }
                     'DEPLOYSHARE' { $script:CfgDeployShare = $val }
                     'THREADS' { $n = 0; if ([int]::TryParse($val, [ref]$n) -and $n -gt 0) { $script:CfgThreads = $n } }
                     # v2.43 analysis-window keys for the owner handoff: pre-fill before sending the
@@ -657,8 +657,8 @@ function ConvertTo-LogStart {
     param([string]$Value)
     $v = "$Value".Trim()
     if (-not $v) { return $null }
-    if ($v -match '^(?i)0\s*(h|d|m)?$') { return 'ALL' }
-    if ($v -match '^(?i)(\d+)\s*(h|d|m)$') {
+    if ($v -match '^0\s*(h|d|m)?$') { return 'ALL' }
+    if ($v -match '^(\d+)\s*(h|d|m)$') {
         $n = [int]$Matches[1]
         $now = Get-Date
         switch ($Matches[2].ToLower()) {
@@ -3052,11 +3052,11 @@ $script:Modules = @(
             Save-Rows -Name 'yara_hits' -Rows $hits.ToArray()
             Save-Rows -Name 'yara_scanned' -Rows $scanned.ToArray()
             $hitArr = $hits.ToArray()
-            $hi = @($hitArr | Where-Object { "$($_.Severity)" -match '^(?i)(high|critical)$' }).Count
+            $hi = @($hitArr | Where-Object { "$($_.Severity)" -match '^(high|critical)$' }).Count
             if ($hitArr.Count -gt 0) {
                 Write-CaseLog "    YARA: $($hitArr.Count) hit(s) on $($scanned.Count) scanned file(s) ($hi high/crit) - csv\yara_hits.csv" $(if ($hi -gt 0) { 'Red' } else { 'Yellow' })
                 foreach ($h2 in ($hitArr | Select-Object -First 10)) {
-                    Write-CaseLog ("      [{0}] {1}  {2}" -f $h2.Severity, $h2.Rule, $h2.File) $(if ("$($h2.Severity)" -match '^(?i)(high|critical)$') { 'Red' } else { 'Yellow' })
+                    Write-CaseLog ("      [{0}] {1}  {2}" -f $h2.Severity, $h2.Rule, $h2.File) $(if ("$($h2.Severity)" -match '^(high|critical)$') { 'Red' } else { 'Yellow' })
                 }
             } else {
                 Write-CaseLog "    yara: no hits on $($scanned.Count) scanned file(s)$(if ($failed) { " ($failed scan failures)" } else { '' })" 'Gray'
@@ -4963,7 +4963,7 @@ function Test-SigmaSelfNoise {
     # Never filter by process name alone (powershell.exe is both the attacker's and our tool).
     param($row)
     if ($null -eq $row) { return $false }
-    $pidName = @($row.PSObject.Properties.Name | Where-Object { $_ -match '^(?i)processid$' } | Select-Object -First 1)
+    $pidName = @($row.PSObject.Properties.Name | Where-Object { $_ -match '^processid$' } | Select-Object -First 1)
     if ($pidName -and $script:CollectorPids) {
         $rowPid = 0
         try { $rowPid = [int]"$($row.$pidName)" } catch { $rowPid = 0 }
@@ -5035,7 +5035,7 @@ function Get-CleanCheckSummary {
         if (Get-Command Remove-SigmaDuplicateEvents -ErrorAction SilentlyContinue) {
             $hay = @(Remove-SigmaDuplicateEvents $hay | Where-Object { -not (Test-SigmaSelfNoise $_) })
         }
-        $flags = @($hay | Where-Object { "$($_.Level)" -match '^(?i)(crit|high)$' })
+        $flags = @($hay | Where-Object { "$($_.Level)" -match '^(crit|high)$' })
         if ($flags.Count -eq 0) { & $add 'Sigma rule scan' "$($hay.Count) events scanned, 0 critical/high detections" }
     }
     # YARA
@@ -5212,7 +5212,11 @@ tr.techrow{cursor:pointer}
         $null = $sb.AppendLine("<div class='vbanner v$($v.LevelRank)'>")
         $null = $sb.AppendLine("<p class='vtitle'>$(ConvertTo-HtmlEsc $v.Level)</p>")
         $null = $sb.AppendLine("<p class='vowner'>$(ConvertTo-HtmlEsc $v.OwnerLine) &nbsp; Evidence coverage: $($v.ConfidencePercent)% ($($v.CoverageSourcesCollected)/$($v.CoverageSourcesTotal) sources - how much of the case was collected, not a probability of compromise)</p>")
-        $null = $sb.AppendLine("<div class='confwrap'><div class='confbar' style='width:$([math]::Min(100, [int]$v.ConfidencePercent))%;background:#b93'></div><div class='conftext'>$($v.ConfidencePercent)% of weighted evidence sources collected ($($v.CoverageSourcesCollected)/$($v.CoverageSourcesTotal) sources)</div></div>")
+        # v2.68 (B11): bar width and bar label read ONE rounded integer - the verdict math already
+        # Round()s the percent, but deriving both from a single value keeps the bar and the text
+        # agreeing even if the provenance ever turns fractional (old: [int] truncated the bar)
+        $confPct = [math]::Min(100, [int][math]::Round($v.ConfidencePercent))
+        $null = $sb.AppendLine("<div class='confwrap'><div class='confbar' style='width:$confPct%;background:#b93'></div><div class='conftext'>$confPct% of weighted evidence sources collected ($($v.CoverageSourcesCollected)/$($v.CoverageSourcesTotal) sources)</div></div>")
         # v2.61: what the level means - and what it does NOT mean
         $vmean = @{
             4 = 'Multiple independent high-confidence indicators agree - treat this host as compromised until proven otherwise.'
@@ -5322,10 +5326,10 @@ tr.techrow{cursor:pointer}
             $leads.Add([pscustomobject]@{ Rank = 'crit'; Title = "$($p.Name) (PID $($p.PID))"; Class = "malicious process - correlation score $($p.Score)"; Why = "$($p.Evidence)"; Ident = "$($p.Path)"; Extra = "signer: $(if ("$($p.Signer)") { $p.Signer } else { 'NONE' })"; Anchor = 'processes' })
         }
         foreach ($y in @(Import-CaseCsv 'yara_hits' | Where-Object { "$($_.File)" } | Select-Object -First 3)) {
-            $rk = if ("$($y.Severity)" -match '^(?i)(high|critical)$') { 'crit' } else { 'med' }
+            $rk = if ("$($y.Severity)" -match '^(high|critical)$') { 'crit' } else { 'med' }
             $leads.Add([pscustomobject]@{ Rank = $rk; Title = (Split-Path "$($y.File)" -Leaf); Class = "YARA $($y.Severity): $($y.Rule)"; Why = "$($y.Description)"; Ident = "$($y.File)"; Extra = ''; Anchor = 'yara' })
         }
-        foreach ($b in @(Import-CaseCsv 'beacon_candidates' | Where-Object { "$($_.Severity)" -match '^(?i)high$' } | Select-Object -First 2)) {
+        foreach ($b in @(Import-CaseCsv 'beacon_candidates' | Where-Object { "$($_.Severity)" -match '^high$' } | Select-Object -First 2)) {
             $leads.Add([pscustomobject]@{ Rank = 'crit'; Title = "$($b.Process) -> $($b.RemoteIp):$($b.Port)"; Class = 'C2 beacon (regular callbacks)'; Why = "$($b.Events) connections over $($b.SpanMin) min, median interval ~$($b.MedianIntervalSec)s, regularity $([math]::Round((ConvertTo-SafeDbl $b.Regularity), 2))"; Ident = "$($b.RemoteIp)"; Extra = ''; Anchor = 'beacons' })
         }
         foreach ($h2 in @(Import-CaseCsv 'hunt_findings' | Where-Object { "$($_.Severity)" -eq 'high' } | Select-Object -First 2)) {
@@ -5335,7 +5339,7 @@ tr.techrow{cursor:pointer}
             $leads.Add([pscustomobject]@{ Rank = 'crit'; Title = "$($io.Application)"; Class = 'IOC hash match (known-bad binary ran on this host)'; Why = "SHA1 $($io.Indicator) matched the IOC feed"; Ident = "$($io.SourceFile)"; Extra = ''; Anchor = 'ioc' })
         }
         # v2.55: medium-weight lead sources - a case can be SUSPICIOUS without any HIGH/YARA/beacon
-        $hayMed = @($hayRows | Where-Object { "$($_.Level)" -match '^(?i)(medium|high|crit)$' })
+        $hayMed = @($hayRows | Where-Object { "$($_.Level)" -match '^(medium|high|crit)$' })
         if ($hayMed.Count -ge 20) {
             $hayTop = @($hayMed | Group-Object RuleTitle | Sort-Object Count -Descending | Select-Object -First 3)
             # v2.66 (B7): Rule = the noisiest rule, so the lead link can open that drill-down
@@ -5471,7 +5475,10 @@ tr.techrow{cursor:pointer}
     $tacticCounts = @{}
     $tacticMaxRank = @{}
     foreach ($r in $hayRows) {
-        $tacs = @(Split-TagList "$($r.MitreTactics)" | Select-Object -First 1)
+        # v2.68 (B12): a rule counts under EVERY tagged tactic (was: first tactic only - a
+        # Disc,CredAccess rule vanished from the second chip). The technique table's Tactic
+        # cell picks up the full label list through the join in the Tech row below.
+        $tacs = @(Split-TagList "$($r.MitreTactics)")
         $tags = @(Split-TagList "$($r.MitreTags)")
         $rk = Get-LvlRank "$($r.Level)"
         foreach ($t in $tacs) {
@@ -5553,8 +5560,8 @@ tr.techrow{cursor:pointer}
     foreach ($h in $iocHits) { if ("$($h.Indicator)") { $iocBlock.Add("ioc-$("$($h.Type)".ToLower())  $($h.Indicator)") } }
     foreach ($h in $amcHits) { if ("$($h.Indicator)") { $iocBlock.Add("sha1  $($h.Indicator)") } }
     foreach ($b in $brute) { if ("$($b.SourceIp)") { $iocBlock.Add("ip  $($b.SourceIp)") } }
-    foreach ($b in ($beacons | Where-Object { "$($_.Severity)" -match '^(?i)(high|medium)$' -and "$($_.RemoteIp)" })) { $iocBlock.Add("ip  $($b.RemoteIp)") }
-    foreach ($b in ($dnsBeacons | Where-Object { "$($_.Severity)" -match '^(?i)(high|medium)$' -and "$($_.Domain)" })) {
+    foreach ($b in ($beacons | Where-Object { "$($_.Severity)" -match '^(high|medium)$' -and "$($_.RemoteIp)" })) { $iocBlock.Add("ip  $($b.RemoteIp)") }
+    foreach ($b in ($dnsBeacons | Where-Object { "$($_.Severity)" -match '^(high|medium)$' -and "$($_.Domain)" })) {
         $iocBlock.Add("domain  $($b.Domain)")
         if ("$($b.ResolvedIp)") { $iocBlock.Add("ip  $($b.ResolvedIp)") }
     }
@@ -5568,7 +5575,7 @@ tr.techrow{cursor:pointer}
         $null = $sb.AppendLine("<h3>Copy-ready indicator list (defanged) <button onclick='copyIocAll(this)' style='background:#243447;color:#9ec1f0;border:1px solid #3a5a83;border-radius:10px;padding:2px 12px;font-size:12px;cursor:pointer;margin-left:8px'>copy all</button></h3><pre class='ioc' id='iocblock'>")
         foreach ($l in $iocUnique) {
             $dl = "$l" -replace '(?i)http', 'hxxp'
-            if ($dl -notmatch '^(?i)sha') { $dl = $dl -replace '\.', '[.]' }
+            if ($dl -notmatch '^sha') { $dl = $dl -replace '\.', '[.]' }
             $null = $sb.AppendLine((ConvertTo-HtmlEsc $dl))
         }
         $null = $sb.AppendLine("</pre>")
@@ -5678,7 +5685,6 @@ tr.techrow{cursor:pointer}
                 # v2.66 (B10): this rule's share of the embed budget (precomputed with drillSafeNames)
                 $take = [int]$drillTake[$safe]
                 $parts = New-Object System.Collections.Generic.List[string]
-                $eids = New-Object System.Collections.Generic.List[string]
                 foreach ($r in (@($g.Group | Sort-Object Timestamp) | Select-Object -First $take)) {
                     $d = ("$($r.Details)") -replace '\s+', ' '
                     if ($d.Length -gt 800) { $d = $d.Substring(0, 800) + '...' }
@@ -5686,7 +5692,6 @@ tr.techrow{cursor:pointer}
                     # v2.66 (B6): RecordID rides in the embed so a deep-linked q=RecordID hits
                     $rid6 = if ($r.PSObject.Properties['RecordID']) { "$($r.RecordID)" } else { '' }
                     try { $parts.Add(([pscustomobject]@{ t = "$($r.Timestamp)"; c = "$($r.Computer)"; e = "$($r.EventID)"; l = "$($r.Level)"; lc = $lc; d = $d; rid = $rid6 } | ConvertTo-Json -Compress)) } catch { }
-                    $null = $eids.Add("$($r.EventID)")
                 }
                 # v2.66 (B10): the summary tells the truth - the drill-down holds the embedded
                 # share, the rule's total match count lives in the (always linked) per-rule CSV
@@ -5699,7 +5704,10 @@ tr.techrow{cursor:pointer}
                 } else {
                     $null = $ruleJs.Add("'$safe':[$($parts -join ',')]")
                     $lvlOpts = (@($g.Group | ForEach-Object { "$($_.Level)" } | Sort-Object -Unique) | ForEach-Object { "<option>$(ConvertTo-HtmlEsc $_)</option>" }) -join ''
-                    $eidOpts = (@($eids | Sort-Object -Unique) | ForEach-Object { "<option>$(ConvertTo-HtmlEsc $_)</option>" }) -join ''
+                    # v2.68 (B14): datalist EIDs come from the rule's FULL row set (was: the embedded
+                    # share only - budget-truncated EIDs were missing from the filter autocomplete).
+                    # Deduped EIDs are tiny (distinct event IDs of one rule), so no cap is needed.
+                    $eidOpts = (@($g.Group | ForEach-Object { "$($_.EventID)" } | Sort-Object -Unique) | ForEach-Object { "<option>$(ConvertTo-HtmlEsc $_)</option>" }) -join ''
                     $null = $sb.AppendLine("<div class='sbar'>filter <input id='q_$safe' list='ed_$safe' oninput=""renderRule('$safe')"" style='width:260px' placeholder='text in details/time/host/EID/RecordID'> level <select id='l_$safe' onchange=""renderRule('$safe')""><option value='all'>all</option>$lvlOpts</select> page <select id='ps_$safe' onchange=""renderRule('$safe')""><option>50</option><option>100</option><option>200</option><option value='all'>all embedded</option></select> <datalist id='ed_$safe'>$eidOpts</datalist> <span class='meta'>click a detail = copy raw - double-click = expand</span><input type='hidden' id='p_$safe' value='1'></div><div id='b_$safe'></div>")
                 }
                 $null = $sb.AppendLine("</details>")
@@ -5725,7 +5733,8 @@ tr.techrow{cursor:pointer}
             $txtAttr = (ConvertTo-HtmlEsc $txt) -replace '"', '&quot;'
             $null = $sb.AppendLine("<tr><td>$(ConvertTo-HtmlEsc $t)</td><td>$(ConvertTo-HtmlEsc $src)</td><td class='path clip' title='click = copy raw - show all expands' data-full=""$txtAttr"">$(ConvertTo-HtmlEsc $txtShow)</td></tr>")
         }
-        $psCap = if ($psCmds.Count -gt 30) { "First 30 of $($psCmds.Count)" } else { "First $($psCmds.Count)" }
+        # v2.68 (B13): N == M must not imply hidden rows - "First 30" when 30 == total
+        $psCap = if ($psCmds.Count -gt 30) { "First 30 of $($psCmds.Count)" } else { "All $($psCmds.Count)" }
         $null = $sb.AppendLine("</table><div class='meta'>$psCap recovered commands (hayabusa extract-base64 over the exported PowerShell event logs). Source: csv\ps_decoded_commands.csv</div>")
     }
 
@@ -5852,7 +5861,9 @@ tr.techrow{cursor:pointer}
                 if ($shown -ge 40) { break }
             }
         }
-        $null = $sb.AppendLine("</table><div class='meta'>First $shown of $($execRows.Count) entries - full: csv\execution_timeline.csv</div>")
+        # v2.68 (B13): same equals-cap honesty on the execution-history caption
+        $execCap = if ($shown -lt $execRows.Count) { "First $shown of $($execRows.Count) entries" } else { "All $shown entries" }
+        $null = $sb.AppendLine("</table><div class='meta'>$execCap - full: csv\execution_timeline.csv</div>")
     }
 
     # ---------- file system forensics ----------
@@ -5989,7 +6000,7 @@ tr.techrow{cursor:pointer}
             $ebLink = ConvertTo-CaseFileLink (Join-Path $CsvDir (Get-CaseCsvPath 'entities_binaries')) $ebLbl
             $null = $sb.AppendLine("<div class='meta'>Showing the top $($entTop.Count) of <b>$($entAll.Count)</b> multi-source binaries - full list: $ebLink</div>")
         }
-        # master-timeline context for the top cards: rows within +/-15 min of the entity's first seen
+        # master-timeline context for the top cards: rows within +/-30 min of the entity's first seen
         # (supertimeline Timestamps are UTC wall-clock per the weave contract - compare raw ticks
         # against the converted $fs below; do NOT re-shift either side)
         $tlPre = @()
@@ -6030,7 +6041,7 @@ tr.techrow{cursor:pointer}
                 $null = $sb.AppendLine("<tr><td>$srcCell</td><td class='path'>$detCell</td></tr>")
             }
             $null = $sb.AppendLine("</table>")
-            # +/-15 min context window around first seen, pulled from the master timeline
+            # +/-30 min context window around first seen, pulled from the master timeline
             $fs = $null
             try { $fs = ([datetime]$e.FirstSeen).ToUniversalTime() } catch { }
             if ($fs -and $tlPre.Count -gt 0) {
@@ -6686,8 +6697,9 @@ tr.techrow{cursor:pointer}
             $why = $null
             if ($first -and "$first" -match '^FAILED:') { $why = "artifact FAILED to save during collection: $(("$first" -replace '^(?i)FAILED:\s*', ''))" }
             if (-not $why) {
+                # v2.68 (B18): the wildcard fallback here was dead - no $emptyWhy key is starred
+                # (the starred keys belong to the $desc map, whose own lookup above stays live)
                 $why = $emptyWhy[$base]
-                if (-not $why) { foreach ($wk in $emptyWhy.Keys) { if ($wk.EndsWith('*') -and $base.StartsWith($wk.TrimEnd('*'))) { $why = $emptyWhy[$wk]; break } } }
             }
             if ($why) { $dTxt = "$d <div class='meta' style='margin-top:4px'><b>why empty:</b> $(ConvertTo-HtmlEsc $why)</div>" }
         }
@@ -7158,7 +7170,8 @@ function New-EntityCorrelation {
     }
     foreach ($r in (& $rowsOf 'powershell_console_history')) {
         $a2 = & $acctFromRow $r
-        if ($a2) { $a2.ConsoleKB = [math]::Round($a2.ConsoleKB + [double]"$($r.KB)", 1); $a2.Evidence.Add("console history: $($r.KB) KB (raw\useractivity\$($a2.Account))") | Out-Null }
+        # v2.68: safe casts - one garbage KB cell must not abort entity building (v2.67 B5 class)
+        if ($a2) { $a2.ConsoleKB = [math]::Round($a2.ConsoleKB + (ConvertTo-SafeDbl "$($r.KB)"), 1); $a2.Evidence.Add("console history: $($r.KB) KB (raw\useractivity\$($a2.Account))") | Out-Null }
     }
     # v2.21: Kerberos + directory-service + session-attributed activity evidence
     foreach ($r in (& $rowsOf 'security_kerberos')) {
@@ -7210,7 +7223,7 @@ function New-EntityCorrelation {
     }
     foreach ($r in (& $rowsOf 'beacon_candidates')) { $e = & $remGet $r.RemoteIp; if ($e) { $e.Beacon = "$($r.Severity)"; $e.Evidence.Add("beacon $($r.Severity) from $($r.Process)") | Out-Null } }
     foreach ($r in (& $rowsOf 'dns_beacon_candidates')) { $e = & $remGet $r.ResolvedIp; if ($e) { if (-not $e.Beacon) { $e.Beacon = "$($r.Severity)" }; $e.Evidence.Add("dns-beacon $($r.Severity) for $($r.Domain)") | Out-Null } }
-    foreach ($r in (& $rowsOf 'security_bruteforce_candidates')) { $e = & $remGet $r.SourceIp; if ($e) { $e.Brute = [int]"$($r.FailedLogons)"; $e.Evidence.Add("brute-force: $($r.FailedLogons) failed logons") | Out-Null } }
+    foreach ($r in (& $rowsOf 'security_bruteforce_candidates')) { $e = & $remGet $r.SourceIp; if ($e) { $e.Brute = ConvertTo-SafeInt "$($r.FailedLogons)"; $e.Evidence.Add("brute-force: $($r.FailedLogons) failed logons") | Out-Null } } # v2.68: safe cast (B5 class)
     foreach ($r in (& $rowsOf 'rdp_client_targets')) { $e = & $remGet $r.TargetServer; if ($e) { $e.RdpOut++; $e.Evidence.Add("rdp-out target (hint $($r.UsernameHint))") | Out-Null } }
 
     foreach ($r in (& $rowsOf 'hunt_findings')) {
@@ -8345,13 +8358,13 @@ function Get-CompromiseVerdict {
     # v2.64: score honesty - rows kept, gate applied at the signal (corroboration vars defined there)
     $procHighRows = @($proc | Where-Object { "$($_.Verdict)" -eq 'HIGH' })
     $procMed = @($proc | Where-Object { "$($_.Verdict)" -eq 'MEDIUM' }).Count
-    $yaraHi = @($yara | Where-Object { "$($_.Severity)" -match '^(?i)(high|critical)$' }).Count
-    $yaraMed = @($yara | Where-Object { "$($_.Severity)" -match '^(?i)medium$' }).Count
+    $yaraHi = @($yara | Where-Object { "$($_.Severity)" -match '^(high|critical)$' }).Count
+    $yaraMed = @($yara | Where-Object { "$($_.Severity)" -match '^medium$' }).Count
     $gapTamper = @($gaps | Where-Object { "$($_.EventId)" -match '^(1102|104)$' -or "$($_.Meaning)" -match 'clear|stop' }).Count
-    $beaconHi = @($beacons | Where-Object { "$($_.Severity)" -match '^(?i)high$' }).Count
-    $beaconMed = @($beacons | Where-Object { "$($_.Severity)" -match '^(?i)medium$' }).Count
-    $dnsHi = @($dnsBeacons | Where-Object { "$($_.Severity)" -match '^(?i)high$' }).Count
-    $dnsMed = @($dnsBeacons | Where-Object { "$($_.Severity)" -match '^(?i)medium$' }).Count
+    $beaconHi = @($beacons | Where-Object { "$($_.Severity)" -match '^high$' }).Count
+    $beaconMed = @($beacons | Where-Object { "$($_.Severity)" -match '^medium$' }).Count
+    $dnsHi = @($dnsBeacons | Where-Object { "$($_.Severity)" -match '^high$' }).Count
+    $dnsMed = @($dnsBeacons | Where-Object { "$($_.Severity)" -match '^medium$' }).Count
     $lolMal = @($lol | Where-Object { $_.Status -eq 'malicious' }).Count
     # v2.55: posture gaps + credential exposure now carry verdict weight (previously report-only).
     # v2.64: imported BEFORE the hunt filter so the EcsConfigs exclusion can cross-check posture.
@@ -8371,7 +8384,21 @@ function Get-CompromiseVerdict {
         $hd = "$($_.Evidence)" # v2.64: hunt rows carry no Detail column - read Evidence only (the old Detail-prefix read was always empty)
         if ("$($_.Rule)" -notmatch '(?i)Defender exclusion' -or $hd -notmatch 'EcsConfigs' -or $postureExclusions) { return $true }
         # keep UNLESS every Defender registry path the finding mentions lives under EcsConfigs
-        $hp = @([regex]::Matches($hd, '(?i)Windows Defender\\[\w\\]+') | ForEach-Object { $_.Value })
+        # (assumption: real 5007 value pairs are always separated by ' = '/'New value:'/'Old value:'
+        # - two paths joined by a bare space would merge into one span)
+        # v2.68 (B8): real 5007 Evidence is the whitespace-normalized event Detail (module 6.2
+        # writes "$($e.Time): $($e.Detail)"), e.g. "Old value: HKLM\SOFTWARE\Microsoft\Windows
+        # Defender\Diagnostics\LastKnownGoodPlatformLocation = C:\ProgramData\Microsoft\Windows
+        # Defender\Platform\4.18.26080.4-0 New value: Default\..." and "New value:
+        # HKLM\...\Windows Defender\Exclusions\Paths\C:\Program Files\Bad\svc.exe = 0x1". Paths
+        # carry spaces/dots/colons/parens, so the capture runs from 'Windows Defender\' through
+        # whole tokens INCLUDING single spaces, and stops only at a space that begins a message
+        # separator (' = value', 'New value:', 'Old value:') or at ; | quotes. The old [\w\\]+
+        # class truncated at the first colon ('...\Paths\C'), losing everything after 'C:' in a
+        # quoted exclusion VALUE. The EcsConfigs decision reads only whether the capture's path
+        # prefix passes through '\EcsConfigs\' - no space can precede that segment inside a
+        # Defender path, so the span cannot flip the drop/keep outcome on real shapes.
+        $hp = @([regex]::Matches($hd, '(?i)Windows Defender\\(?:[^\s;|''"]+|\s(?![=])(?!New value:)(?!Old value:))*') | ForEach-Object { $_.Value })
         -not (@($hp).Count -gt 0 -and @($hp | Where-Object { $_ -notmatch '\\EcsConfigs\\' }).Count -eq 0)
     })
     $usnBurstN = @($usnBursts).Count
@@ -8383,9 +8410,9 @@ function Get-CompromiseVerdict {
     $credMed = @($credSweep | Where-Object { "$($_.Risk)" -match '(?i)^high$' })
 
     Add-Signal 'IOC hit - historical execution (amcache SHA1)' 4 @($iocAmc).Count "near-certain true positive evidence"
-    Add-Signal 'YARA hit - high/critical rule' 4 $yaraHi (($yara | Where-Object { "$($_.Severity)" -match '^(?i)(high|critical)$' } | Select-Object -First 3 | ForEach-Object { $_.Rule }) -join '; ')
-    Add-Signal 'C2 beaconing - highly regular callbacks' 3 $beaconHi (($beacons | Where-Object { "$($_.Severity)" -match '^(?i)high$' } | Select-Object -First 3 | ForEach-Object { "$($_.Process) -> $($_.RemoteIp):$($_.Port) every ~$($_.MedianIntervalSec)s" }) -join '; ')
-    Add-Signal 'C2 DNS beaconing - highly regular domain queries' 3 $dnsHi (($dnsBeacons | Where-Object { "$($_.Severity)" -match '^(?i)high$' } | Select-Object -First 3 | ForEach-Object { "$($_.Process) -> $($_.Domain) every ~$($_.MedianIntervalSec)s" }) -join '; ')
+    Add-Signal 'YARA hit - high/critical rule' 4 $yaraHi (($yara | Where-Object { "$($_.Severity)" -match '^(high|critical)$' } | Select-Object -First 3 | ForEach-Object { $_.Rule }) -join '; ')
+    Add-Signal 'C2 beaconing - highly regular callbacks' 3 $beaconHi (($beacons | Where-Object { "$($_.Severity)" -match '^high$' } | Select-Object -First 3 | ForEach-Object { "$($_.Process) -> $($_.RemoteIp):$($_.Port) every ~$($_.MedianIntervalSec)s" }) -join '; ')
+    Add-Signal 'C2 DNS beaconing - highly regular domain queries' 3 $dnsHi (($dnsBeacons | Where-Object { "$($_.Severity)" -match '^high$' } | Select-Object -First 3 | ForEach-Object { "$($_.Process) -> $($_.Domain) every ~$($_.MedianIntervalSec)s" }) -join '; ')
     Add-Signal 'Known-malicious driver on disk (LOLDrivers)' 2 $lolMal (($lol | Where-Object { $_.Status -eq 'malicious' } | Select-Object -First 3 | ForEach-Object { "$($_.Name): $($_.Path)" }) -join '; ')
     Add-Signal 'Security posture gaps' 1 @($postureBad).Count (($postureBad | ForEach-Object { "$($_.Check): $($_.Detail)" }) -join '; ') # v2.64: was $_.Setting - that column never existed, the detail lost the check name
     Add-Signal 'Credential material exposure' 2 @($credMed).Count (($credMed | Select-Object -First 3 | ForEach-Object { "$($_.Item): $($_.Detail)" }) -join '; ')
@@ -8403,9 +8430,9 @@ function Get-CompromiseVerdict {
     Add-Signal 'IOC hit - known-bad binary hash in execution history' 2 @($hashIoc).Count (($hashIoc | Select-Object -First 3 | ForEach-Object { "$($_.Process) ($($_.Path))" }) -join '; ')
     Add-Signal 'IOC hit - live system' 3 @($iocLive).Count (($iocLive | Select-Object -First 3 | ForEach-Object { $_.Indicator }) -join '; ')
     Add-Signal 'Sigma detection - critical' $critFloor $hayCrit.Count (($hayCrit | Select-Object -First 3 | ForEach-Object { $_.RuleTitle }) -join '; ')
-    Add-Signal 'YARA hit - medium rule' 2 $yaraMed (($yara | Where-Object { "$($_.Severity)" -match '^(?i)medium$' } | Select-Object -First 3 | ForEach-Object { $_.Rule }) -join '; ')
-    Add-Signal 'C2 beaconing - periodic callbacks' 2 $beaconMed (($beacons | Where-Object { "$($_.Severity)" -match '^(?i)medium$' } | Select-Object -First 3 | ForEach-Object { "$($_.Process) -> $($_.RemoteIp) every ~$($_.MedianIntervalSec)s" }) -join '; ')
-    Add-Signal 'C2 DNS beaconing - periodic domain queries' 2 $dnsMed (($dnsBeacons | Where-Object { "$($_.Severity)" -match '^(?i)medium$' } | Select-Object -First 3 | ForEach-Object { "$($_.Process) -> $($_.Domain) every ~$($_.MedianIntervalSec)s" }) -join '; ')
+    Add-Signal 'YARA hit - medium rule' 2 $yaraMed (($yara | Where-Object { "$($_.Severity)" -match '^medium$' } | Select-Object -First 3 | ForEach-Object { $_.Rule }) -join '; ')
+    Add-Signal 'C2 beaconing - periodic callbacks' 2 $beaconMed (($beacons | Where-Object { "$($_.Severity)" -match '^medium$' } | Select-Object -First 3 | ForEach-Object { "$($_.Process) -> $($_.RemoteIp) every ~$($_.MedianIntervalSec)s" }) -join '; ')
+    Add-Signal 'C2 DNS beaconing - periodic domain queries' 2 $dnsMed (($dnsBeacons | Where-Object { "$($_.Severity)" -match '^medium$' } | Select-Object -First 3 | ForEach-Object { "$($_.Process) -> $($_.Domain) every ~$($_.MedianIntervalSec)s" }) -join '; ')
     Add-Signal 'Sigma detection - high' $highFloor $hayHigh.Count "$($hayHigh.Count) events from $hayHighRules distinct rules$(if ($highFloor -eq 0 -and $hayHigh.Count -gt 0) { ' - single-rule storm carries no verdict weight (see -Mode Tune)' })"
     # v2.55: volume signal - a single med/low rule with >=100 deduped events is a storm worth
     # naming (usually admin automation, sometimes real). Floor 0 = visible, no verdict weight.
@@ -8446,7 +8473,7 @@ function Get-CompromiseVerdict {
         # time, an INACTIVE threat and NO resource is the leftover of an already-cleaned detection
         # (observed on the live case: a months-old Trojan stayed 'fresh' -> weight 2 forever).
         # Genuinely schema-less rows (pre-v2.55 cases: no Source column at all) keep the fresh default.
-        elseif ("$($t.Source)" -eq 'live-catalog' -and -not "$($t.DetectedUTC)" -and "$($t.IsActive)" -match '^(?i)false$' -and -not "$($t.Resources)") {
+        elseif ("$($t.Source)" -eq 'live-catalog' -and -not "$($t.DetectedUTC)" -and "$($t.IsActive)" -match '^false$' -and -not "$($t.Resources)") {
             $fresh = $false
         }
         if ($fresh) { $defFresh.Add($t) } else { $defStale.Add($t) }
@@ -8507,6 +8534,15 @@ function Get-CompromiseVerdict {
     $covN = @($cov | Where-Object { $_.Collected }).Count
     $covM = $cov.Count
     $isAdminRun = if ($null -ne $script:EndpointAdmin) { [bool]$script:EndpointAdmin } else { Test-IsAdmin }
+    # v2.68 (B7): CoveragePercentUnadjusted is the fraction BEFORE the non-elevated -15 weight
+    # correction - same Round/Max math, same 0..100 clamps applied to both values. Elevated runs
+    # have no correction so the two properties are identical there by design; on non-elevated
+    # runs Unadjusted >= Confidence and the gap is exactly the -15-weight fraction (v2.64 shipped
+    # both properties reading the corrected value - the "Unadjusted" label lied).
+    $covUnadj = 0
+    if ($covTotal -gt 0) { $covUnadj = [Math]::Round(100 * [Math]::Max(0, $covGot) / $covTotal) }
+    if ($covUnadj -gt 100) { $covUnadj = 100 }
+    if ($covUnadj -lt 0) { $covUnadj = 0 }
     # v2.55: non-elevated runs under-collect - the -15 correction applies to the collected sum
     # AFTER both sums (net = covGot - 15), then the fraction is taken.
     $covNet = $covGot
@@ -8547,7 +8583,7 @@ function Get-CompromiseVerdict {
         foreach ($s4688 in @('security_events', 'evtx_ecmd/Security')) {
             $r4688 = @(Import-CaseCsv $s4688)
             if ($r4688.Count -eq 0) { continue }
-            $idCol = ($r4688[0].PSObject.Properties.Name | Where-Object { $_ -match '^(?i)(eventid|id)$' } | Select-Object -First 1)
+            $idCol = ($r4688[0].PSObject.Properties.Name | Where-Object { $_ -match '^(eventid|id)$' } | Select-Object -First 1)
             if ($idCol -and @($r4688 | Where-Object { "$($_.$idCol)" -eq '4688' } | Select-Object -First 1)) { $has4688 = $true; break }
         }
         if (-not $has4688) { $has4688 = (@(Import-CaseCsv 'security_proc_events').Count -gt 0) }
@@ -8584,7 +8620,7 @@ function Get-CompromiseVerdict {
         Signals = $signals.ToArray()
         Caveats = $caveats.ToArray()
         Coverage = $cov.ToArray()
-        CoveragePercentUnadjusted = $coverageRaw
+        CoveragePercentUnadjusted = $covUnadj
         CoverageSourcesCollected = $covN
         CoverageSourcesTotal = $covM
         Counts = $counts
@@ -8784,7 +8820,7 @@ function Invoke-RegenerateOutputs {
             $hiProc = @(Import-CaseCsv 'flash_process_scored' | Where-Object { "$($_.Verdict)" -eq 'HIGH' -and "$($_.Name)" } | Sort-Object { ([int]"$($_.Score)") } -Descending)
             if ($hiProc.Count -gt 0) { $seed = "$($hiProc[0].Name)"; $seedWhy = "malicious process score $($hiProc[0].Score)" }
             if (-not $seed) {
-                $yh = @(Import-CaseCsv 'yara_hits' | Where-Object { "$($_.Severity)" -match '^(?i)(high|critical)$' -and "$($_.File)" } | Select-Object -First 1)
+                $yh = @(Import-CaseCsv 'yara_hits' | Where-Object { "$($_.Severity)" -match '^(high|critical)$' -and "$($_.File)" } | Select-Object -First 1)
                 if ($yh) { $seed = (Split-Path "$($yh[0].File)" -Leaf); $seedWhy = "YARA $($yh[0].Severity) hit" }
             }
             if (-not $seed) {
@@ -9014,6 +9050,8 @@ function Show-TaskMenu {
         Write-Host "   [7]  Tool links" -ForegroundColor Yellow
         Write-Host "   [8]  Finish a collected case (parse evidence analyst-side)" -ForegroundColor Yellow
         Write-Host "   [9]  Focus on one entity (build its activity chain from a case)" -ForegroundColor Yellow
+        # v2.68 (B16): the Process dossier existed only as -Mode Process CLI - no menu key reached it
+        Write-Host "   [P]  Process dossier (deep-dive one process in a case)" -ForegroundColor Yellow
         Write-Host "   [T]  Timeline pivot (filter the master timeline to a window)" -ForegroundColor Yellow
         Write-Host "   [W]  Watch this PC live (rolling diff while a sample detonates)" -ForegroundColor Yellow
         Write-Host "   [C]  Detection canary (self-test the pipeline on this PC)" -ForegroundColor Yellow
@@ -9032,6 +9070,7 @@ function Show-TaskMenu {
             '^(?i)7$' { return 'Links' }
             '^(?i)8$' { return 'Parse' }
             '^(?i)9$' { return 'Focus' }
+            '^(?i)p$' { return 'Process' }
             '^(?i)t$' { return 'Timeline' }
             '^(?i)w$' { return 'Watch' }
             '^(?i)c$' { return 'Canary' }
@@ -9194,7 +9233,7 @@ function Invoke-TuneMode {
     $pick = (Read-Host "  Rule numbers to tune (comma-separated), A = all shown, ENTER = cancel").Trim()
     if (-not $pick) { Write-Host "Cancelled." -ForegroundColor Gray; return $true }
     $idx = @()
-    if ($pick -match '^(?i)a$') { $idx = @(1..$groups.Count) }
+    if ($pick -match '^a$') { $idx = @(1..$groups.Count) }
     else { foreach ($p in ($pick -split ',')) { $pt = $p.Trim(); if ($pt -match '^\d+$' -and [int]$pt -ge 1 -and [int]$pt -le $groups.Count) { $idx += [int]$pt } } }
     if ($idx.Count -eq 0) { Write-Host "No valid selection." -ForegroundColor Yellow; return $true }
     $exPath = Join-Path $cfgDir 'exclude_rules.txt'
@@ -9208,19 +9247,19 @@ function Invoke-TuneMode {
         $lvl = "$($g.Group[0].Level)"
         $act = (Read-Host "  [$title - $lvl] E / D / V=iew rule / ED=it rule / S=kip").Trim()
         if (-not $rid) { continue }
-        if ($act -match '^(?i)e$') {
+        if ($act -match '^e$') {
             Add-Content -LiteralPath $exPath -Value ("{0} # `"{1}`" (Ophira Tune {2})" -f $rid, $title, (Get-Date -Format 'yyyy-MM-dd')) -Encoding UTF8
             $nEx++
-        } elseif ($act -match '^(?i)d$') {
+        } elseif ($act -match '^d$') {
             if (-not (Test-Path $lvPath)) { Set-Content -LiteralPath $lvPath -Value 'id,new_level' -Encoding UTF8 }
             Add-Content -LiteralPath $lvPath -Value ("{0},informational # `"{1}`" - Originally {2} (Ophira Tune {3})" -f $rid, $title, $lvl, (Get-Date -Format 'yyyy-MM-dd')) -Encoding UTF8
             $nLv++
-        } elseif ($act -match '^(?i)(v|ed)$') {
+        } elseif ($act -match '^(v|ed)$') {
             Write-Host "  locating rule file (searching bundled rules for RuleID)..." -ForegroundColor Gray
             $rf = Find-SigmaRuleFile -RuleId $rid -HayabusaExe $h
             if (-not $rf) {
                 Write-Host "  rule file not found in tools\hayabusa\rules - bundled rules may predate this rule (try -Mode UpdateRules)" -ForegroundColor Yellow
-            } elseif ($act -match '^(?i)ed$') {
+            } elseif ($act -match '^ed$') {
                 Write-Host "  $rf" -ForegroundColor Gray
                 Write-Host "  Notepad will open - save your edit and close it to continue." -ForegroundColor Yellow
                 Write-Host "  NOTE: manual rule edits are discarded when rules are refreshed via -Mode UpdateRules." -ForegroundColor Yellow
@@ -10870,7 +10909,7 @@ function Invoke-CanaryMode {
     }
     Write-Host "  Lab / validation use only - never run it as part of a live investigation." -ForegroundColor Yellow
     $go = (Read-Host "  Run the canary here? [y/N]").Trim()
-    if ($go -notmatch '^(?i)y') { Write-Host "  Cancelled." -ForegroundColor Gray; return $false }
+    if ($go -notmatch '^y') { Write-Host "  Cancelled." -ForegroundColor Gray; return $false }
     # remote actions need EXPLICIT credentials when this process itself sits in a remoting session
     # (network token cannot authenticate a second hop) - prompt, or read the lab-automation override
     $tCred = $null
@@ -11255,14 +11294,14 @@ function Invoke-DeployWizard {
                 $pIn = Read-WizardLine "  Collection depth: 1=Quick (~1-2 min/PC) or 2=Standard (~3-5 min/PC) [$defPreset]"
                 if ($null -eq $pIn) { $step = 2; continue }
                 $preset = $defPreset
-                if ($pIn -match '^1' -or $pIn -match '^(?i)q(uick)?$') { $preset = 'Quick' }
-                elseif ($pIn -match '^2' -or $pIn -match '^(?i)s(tandard)?$') { $preset = 'Standard' }
+                if ($pIn -match '^1' -or $pIn -match '^q(uick)?$') { $preset = 'Quick' }
+                elseif ($pIn -match '^2' -or $pIn -match '^s(tandard)?$') { $preset = 'Standard' }
                 $step = 4
             }
             4 {
                 $p2In = Read-WizardLine "  Also push hayabusa for on-host Sigma detection (removed after run)? [y/N] (default $pushDef)"
                 if ($null -eq $p2In) { $step = 3; continue }
-                $push = if ($p2In) { $p2In -match '^(?i)y' } else { [bool]$script:CfgPushTools }
+                $push = if ($p2In) { $p2In -match '^y' } else { [bool]$script:CfgPushTools }
                 $step = 5
             }
             5 {
@@ -11285,10 +11324,10 @@ function Invoke-DeployWizard {
                 $advLogWindow = ''
                 $advIn = Read-WizardLine "  Advanced options (Full depth, log window, parallelism)? [y/N]"
                 if ($null -eq $advIn) { $step = 5; continue }
-                if ($advIn -notmatch '^(?i)y') { $step = 7; continue }
+                if ($advIn -notmatch '^y') { $step = 7; continue }
                 $dIn = Read-WizardLine "  Depth: 1=Quick  2=Standard  3=Full - heaviest, includes SRUM etc. [current: $preset]"
                 if ($null -eq $dIn) { $step = 5; continue }
-                if ($dIn -match '^3' -or $dIn -match '^(?i)f(ull)?$') { $preset = 'Full' }
+                if ($dIn -match '^3' -or $dIn -match '^f(ull)?$') { $preset = 'Full' }
                 $lhIn = Read-WizardLine "  Log analysis window (168 = hours, 30d, 3m, 0 = all, or start date 2026-09-01) [ENTER = 168 = 7 days]"
                 if ($null -eq $lhIn) { $step = 5; continue }
                 if ($lhIn) {
@@ -11326,7 +11365,7 @@ function Invoke-DeployWizard {
             8 {
                 Invoke-DeployMode -Targets $targets -DeployPreset $preset -Cred $cred -DeployCaseID $CaseID -DeploySharePath $shareIn -Threads $threads -PushBin $push -DeployLogHours $advLogHours -DeployLogWindow $advLogWindow
                 $rem = Read-WizardLine "  Remember these answers for next time? [y/N]"
-                if ($rem -match '^(?i)y') {
+                if ($rem -match '^y') {
                     $vals = @{ TARGETS = $targetsIn; PRESET = $preset; PUSHTOOLS = $(if ($push) { 'yes' } else { 'no' }) }
                     if ($shareIn) { $vals['DEPLOYSHARE'] = $shareIn }
                     if (Save-OphiraConfig -Values $vals) { Write-Host "  Saved to ophira.config.txt" -ForegroundColor Green }
@@ -11401,7 +11440,14 @@ if ($bareLaunch -and [Environment]::UserInteractive) {
                 'Tune' { Invoke-TuneMode | Out-Null }
                 'Parse' { Invoke-ParseMode | Out-Null }
                 'Focus' { Invoke-FocusEngine | Out-Null }
-                'Process' { Invoke-FocusEngine | Out-Null }
+                'Process' {
+                    # v2.68 (B16): menu arm of the -Mode Process CLI path - mandatory non-empty
+                    # process prompt, then the SAME invocation the CLI mode switch uses
+                    # (Invoke-FocusEngine -Path $ParsePath -Indicator <name>)
+                    $pn = "$ProcessName"
+                    while (-not $pn) { $pn = (Read-Host '  Process name / PID / path / hash for the dossier (e.g. certutil.exe)').Trim() }
+                    Invoke-FocusEngine -Path $ParsePath -Indicator $pn | Out-Null
+                }
                 'Timeline' { Invoke-TimelineMode | Out-Null }
                 'Watch' { Invoke-WatchMode | Out-Null }
                 'Canary' { Invoke-CanaryMode -KeepLogging:$KeepLogging -Target $CanaryTarget -TargetUser $CanaryTargetUser | Out-Null }

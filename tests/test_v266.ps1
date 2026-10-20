@@ -51,7 +51,8 @@ $null = $hay.Add('"2026-09-24 10:06:00.000 +00:00","TESTHOST","7045","rid-c","lo
 # B10 budget walk: 4963 filler + 20 storm + 12 suspicious = 4995 of the 5000-row embed budget
 # spent -> 'Run key persistence' (8 hits) embeds 5/8 (truncated summary), 'Starved Rule'
 # (6 hits) embeds 0 (drill-down UI hidden, no deep links). The embedded RunKey rows carry
-# EIDs 7045/1547/1; the non-embedded tail carries 9999 (must NOT reach the EID datalist).
+# EIDs 7045/1547/1; the non-embedded tail carries 9999 (reaches the EID datalist since
+# v2.68 B14 - the datalist covers the rule's FULL row set).
 1..10 | ForEach-Object { $null = $hay.Add(('"2026-09-24 10:{0:00}:00.000 +00:00","TESTHOST","1","rid-p{0}","high","Suspicious PowerShell","encoded payload {0}","Exec","T1059.001"' -f (6 + $_))) }
 1..7 | ForEach-Object {
     $rkMin = '{0:00}' -f (6 + $_)
@@ -235,7 +236,7 @@ Check "B10: zero-embedded rule has no table/pager target box" (-not ($html.Conta
 Check "B10: zero-embedded rule explains the budget exhaustion" ($html -match [regex]::Escape('Embed budget exhausted before this rule'))
 Check "B10: no deep link targets a rule without a rendered drill-down" (-not ($html.Contains("data-rule='Starved_Rule'")))
 $datalist = [regex]::Match($html, "(?s)<datalist id='ed_Run_key_persistence'>(.*?)</datalist>").Groups[1].Value
-Check "B10: EID datalist lists distinct EIDs of the EMBEDDED rows only" (($datalist -match '<option>7045</option>') -and ($datalist -match '<option>1547</option>') -and ($datalist -match '<option>1</option>') -and ($datalist -notmatch '9999'))
+Check "B10: EID datalist lists distinct EIDs of the FULL row set (v2.68 B14: budget tail's 9999 included)" (($datalist -match '<option>7045</option>') -and ($datalist -match '<option>1547</option>') -and ($datalist -match '<option>1</option>') -and ($datalist -match '<option>9999</option>'))
 Check "B10: filter input references the EID datalist" ($html -match [regex]::Escape("list='ed_Run_key_persistence'"))
 Check "B10: page-size jump control rendered (50/100/200/all)" (($html -match [regex]::Escape("<select id='ps_Run_key_persistence'")) -and ($html -match [regex]::Escape("<option value='all'>all embedded</option>")))
 Check "B10: renderRule honors the page-size control" (($html -match "getElementById\('ps_'\+id\)") -and ($html -match "psv==='all'"))

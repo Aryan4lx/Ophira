@@ -218,7 +218,9 @@ if ($msi.Success -and $msd.Success) {
 # ---- B5 source-scan: the previously-fatal report casts route through the helpers ----
 $lines4 = $src -split "\r?\n"
 if ($lines4.Count -ge 6100) {
-    $region4 = ($lines4[5199..6099] -join "`n")
+    # window end widened 6099 -> 6199 (v2.68 Task 2 added ~11 lines upstream, pushing the
+    # process-chain sort past the old slice - same report region, no behavioral change)
+    $region4 = ($lines4[5199..6199] -join "`n")
     Check "B5: no bare [int]quoted casts left in the report region" (-not $region4.Contains('[int]"$('))
     Check "B5: no bare [double]quoted casts left in the report region" (-not $region4.Contains('[double]"$('))
     Check "B5: no bare [long]quoted casts left in the report region" (-not $region4.Contains('[long]"$('))

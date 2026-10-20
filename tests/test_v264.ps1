@@ -242,10 +242,12 @@ try {
     $vA7c = Get-CompromiseVerdict
     Check "A7: non-admin -15 applied to collected weight before division (22-15=7/166 -> 4%)" ($vA7c.ConfidencePercent -eq 4)
 
-    # A7d: negative net weight clamps to 0 (14-15 < 0) and rank stays 0 (rank-0->1 floor untouched)
+    # A7d: negative net weight clamps Confidence to 0 (14-15 < 0) and rank stays 0
+    # (rank-0->1 floor untouched). v2.68 (B7): CoveragePercentUnadjusted is the PRE-correction
+    # fraction - Round(100*14/166) = 8 - no longer the corrected value it wrongly mirrored.
     $script:presentCsvs = @('sysmon_dns')
     $vA7d = Get-CompromiseVerdict
-    Check "A7: negative net weight clamps to 0 (14-15)" ($vA7d.ConfidencePercent -eq 0 -and $vA7d.CoveragePercentUnadjusted -eq 0)
+    Check "A7: negative net weight clamps Confidence to 0 (14-15); Unadjusted is the pre-correction 8" ($vA7d.ConfidencePercent -eq 0 -and $vA7d.CoveragePercentUnadjusted -eq 8)
     Check "A7: coverage < 40% -> rank 0 (rank-0->1 floor unchanged by the fraction)" ($vA7d.LevelRank -eq 0)
 } finally {
     Rename-Item -LiteralPath (Join-Path $RawDir 'evtx_away') 'evtx'

@@ -16,7 +16,9 @@ function New-Csv { param($Path, [string[]]$Header, [string[]]$Lines) ($Header + 
 # PART 1 - New-EntityCorrelation: three-way join on a synthetic case
 # ============================================================================
 $defs = ''
-foreach ($n in @('Import-CaseCsv', 'Get-LvlRank', 'Test-IsPublicIp', 'New-EntityCorrelation')) {
+# v2.68: ConvertTo-SafeInt/SafeDbl join the extract - New-EntityCorrelation now routes its CSV
+# cells through them (v2.67 B5 class), so the harness needs the helpers in scope
+foreach ($n in @('ConvertTo-SafeInt', 'ConvertTo-SafeDbl', 'Import-CaseCsv', 'Get-LvlRank', 'Test-IsPublicIp', 'New-EntityCorrelation')) {
     $m = [regex]::Match($src, "(?s)function $n\b.*?\r?\n\}")
     if (-not $m.Success) { throw "extract failed: $n" }
     $defs += $m.Value + "`r`n"
