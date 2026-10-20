@@ -1,13 +1,275 @@
 ﻿<#
-Ophira v2.68  -  Windows Incident Response Triage Toolkit
+Ophira v2.69  -  Windows Incident Response Triage Toolkit
 READ-ONLY by design: never modifies the system, only reads and copies data
 into its own output folder. Intended to be handed to a system owner or run
 by a responder during early triage / threat hunting.
 #>
 
+<#
+.SYNOPSIS
+    Ophira - single-file Windows incident response triage toolkit for Windows
+    endpoints (PowerShell 5.0+, zero dependencies).
+
+.DESCRIPTION
+    Ophira is a READ-ONLY triage tool: it never kills processes, deletes files
+    or changes system state - it only reads and copies evidence into its own
+    OPHIRA_<host>_<timestamp> output folder. One script covers the whole
+    triage loop: collect on this endpoint, push and run across a fleet over
+    WinRM, merge the results into one fleet report, and finish or deep-dive a
+    collected case on the analyst PC. Every collection ends with a 5-level
+    compromise verdict, an HTML report, a supertimeline, a SIEM export and a
+    ZIP package. Companion tools (hayabusa, the EZ parsers, winpmem, ...) are
+    optional and downloaded by -Mode Setup; everything degrades gracefully
+    when a tool, admin rights or telemetry is missing.
+    Default (no flags): interactive role gate + collection menu.
+    Run "-Mode Help" (or press H in the task menu) to see this text.
+    NOTE: verdicts are correlation heuristics over collected evidence -
+    verify against the raw CSV/evtx inside the package before acting.
+
+.PARAMETER Mode
+    What to do. Collect (default) triages THIS PC. Deploy pushes the kit to
+    remote hosts over WinRM and collects there. Analyze merges collected
+    case zips into one fleet report (a single case passed in is
+    auto-finished analyst-side instead). Setup downloads companion tools
+    into tools\. Links lists the tool download pages. UpdateRules refreshes
+    the hayabusa Sigma rules. Tune is the Sigma false-positive feedback loop
+    (exclude or demote noisy rules). Parse re-runs the forensic parsers on a
+    case from your PC and regenerates timeline, verdict and report (finish
+    what the endpoint could not). Process/Focus build the activity-chain
+    dossier of one entity in a case. Timeline filters a case's master
+    timeline to a window. Watch is a live read-only diff of this PC while a
+    sample detonates. Canary runs the detection self-test. SeedIocs appends
+    one indicator to the IOC feed. Help prints this text and exits.
+
+.PARAMETER CaseID
+    Optional case label (e.g. INC-2026-042) stamped into case.json, the
+    report and the fleet view so collections can be tied to a ticket.
+
+.PARAMETER Analyst
+    Name of the responding analyst, recorded in the case metadata.
+
+.PARAMETER OutputPath
+    Root folder for the OPHIRA_<host>_<timestamp> case folder.
+    Default: the folder Ophira.ps1 itself lives in.
+
+.PARAMETER Preset
+    Collection depth: Flash (volatile only, ~15s), Quick (1-2 min),
+    Standard (3-5 min, recommended default), Full (everything plus the
+    unfiltered MFT/USN exports - needs free disk space), Custom (pick the
+    modules in the menu), DC or WebServer (force the role-specific modules
+    on regardless of auto-detection). Deploy applies the same values on the
+    remote hosts.
+
+.PARAMETER NoMenu
+    Skip the module menu and collect immediately with the chosen Preset -
+    the unattended form used by automation and handoff wrappers.
+
+.PARAMETER SimpleUI
+    Owner-friendly guided run (what RUN-OPHIRA.bat uses): minimal questions,
+    plain-language progress and a DONE screen that hands the result zip back
+    to the system owner.
+
+.PARAMETER LogLevel
+    Console noise: Quiet (banner + run summary only; the log file keeps everything), Normal (default)
+    or Verbose (extra detail per module).
+
+.PARAMETER IncludeMemory
+    Also capture RAM with winpmem (module 7.1). Adds minutes and a multi-GB
+    file to the package; only worth it on a box you suspect at depth.
+
+.PARAMETER PushTools
+    Deploy only: ship the bundled tools\endpoint\ folder to every remote
+    host first (Kansa-style push, run, remove) so Sigma and prefetch
+    parsing work on the endpoint too. Roughly 72 MB zipped per host.
+
+.PARAMETER Sequential
+    Run collection modules one after another instead of the default parallel
+    pool. Slower; use it to isolate a misbehaving module.
+
+.PARAMETER NoElevate
+    Do not request administrator rights. Collection continues with whatever
+    the current token can read and the report's coverage table shows what
+    was skipped. Useful for a first look from a limited account.
+
+.PARAMETER LogHours
+    How far back event-log analysis (and the hayabusa timeline) looks, in
+    hours. Default 168 = 7 days.
+
+.PARAMETER LogWindow
+    Friendlier alternative to -LogHours: 90h / 30d / 3m / 0 (= all time) or
+    a start date like 2026-09-01. Wins over -LogHours.
+
+.PARAMETER LogStart
+    Explicit analysis window start, e.g. "2026-09-01 08:00". Wins over
+    -LogWindow. Combine with -LogEnd for an exact range.
+
+.PARAMETER LogEnd
+    Explicit analysis window end (same format as -LogStart). Must be after
+    -LogStart.
+
+.PARAMETER SharePath
+    Copy the finished case zip to this UNC share (e.g. \\IR-SRV\collections$)
+    after collection, in addition to leaving it in the output folder.
+
+.PARAMETER ComputerName
+    Deploy mode: one or more remote host names to push and run on, in
+    parallel (-MaxThreads).
+
+.PARAMETER TargetsFile
+    Deploy mode: a text file with one host per line (# comments allowed) as
+    an alternative to -ComputerName.
+
+.PARAMETER MaxThreads
+    Deploy mode: how many hosts to collect in parallel. Default 8.
+
+.PARAMETER AnalyzePath
+    Analyze mode: folder containing OPHIRA_*.zip packages (or a single zip
+    or case folder) to merge into the fleet report. Default: current folder.
+
+.PARAMETER ParsePath
+    Case to operate on for Parse, Focus/Process and Timeline: an
+    OPHIRA_*.zip or its unzipped folder. Prompts when omitted.
+
+.PARAMETER ProcessName
+    Focus/Process mode: the seed entity - a process name, PID, path, hash,
+    IP, ip:port or port. The engine expands it across the case's CSVs into
+    an activity-chain dossier (focus\focus_report.html).
+
+.PARAMETER TimelineStart
+    Timeline mode: window start in UTC ("yyyy-MM-dd HH:mm"). The case's
+    supertimeline.csv is filtered to the Start..End window.
+
+.PARAMETER TimelineEnd
+    Timeline mode: window end in UTC (same format as -TimelineStart).
+
+.PARAMETER HayabusaPath
+    Analyze mode: explicit path to hayabusa.exe when it is not found
+    recursively under tools\.
+
+.PARAMETER CanaryTarget
+    Canary mode: optional second host; the canary touches it over SMB so
+    lateral-movement detections can be validated cross-host.
+
+.PARAMETER CanaryTargetUser
+    Canary mode: account name to use for the optional SMB touch.
+
+.PARAMETER KeepLogging
+    Canary mode only: keep the audit-policy changes the canary enabled (they
+    are restored afterwards by default).
+
+.PARAMETER DeltaPath
+    Explicit previous OPHIRA_*.zip to diff the new collection against. By
+    default the newest previous case is found automatically and the report
+    shows only what is NEW.
+
+.PARAMETER SetupTools
+    Setup mode: restrict the download to specific tools, e.g.
+    "hayabusa,winpmem" (default: offer and confirm all of them).
+
+.PARAMETER Credential
+    Deploy mode: alternate credential for the WinRM connection to the
+    targets. Prompts when omitted.
+
+.PARAMETER WatchInterval
+    Watch mode: seconds between live-diff ticks (minimum 3, default 15).
+
+.PARAMETER SeedValue
+    SeedIocs mode: the indicator to validate, dedupe and append to the IOC
+    feed (a hash, IP or domain).
+
+.PARAMETER ExitVerdict
+    Automation hook: after a run that computes a verdict (Collect/Parse),
+    exit with the verdict rank as the process exit code when it is an alert
+    (2 = SUSPICIOUS, 3 = LIKELY COMPROMISED, 4 = COMPROMISED; otherwise 0).
+    Lets a scheduler sort hundreds of hosts by exit code alone.
+
+.EXAMPLE
+    .\Ophira.ps1
+    Interactive start: pick your role, then collect this PC from the menu or
+    pick any other task (deploy, analyze, tune, parse...). After each task
+    you return to the menu.
+
+.EXAMPLE
+    .\Ophira.ps1 -NoMenu -Preset Standard -CaseID INC-2026-042
+    Unattended Standard-depth collection of this PC with a ticket label;
+    results land in OPHIRA_<host>_<stamp>\ next to the script.
+
+.EXAMPLE
+    .\Ophira.ps1 -SimpleUI
+    The owner-friendly run used by RUN-OPHIRA.bat: guided, plain-language,
+    ends with the DONE screen for sending the zip back to the IR team.
+
+.EXAMPLE
+    .\Ophira.ps1 -NoMenu -Preset Quick -LogWindow 30d
+    Fast collection but analyze the last 30 days of logs instead of the
+    default 7 (-LogStart/-LogEnd give an exact window instead).
+
+.EXAMPLE
+    .\Ophira.ps1 -NoMenu -Preset Standard -SharePath \\IR-SRV\collections$
+    Collect and upload the finished zip straight to the IR share. Re-runs on
+    the same host auto-diff against the previous case and report only NEW
+    findings; -DeltaPath pins a specific older package instead.
+
+.EXAMPLE
+    .\Ophira.ps1 -Mode Deploy -ComputerName SRV01,SRV02 -Preset Quick -Credential (Get-Credential)
+    Push-and-run on remote hosts over WinRM, 8 hosts in parallel. Use
+    -TargetsFile hosts.txt for lists and -MaxThreads to tune parallelism.
+
+.EXAMPLE
+    .\Ophira.ps1 -Mode Deploy -TargetsFile hosts.txt -PushTools
+    Fleet run that also ships tools\endpoint\ (hayabusa, parsers) to each
+    host first so full parsing happens on the endpoint, then cleans up.
+
+.EXAMPLE
+    .\Ophira.ps1 -Mode Analyze -AnalyzePath .\collections
+    Merge every OPHIRA_*.zip in the folder into fleet_report.html: per-host
+    verdicts, worst-first list, fleet ATT&CK roll-up, baselining proposals.
+
+.EXAMPLE
+    .\Ophira.ps1 -Mode Setup -SetupTools hayabusa,winpmem
+    Download companion tools into tools\ (ENTER for all, or a comma list).
+    -Mode Links just prints the official download pages.
+
+.EXAMPLE
+    .\Ophira.ps1 -Mode Parse -ParsePath .\OPHIRA_HOST_20260926_120000.zip
+    Finish a case on YOUR PC: re-run every raw-driven parser (Amcache,
+    LECmd, SQLECmd, chainsaw, hayabusa...) over the case's raw\ evidence and
+    regenerate supertimeline, verdict, SIEM export and report.html.
+
+.EXAMPLE
+    .\Ophira.ps1 -Mode Focus -ParsePath .\OPHIRA_HOST_20260926_120000.zip -ProcessName evil.exe
+    Build the activity-chain dossier of one entity (name, PID, path, hash,
+    IP, ip:port or port) into focus\focus_report.html. -Mode Process is an
+    alias. -Mode Timeline -TimelineStart/-TimelineEnd cuts the case's master
+    timeline to a UTC window the same way.
+
+.EXAMPLE
+    .\Ophira.ps1 -Mode Parse -ParsePath .\OPHIRA_HOST_20260926_120000.zip -ExitVerdict
+    Automation: the exit code carries the verdict (2 SUSPICIOUS, 3 LIKELY
+    COMPROMISED, 4 COMPROMISED, 0 clean/none) so a scheduler can sort
+    hundreds of finished cases without reading reports.
+
+.EXAMPLE
+    .\Ophira.ps1 -Mode Tune
+    False-positive feedback: shows your top-hit Sigma rules from the latest
+    case; pick offenders to exclude or demote (travels with -PushTools).
+    Related: -Mode UpdateRules refreshes the rule pack, -Mode Watch is a
+    live read-only diff while a sample detonates, -Mode Canary self-tests
+    the whole detection pipeline on this PC.
+
+.EXAMPLE
+    .\Ophira.ps1 -Mode Help
+    Print this help text (same as pressing H in the task menu). No
+    elevation, no configuration, no side effects.
+
+.NOTES
+    Read-only by design. PowerShell 5.0 or newer; older hosts get a clear
+    fail-fast message (collect them remotely with -Mode Deploy instead).
+#>
+
 [CmdletBinding()]
 param(
-    [ValidateSet('Collect', 'Deploy', 'Analyze', 'Setup', 'Links', 'UpdateRules', 'Tune', 'Parse', 'Process', 'Timeline', 'Canary', 'Focus', 'Watch', 'SeedIocs')]
+    [ValidateSet('Collect', 'Deploy', 'Analyze', 'Setup', 'Links', 'UpdateRules', 'Tune', 'Parse', 'Process', 'Timeline', 'Canary', 'Focus', 'Watch', 'SeedIocs', 'Help')]
     [string]$Mode = 'Collect',
     [string]$CaseID = "",
     [string]$Analyst = "",
@@ -47,7 +309,7 @@ param(
     [switch]$ExitVerdict
 )
 
-$ScriptVersion = "2.68"
+$ScriptVersion = "2.69"
 $ErrorActionPreference = 'Continue'
 $ProgressPreference = 'SilentlyContinue'
 
@@ -65,6 +327,16 @@ if ($PSVersionTable.PSVersion.Major -lt 5) {
     exit 1
 }
 try { [Net.ServicePointManager]::SecurityProtocol = [Net.ServicePointManager]::SecurityProtocol -bor [Net.SecurityProtocolType]::Tls12 } catch { }
+
+# v2.69 (F2): help has ONE source of truth - the comment-based help block above the param
+# block, rendered by Get-Help against this very file (no duplicate text to keep in sync).
+# -Mode Help prints it and exits BEFORE config load, elevation and any case context;
+# the menu's [H] entry calls the same renderer and returns to the menu.
+function Show-ScriptHelp {
+    try { Get-Help "$PSCommandPath" -Full }
+    catch { Write-Host "  Ophira: could not render help ($($_.Exception.Message))" -ForegroundColor Yellow }
+}
+if ($Mode -eq 'Help') { Show-ScriptHelp; exit 0 }
 
 function Test-IsAdmin {
     $id = [Security.Principal.WindowsIdentity]::GetCurrent()
@@ -172,6 +444,43 @@ function Out-Flash {
     param([string]$Text, [string]$Color = 'White')
     if (-not $script:SimpleUI -and $script:Verbosity -ge 1) { Write-Host $Text -ForegroundColor $Color }
     $script:FlashLines.Add(($Text -replace "\x1b\[[0-9;]*m", ''))
+}
+
+# v2.69 (F1): RUN detail data - Save-Rows appends every artifact save (relative path + row
+# count); the module dispatchers reset the list per module and Write-RunDetail renders it.
+# Console-only: the case log keeps its own Save-Rows records, this list feeds nothing else.
+$script:SavedArtifacts = New-Object System.Collections.Generic.List[object]
+
+# v2.69 (F1): one RUN detail line per finished module - id + name, key artifact + row count,
+# elapsed. Prints on BOTH screens (the SimpleUI front-screen and the standard menu run) at
+# Normal and Verbose: unlike Write-CaseLog/Out-Flash these lines ARE the run feedback itself,
+# so they are NOT SimpleUI-gated (the front screen shows nothing else per-module) - but
+# -LogLevel Quiet still silences them like the rest of the console noise. Controller-side
+# only (the inline dispatcher and the pooled phase loops call it; workers report artifacts
+# through the Saved result field), so it is deliberately NOT in $script:SharedFunctions.
+function Write-RunDetail {
+    param($Id, [string]$Name, [double]$Seconds, [string]$ErrMsg = '', $Saved = $null)
+    if ($script:Verbosity -lt 1) { return }
+    $disp = "$Name"
+    if ($disp.Length -gt 38) { $disp = $disp.Substring(0, 35) + '...' }
+    $dots = '.' * [math]::Max(1, 42 - $disp.Length)
+    $art = 'no csv artifacts'
+    if ("$ErrMsg") {
+        $emsg = "$ErrMsg"
+        if ($emsg.Length -gt 70) { $emsg = $emsg.Substring(0, 67) + '...' }
+        $art = "ERROR: $emsg"
+    } elseif ($Saved -and @($Saved).Count -gt 0) {
+        $rows = 0; $failed = 0
+        foreach ($s in @($Saved)) { if ((ConvertTo-SafeInt $s.Rows) -lt 0) { $failed++ } else { $rows += (ConvertTo-SafeInt $s.Rows) } }
+        if (@($Saved).Count -eq 1) {
+            $one = @($Saved)[0]
+            $art = if ((ConvertTo-SafeInt $one.Rows) -lt 0) { "$($one.Path) FAILED" } else { "$($one.Path) $($one.Rows) rows" }
+        } else {
+            $art = ("{0} csv, {1} rows" -f @($Saved).Count, $rows)
+            if ($failed -gt 0) { $art += ", $failed FAILED" }
+        }
+    }
+    Write-Host ("  [{0}] {1} {2} {3} {4:N1}s" -f $Id, $disp, $dots, $art, $Seconds) -ForegroundColor DarkGray
 }
 
 # v2.42 CSV sortment: one name->category map decides where every known case CSV lives
@@ -307,13 +616,18 @@ function Save-Rows {
         if ($Rows -and @($Rows).Count -gt 0) {
             @($Rows) | Export-Csv -LiteralPath $path -NoTypeInformation -Encoding UTF8
             Write-CaseLog ("    saved {0} rows -> csv\{1}" -f @($Rows).Count, $rel) 'DarkGray'
+            # v2.69 (F1): feed the RUN detail line (path + real row count; console-only, log keeps its own record)
+            # ($null -ne, NOT truthiness - an EMPTY List is falsy in PS and would skip the first save forever)
+            if ($null -ne $script:SavedArtifacts) { $script:SavedArtifacts.Add([pscustomobject]@{ Path = "csv\$rel"; Rows = @($Rows).Count }) }
         } else {
             "# no entries" | Set-Content -LiteralPath $path -Encoding UTF8
             Write-CaseLog "    csv\$rel (empty)" 'DarkGray'
+            if ($null -ne $script:SavedArtifacts) { $script:SavedArtifacts.Add([pscustomobject]@{ Path = "csv\$rel"; Rows = 0 }) }
         }
     } catch {
         "FAILED: $($_.Exception.Message)" | Set-Content -LiteralPath $path -Encoding UTF8
         Write-CaseLog "    csv\$rel FAILED" 'DarkYellow'
+        if ($null -ne $script:SavedArtifacts) { $script:SavedArtifacts.Add([pscustomobject]@{ Path = "csv\$rel"; Rows = -1 }) }
     }
 }
 
@@ -1998,7 +2312,11 @@ if (-not $err) {
     } catch { $err = $_.Exception.Message }
 }
 $sw.Stop()
-return [pscustomobject]@{ Id = $ModuleDef.Id; Name = $ModuleDef.Name; Seconds = [math]::Round($sw.Elapsed.TotalSeconds, 1); Error = $err }
+# v2.69 (F1): the record carries what the module saved (path + rows) so the pooled dispatcher
+# can render the RUN detail line with real numbers; guarded for poisoned preambles.
+$saved = @()
+if ($null -ne $script:SavedArtifacts) { $saved = $script:SavedArtifacts.ToArray() }
+return [pscustomobject]@{ Id = $ModuleDef.Id; Name = $ModuleDef.Name; Seconds = [math]::Round($sw.Elapsed.TotalSeconds, 1); Error = $err; Saved = $saved }
 '@
 
 function New-WorkerPreamble {
@@ -2042,6 +2360,9 @@ function New-WorkerPreamble {
     $roleLit = "'" + ("$script:HostRole" -replace "'", "''") + "'"
     [void]$sb.AppendLine("`$script:HostRole = $roleLit")
     [void]$sb.AppendLine('$script:FlashLines = New-Object System.Collections.Generic.List[string]')
+    # v2.69 (F1): fresh artifact-save list per worker - Save-Rows records into it, the result
+    # record hands it back to the pooled dispatcher for the RUN detail line
+    [void]$sb.AppendLine('$script:SavedArtifacts = New-Object System.Collections.Generic.List[object]')
     $wl = $WorkerLog -replace "'", "''"
     $override = "function Write-CaseLog { param([string]`$Message,[string]`$Color = 'Gray',[switch]`$NoConsole) Add-Content -LiteralPath '$wl' -Value (`"[{0}] {1}`" -f (Get-Date -Format 'HH:mm:ss'), `$Message) -Encoding UTF8 } "
     [void]$sb.AppendLine($override)
@@ -4753,15 +5074,22 @@ function Invoke-SelectedModules {
         if (-not $script:SimpleUI -and $script:Verbosity -ge 1) { Write-Host "" }
         Write-CaseLog ("[{0}/{1}] Module {2}: {3}" -f $script:Progress, $total, $m.Id, $m.Name) 'Cyan'
         $sw = [System.Diagnostics.Stopwatch]::StartNew()
+        # v2.69 (F1): capture this module's artifact saves for the RUN detail line (printed
+        # AFTER the run with real numbers; the [x/y] line above stays as the instant feedback)
+        $script:SavedArtifacts.Clear()
         try {
             & $m.Run
             $sw.Stop()
             $script:ModuleTimings += [pscustomobject]@{ Id = $m.Id; Seconds = [math]::Round($sw.Elapsed.TotalSeconds, 1); Mode = 'inline' }
             Write-CaseLog ("    done in {0:N1}s" -f $sw.Elapsed.TotalSeconds) 'DarkGreen'
+            Write-RunDetail -Id $m.Id -Name $m.Name -Seconds $sw.Elapsed.TotalSeconds -Saved $script:SavedArtifacts.ToArray()
         } catch {
             $sw.Stop()
             $script:ModuleTimings += [pscustomobject]@{ Id = $m.Id; Seconds = [math]::Round($sw.Elapsed.TotalSeconds, 1); Mode = 'inline' }
             Write-CaseLog ("    ERROR: {0}" -f $_.Exception.Message) 'Red'
+            # v2.69 (F1): failed modules still get their detail line (ERROR + elapsed; the
+            # Saved argument is accepted for signature symmetry but the ERROR text wins)
+            Write-RunDetail -Id $m.Id -Name $m.Name -Seconds $sw.Elapsed.TotalSeconds -ErrMsg $_.Exception.Message -Saved $script:SavedArtifacts.ToArray()
         }
     }
     if ($Sequential -or $script:SimpleUI) {
@@ -4809,13 +5137,20 @@ function Invoke-SelectedModules {
         Write-Host "`n--- Phase B: collection (parallel): $(($phases.B.Id) -join ' ') ---" -ForegroundColor Cyan
         $script:Progress += 0
         $r = Invoke-ModuleBatch -Batch $phases.B -Workers 4
-        foreach ($x in $r) { $script:ModuleTimings += [pscustomobject]@{ Id = $x.Id; Seconds = $x.Seconds; Mode = 'parallel' } }
+        # v2.69 (F1): per-module RUN detail after the batch - records carry Saved from the worker
+        foreach ($x in @($r | Sort-Object { [version]$_.Id })) {
+            $script:ModuleTimings += [pscustomobject]@{ Id = $x.Id; Seconds = $x.Seconds; Mode = 'parallel' }
+            Write-RunDetail -Id $x.Id -Name $x.Name -Seconds $x.Seconds -ErrMsg "$($x.Error)" -Saved $x.Saved
+        }
         $script:Progress += $phases.B.Count
     }
     if ($phases.C.Count -gt 0) {
         Write-Host "`n--- Phase C: heavy analytics (parallel): $(($phases.C.Id) -join ' ') ---" -ForegroundColor Cyan
         $r = Invoke-ModuleBatch -Batch $phases.C -Workers 4
-        foreach ($x in $r) { $script:ModuleTimings += [pscustomobject]@{ Id = $x.Id; Seconds = $x.Seconds; Mode = 'parallel' } }
+        foreach ($x in @($r | Sort-Object { [version]$_.Id })) {
+            $script:ModuleTimings += [pscustomobject]@{ Id = $x.Id; Seconds = $x.Seconds; Mode = 'parallel' }
+            Write-RunDetail -Id $x.Id -Name $x.Name -Seconds $x.Seconds -ErrMsg "$($x.Error)" -Saved $x.Saved
+        }
         $script:Progress += $phases.C.Count
     }
     if ($phases.CI.Count -gt 0) {
@@ -9055,6 +9390,8 @@ function Show-TaskMenu {
         Write-Host "   [T]  Timeline pivot (filter the master timeline to a window)" -ForegroundColor Yellow
         Write-Host "   [W]  Watch this PC live (rolling diff while a sample detonates)" -ForegroundColor Yellow
         Write-Host "   [C]  Detection canary (self-test the pipeline on this PC)" -ForegroundColor Yellow
+        # v2.69 (F2): the flags-only help gap - one key renders the full help (modes, examples)
+        Write-Host "   [H]  Help (what the modes and flags do, with examples)" -ForegroundColor Yellow
         Write-Host ""
         Write-Host "   [Q]  Quit" -ForegroundColor DarkGray
         Write-Host ""
@@ -9074,6 +9411,7 @@ function Show-TaskMenu {
             '^(?i)t$' { return 'Timeline' }
             '^(?i)w$' { return 'Watch' }
             '^(?i)c$' { return 'Canary' }
+            '^(?i)h$' { return 'Help' }
             '^(?i)q$' { return $null }
             default { }
         }
@@ -11452,6 +11790,7 @@ if ($bareLaunch -and [Environment]::UserInteractive) {
                 'Watch' { Invoke-WatchMode | Out-Null }
                 'Canary' { Invoke-CanaryMode -KeepLogging:$KeepLogging -Target $CanaryTarget -TargetUser $CanaryTargetUser | Out-Null }
                 'Links' { Show-ToolLinks }
+                'Help' { Show-ScriptHelp }
             }
             Write-Host ""
             Write-Host "Press any key to return to the menu..." -ForegroundColor DarkGray
