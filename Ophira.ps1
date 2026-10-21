@@ -1,5 +1,5 @@
 ﻿<#
-Ophira v2.73  -  Windows Incident Response Triage Toolkit
+Ophira v2.74  -  Windows Incident Response Triage Toolkit
 READ-ONLY by design: never modifies the system, only reads and copies data
 into its own output folder. Intended to be handed to a system owner or run
 by a responder during early triage / threat hunting.
@@ -323,7 +323,7 @@ param(
     [switch]$ExitVerdict
 )
 
-$ScriptVersion = "2.73"
+$ScriptVersion = "2.74"
 $ErrorActionPreference = 'Continue'
 $ProgressPreference = 'SilentlyContinue'
 
@@ -537,6 +537,12 @@ $script:CsvCatMap = @{
     'srum_usage' = 'artifacts'; 'execution_timeline' = 'artifacts'; 'mft_recent' = 'artifacts'
     'ads_findings' = 'artifacts'
     'amcache' = 'artifacts'; 'lnk_parsed' = 'artifacts'; 'jumplist_parsed' = 'artifacts'
+    # v2.74: the EZ native tools write --csvf output straight into the csv ROOT, so the split
+    # families (amcache_*, jumplist_parsed*) and the USN burst export landed loose - the v2.42
+    # exact-name map never caught them and the analyst opened csv\ to a wall. Wildcard keys:
+    # Get-CaseCsvPath tries the exact key first, then -like over the sorted keys.
+    'amcache_*' = 'artifacts'; 'jumplist_parsed*' = 'artifacts'; 'prefetch_parsed*' = 'artifacts'
+    'usn_write_bursts' = 'artifacts'
     'recyclebin' = 'artifacts'; 'recentfilecache' = 'artifacts'; 'shellbags' = 'artifacts'
     'registry_recmd' = 'artifacts'; 'browser_files' = 'artifacts'; 'browser_history' = 'artifacts'
     'browser_downloads' = 'artifacts'; 'browser_searches' = 'artifacts'
@@ -586,8 +592,19 @@ function Get-CaseCsvPath {
     # Relative path of a case CSV under CsvDir: mapped category subfolder or flat fallback.
     param([string]$Name)
     if ($Name -notmatch '\.csv$') { $Name = "$Name.csv" }
+    $key = ($Name -replace '\.csv$', '').ToLower()
     $cat = $null
-    if ($script:CsvCatMap) { $cat = $script:CsvCatMap[($Name -replace '\.csv$', '').ToLower()] }
+    if ($script:CsvCatMap) {
+        $cat = $script:CsvCatMap[$key]
+        if (-not $cat) {
+            # v2.74: wildcard map entries (amcache_*, jumplist_parsed*, prefetch_parsed*) - the
+            # EZ parsers' --csvf split families. Exact keys above always outrank wildcards and
+            # the sorted scan keeps the first match deterministic.
+            foreach ($k in ($script:CsvCatMap.Keys | Sort-Object)) {
+                if ($k -match '[*?\[]' -and $key -like $k) { $cat = $script:CsvCatMap[$k]; break }
+            }
+        }
+    }
     if ($cat) { return "$cat\$Name" }
     return $Name
 }
@@ -3754,7 +3771,7 @@ $script:Modules = @(
                 } else { Write-CaseLog "    ADS: no non-Zone.Identifier streams on checked executables" 'Gray' }
                 Save-Rows -Name 'usn_write_bursts' -Rows $bursts
                 if (@($bursts).Count -gt 0) {
-                    Write-CaseLog "    USN: $(@($bursts).Count) mass-modification window(s) >=1000 writes/min - POSSIBLE RANSOMWARE -> csv\usn_write_bursts.csv" 'Red'
+                    Write-CaseLog "    USN: $(@($bursts).Count) mass-modification window(s) >=1000 writes/min - POSSIBLE RANSOMWARE -> csv\artifacts\usn_write_bursts.csv" 'Red'
                     foreach ($b in @($bursts | Select-Object -First 5)) { Write-CaseLog "      $($b.WindowStart) [$($b.Drive)]: $($b.WriteEvents) writes over $($b.DistinctFiles) files$(if ("$($b.RansomExt)") { " RANSOM-EXT: $($b.RansomExt)" })" 'Red' }
                 } else { Write-CaseLog "    USN journal analyzed - no mass-modification windows" 'Gray' }
             } finally {
@@ -4141,14 +4158,16 @@ public class OphiraDump {
                     # lock (v2.52 hive-stat class of flake), so each single-try op below gets a small bounded
                     # retry (-ErrorAction Stop makes lock errors catchable under both EAP=Stop and Continue)
                     # before the catch logs an honest failure.
-                    $parts = @(Get-ChildItem -Path $CsvDir -Filter 'amcache_*.csv' -ErrorAction SilentlyContinue | Where-Object {
+                    # v2.74: scan the mapped folder too - the sortment sweep folders earlier runs'
+                    # split CSVs, and a re-parse must still find them (flat-first contract intact)
+                    $parts = @(Get-ChildItem -Path @($CsvDir, (Join-Path $CsvDir 'artifacts')) -Filter 'amcache_*.csv' -ErrorAction SilentlyContinue | Where-Object {
                         $hdr = $null
                         for ($i = 0; $i -lt 3; $i++) {
                             try { $hdr = Get-Content -LiteralPath $_.FullName -First 1 -ErrorAction Stop; break } catch { Start-Sleep -Milliseconds 250 }
                         }
                         "$hdr" -match '^"?ApplicationName'
                     })
-                    if ($parts.Count -eq 0) { $parts = @(Get-ChildItem -Path $CsvDir -Filter 'amcache_DriveBinaries.csv' -File -ErrorAction SilentlyContinue) }
+                    if ($parts.Count -eq 0) { $parts = @(Get-ChildItem -Path @($CsvDir, (Join-Path $CsvDir 'artifacts')) -Filter 'amcache_DriveBinaries.csv' -File -ErrorAction SilentlyContinue) }
                     if ($parts.Count -gt 0) {
                         try {
                             $rows = @()
@@ -6263,7 +6282,7 @@ tr.techrow{cursor:pointer}
         foreach ($u in ($usnBursts | Select-Object -First 15)) {
             $null = $sb.AppendLine("<tr><td class='crit'><b>$(ConvertTo-HtmlEsc $u.WindowStart)</b></td><td>$($u.WriteEvents)</td><td>$($u.DistinctFiles)</td></tr>")
         }
-        $null = $sb.AppendLine("</table><div class='meta'>Legitimate mass changes (system updates, builds, AV signature storms) also trigger this. Cross-check the window against process/Sigma findings. Source: csv\usn_write_bursts.csv</div>")
+        $null = $sb.AppendLine("</table><div class='meta'>Legitimate mass changes (system updates, builds, AV signature storms) also trigger this. Cross-check the window against process/Sigma findings. Source: csv\artifacts\usn_write_bursts.csv</div>")
     }
     if ($pfParsed.Count -gt 0) {
         $rcCol = @($pfParsed[0].PSObject.Properties.Name | Where-Object { $_ -match 'runcount|^run' } | Select-Object -First 1)[0]
@@ -9349,6 +9368,26 @@ function Invoke-RegenerateOutputs {
             Write-CaseLog "    removed v2.53 shellbag orphan: $($orphan.Name)" 'DarkYellow'
         }
     }
+    # v2.74 sortment completion sweep: the EZ native tools write --csv $CsvDir --csvf <name>
+    # straight into the csv ROOT (PECmd/AmcacheParser/JLECmd split families, usn_write_bursts
+    # from pre-map cases), so the analyst opened csv\ to a wall the v2.42 sortment never
+    # caught. One pass BEFORE anything reads the csvs: every ROOT file whose name resolves
+    # through the map moves into its category folder. Root-only enumeration means already-
+    # foldered files are never touched; a destination that already exists is left alone (the
+    # flat-first read contract keeps it authoritative); a locked file logs and skips - regen
+    # never crashes on tidying. Idempotent: the second run finds nothing mapped left in root.
+    foreach ($loose in @(Get-ChildItem -LiteralPath $script:CsvDir -File -Filter '*.csv' -ErrorAction SilentlyContinue)) {
+        try {
+            $rel = Get-CaseCsvPath $loose.BaseName
+            if ($rel -notmatch '\\') { continue }
+            $dest = Join-Path $script:CsvDir $rel
+            if (Test-Path -LiteralPath $dest) { continue }
+            $destDir = Split-Path -Parent $dest
+            if (-not (Test-Path -LiteralPath $destDir)) { New-Item -ItemType Directory -Path $destDir -Force | Out-Null }
+            Move-Item -LiteralPath $loose.FullName -Destination $dest -ErrorAction Stop
+            Write-CaseLog "    sortment: moved $($loose.Name) -> csv\$($rel.Substring(0, $rel.IndexOf('\')))\" 'DarkGray'
+        } catch { Write-CaseLog "    sortment: could not move $($loose.Name) ($($_.Exception.Message)) - left flat in csv root" 'DarkYellow' }
+    }
     try { New-SuperTimeline } catch { Write-CaseLog "    supertimeline failed: $($_.Exception.Message)" 'DarkYellow' }
     # v2.57: merge an analyst-dropped plaso deep-timeline (plaso.csv in the case root)
     try {
@@ -9465,6 +9504,54 @@ function Invoke-RegenerateOutputs {
     try { New-SiemExport } catch { Write-CaseLog "    siem export failed: $($_.Exception.Message)" 'DarkYellow' }
     try { New-AttackLayer } catch { Write-CaseLog "    ATT&CK layer failed: $($_.Exception.Message)" 'DarkYellow' }
     try { New-HtmlReport | Out-Null } catch { Write-CaseLog "    report generation failed: $($_.Exception.Message)" 'DarkYellow' }
+    # v2.74 (Task 15): analyst-first entry point - one plain-language file at the case root
+    # saying what the verdict is, what the folders mean and which files to open first.
+    # Rebuilt on every regen (idempotent overwrite); the top-file list is existence-checked
+    # and never invents entries. Written LAST so everything it names already exists - or
+    # is honestly absent from the list.
+    try {
+        $shL = New-Object System.Collections.Generic.List[string]
+        $shL.Add("OPHIRA CASE - $Computer$(if ("$script:CurrentCaseID") { "  (case $script:CurrentCaseID)" })")
+        $shL.Add("")
+        if ($script:Verdict) {
+            $vS = $script:Verdict
+            $shL.Add("ASSESSMENT: $($vS.Level) (evidence coverage $($vS.ConfidencePercent)% of expected sources - $($vS.CoverageSourcesCollected)/$($vS.CoverageSourcesTotal) sources, not a probability of compromise). $($vS.OwnerLine)")
+        } else {
+            $shL.Add("ASSESSMENT: no verdict could be computed - review the sections in report.html directly.")
+        }
+        $shL.Add("")
+        $shL.Add("START HERE: open report.html (double-click it) - the full assessment in plain language.")
+        $shL.Add("")
+        $shL.Add("WHERE THINGS LIVE")
+        foreach ($fm in @(
+                @('csv\volatile\', 'what was running when we arrived'),
+                @('csv\persistence\', 'what survives reboots (services, scheduled tasks, run keys)'),
+                @('csv\network\', 'the network as this machine saw it'),
+                @('csv\logs\', 'event-log evidence (sign-ins, PowerShell, Sysmon, detections)'),
+                @('csv\artifacts\', 'execution forensics (prefetch, amcache, recent files)'),
+                @('csv\defender\', 'antivirus status, preferences and detections'),
+                @('csv\memory\', 'RAM analysis findings (when memory was captured)'),
+                @('csv\context\', 'host context (USB history, domain, certificates)'),
+                @('csv\derived\', "Ophira's cross-references (master timeline, leads, entities)"),
+                @('focus\', 'deep-dive dossier on the flagged entity'),
+                @('raw\', 'the untouched original evidence'))) {
+            $shL.Add("  $($fm[0]) = $($fm[1])")
+        }
+        $shL.Add("")
+        $shL.Add("TOP FILES TO OPEN (in this order)")
+        $iS = 0
+        foreach ($t in @(
+                @('report.html', (Join-Path $CaseDir 'report.html'), 'the full assessment - start here'),
+                @('csv\derived\supertimeline.csv', (Join-Path $script:CsvDir 'derived\supertimeline.csv'), 'everything in time order - open in Excel/Timeline Explorer'),
+                @('focus\focus_report.html', (Join-Path $CaseDir 'focus\focus_report.html'), 'deep dive on the flagged entity'),
+                @('case_draft.txt', (Join-Path $CaseDir 'case_draft.txt'), 'plain-language first draft for your report'),
+                @('csv\derived\leads.csv', (Join-Path $script:CsvDir 'derived\leads.csv'), 'ranked triage leads'))) {
+            if (Test-Path -LiteralPath $t[1]) { $iS++; $shL.Add("  $iS. $($t[0]) - $($t[2])") }
+        }
+        $shL.Add("")
+        $shL.Add("Everything else: collection.log (what ran) and csv\parse_needed.csv (what still needs the endpoint). Generated by Ophira v$ScriptVersion.")
+        $shL.ToArray() | Set-Content -LiteralPath (Join-Path $CaseDir 'ANALYST-START-HERE.txt') -Encoding UTF8
+    } catch { Write-CaseLog "    analyst start-here failed: $($_.Exception.Message)" 'DarkYellow' }
 }
 
 function New-Package {
@@ -9989,7 +10076,9 @@ function Invoke-ParseMode {
         & $runTool (& $findTool 'LECmd*.exe') @('-d', $recDst, '--csv', (Split-Path $lnkOut -Parent), '--csvf', 'lnk_parsed.csv') 'LECmd: recent LNK files'
     }
     $jlDst = Join-Path $script:RawDir 'jumplists'
-    if ((Test-Path $jlDst) -and -not ((Test-CaseCsv 'jumplist_parsed') -or (Test-Path (Join-Path $script:CsvDir 'jumplist_parsed*.csv')))) {
+    # v2.74: the wildcard Test-CaseCsv name covers the flat-root splits AND the mapped folder
+    # (post-sortment sweep) - the old root-only glob re-ran JLECmd after the sweep had foldered them
+    if ((Test-Path $jlDst) -and -not (Test-CaseCsv 'jumplist_parsed*')) {
         $jlOut = Get-CaseCsvFullPath 'jumplist_parsed'
         & $runTool (& $findTool 'JLECmd*.exe') @('-d', $jlDst, '--csv', (Split-Path $jlOut -Parent), '--csvf', 'jumplist_parsed.csv') 'JLECmd: jump lists'
     }
@@ -10114,6 +10203,11 @@ function Invoke-ParseMode {
     if (-not (Test-Path -LiteralPath $plasoCsvP)) {
         Write-Host "deep-timeline (optional): log2timeline.py <case>\raw  ->  psort l2tcsv as plaso.csv in the case root  ->  re-run -Mode Parse to merge it into supertimeline.csv" -ForegroundColor DarkCyan
     }
+
+    # v2.74: [O] opens the freshly rebuilt report - offered only when a human picked this
+    # flow (menu-driven Parse prompts for the path; CLI -ParsePath runs are unattended).
+    # Before the re-pack so the temp copy of a zip-parsed case still exists to open.
+    if (-not $PSBoundParameters.ContainsKey('Path') -and -not $NoMenu) { & $script:OfferOpenReport -Dir $caseDirP -Prompt:$true }
 
     # 4) re-pack if the input was a zip
     if ($tmp) {
@@ -12160,6 +12254,28 @@ function Invoke-AnalyzeWizard {
     }
 }
 
+# v2.74 (Task 15): [O] on the done screens - one keypress opens this case's report.html.
+# Shared by the Parse done screen and the collect SimpleUI/standard done screens. Prompted
+# only when a human is at the console (-NoMenu/unattended flows skip it); a missing report
+# answers honestly instead of opening nothing. Uses the existing ReadKey try/catch pattern,
+# so a redirected-input host degrades to a no-op.
+$script:OfferOpenReport = {
+    param([string]$Dir, [bool]$Prompt)
+    if (-not $Prompt) { return }
+    $rep = Join-Path $Dir 'report.html'
+    Write-Host ""
+    Write-Host "  [O] Open report.html  (any other key = continue)" -ForegroundColor Cyan
+    $k = $null
+    try { $k = $Host.UI.RawUI.ReadKey('NoEcho,IncludeKeyDown').Character } catch { return }
+    if ("$k" -match '^[Oo]$') {
+        if (Test-Path -LiteralPath $rep) {
+            try { Invoke-Item -LiteralPath $rep } catch { Write-Host "  could not open report.html: $($_.Exception.Message)" -ForegroundColor Yellow }
+        } else {
+            Write-Host "  no report.html in $Dir - run -Mode Parse to build it" -ForegroundColor Yellow
+        }
+    }
+}
+
 $bareLaunch = ($Mode -eq 'Collect' -and -not $PSBoundParameters.ContainsKey('Mode') -and -not $NoMenu -and -not $script:SimpleUI)
 if ($bareLaunch -and [Environment]::UserInteractive) {
     $front = Show-RoleGate
@@ -12357,7 +12473,11 @@ if ($script:SimpleUI) {
     if ($script:FinalZipPath -and (Test-Path -LiteralPath $script:FinalZipPath)) {
         try { Start-Process explorer.exe -ArgumentList "/select,`"$($script:FinalZipPath)`"" } catch { }
     }
+    # v2.74: [O] opens the case report - the DONE screen now waits for one keypress
+    & $script:OfferOpenReport -Dir $CaseDir -Prompt:$true
 } elseif (-not $NoMenu) {
+    # v2.74: [O] opens the case report before the close key
+    & $script:OfferOpenReport -Dir $CaseDir -Prompt:$true
     Write-Host ""
     Write-Host "Press any key to close..." -ForegroundColor DarkGray
     try { $null = $Host.UI.RawUI.ReadKey('NoEcho,IncludeKeyDown') } catch { }

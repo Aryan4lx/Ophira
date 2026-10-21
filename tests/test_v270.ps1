@@ -978,6 +978,141 @@ Check "t13 wizard: -After on the CLI skips every prompt, Before stays blank" ($r
 $feI = Invoke-FeScenario -Tag 'inv' -Dirs @('OPHIRA_HOST_20261019_090000') -Answers @('ind', 'garbage1', 'garbage2', 'garbage3', '2026-10-05')
 Check "t13 wizard: From invalid twice -> dropped with warning, To valid on retry" ("$($feI.Cores[0].After)" -eq '' -and "$($feI.Cores[0].Before)" -eq '2026-10-05' -and $feI.Prompts.Count -eq 5)
 
+# ---- v2.74 tasks 14+15: sortment completion sweep + ANALYST-START-HERE.txt + [O] offer ----
+# A) map + reader contract: real CsvCatMap literal + real Get-CaseCsvPath extracted
+Check "t14 static: wildcard map entries present" (($src -match [regex]::Escape("'amcache_*' = 'artifacts'")) -and ($src -match [regex]::Escape("'jumplist_parsed*' = 'artifacts'")) -and ($src -match [regex]::Escape("'prefetch_parsed*' = 'artifacts'")))
+Check "t14 static: usn_write_bursts mapped (was flat since v2.42)" ($src -match [regex]::Escape("'usn_write_bursts' = 'artifacts'"))
+Check "t14 static: Get-CaseCsvPath wildcard scan present" ($src -match [regex]::Escape('foreach ($k in ($script:CsvCatMap.Keys | Sort-Object))'))
+$mRe74 = [regex]::Match($src, "(?s)function Invoke-RegenerateOutputs \{.*?\r?\n\}")
+if (-not $mRe74.Success) { throw 'extract failed: Invoke-RegenerateOutputs (v2.74)' }
+Check "t14 static: sweep runs before New-SuperTimeline in regen" ($mRe74.Value.IndexOf('sortment completion sweep') -lt $mRe74.Value.IndexOf('try { New-SuperTimeline }'))
+$mMap74 = [regex]::Match($src, "(?s)\`$script:CsvCatMap = @\{.*?\r?\n\}")
+if (-not $mMap74.Success) { throw 'extract failed: CsvCatMap' }
+Invoke-Expression $mMap74.Value
+$mG74 = [regex]::Match($src, "(?s)function Get-CaseCsvPath \{.*?\r?\n\}")
+if (-not $mG74.Success) { throw 'extract failed: Get-CaseCsvPath' }
+Invoke-Expression $mG74.Value
+Check "t14 reader: amcache_* wildcard -> artifacts" ((Get-CaseCsvPath 'amcache_DevicePnp') -eq 'artifacts\amcache_DevicePnp.csv')
+Check "t14 reader: jumplist_parsed* wildcard -> artifacts" ((Get-CaseCsvPath 'jumplist_parsed_AutomaticDestinations') -eq 'artifacts\jumplist_parsed_AutomaticDestinations.csv')
+Check "t14 reader: prefetch_parsed* wildcard (Timeline projection) -> artifacts" ((Get-CaseCsvPath 'prefetch_parsed_Timeline') -eq 'artifacts\prefetch_parsed_Timeline.csv')
+Check "t14 reader: exact key still outranks wildcard (amcache)" ((Get-CaseCsvPath 'amcache') -eq 'artifacts\amcache.csv')
+Check "t14 reader: other categories untouched" ((Get-CaseCsvPath 'processes') -eq 'volatile\processes.csv' -and (Get-CaseCsvPath 'supertimeline') -eq 'derived\supertimeline.csv')
+Check "t14 reader: unmapped names stay flat" ((Get-CaseCsvPath 'notes') -eq 'notes.csv')
+Check "t14 reader: wildcard match is case-insensitive" ((Get-CaseCsvPath 'AMCACHE_DevicePnp') -eq 'artifacts\AMCACHE_DevicePnp.csv')
+
+# B) regen behavioral: real sweep + START-HERE run over a fixture case. All derived-artifact
+# builders are stubbed; the try/catch around each regen step means a missing stub only logs.
+foreach ($nR74 in 'Get-CaseCsvFullPath', 'Test-CaseCsv', 'Import-CaseCsv', 'Invoke-RegenerateOutputs') {
+    $mR74 = [regex]::Match($src, "(?s)function $nR74 \{.*?\r?\n\}")
+    if (-not $mR74.Success) { throw "extract failed: $nR74" }
+    Invoke-Expression $mR74.Value
+}
+$script:regenLog = New-Object System.Collections.Generic.List[string]
+function Write-CaseLog { param([string]$Message, [string]$Color = 'Gray', [switch]$NoConsole) $script:regenLog.Add("$Message") }
+function Get-CompromiseVerdict { return [pscustomobject]@{ Level = 'SUSPICIOUS'; LevelRank = 2; ConfidencePercent = 60; OwnerLine = 'fixture owner line'; Signals = @(); Caveats = @(); Coverage = @(); CoverageSourcesCollected = 3; CoverageSourcesTotal = 4 } }
+function New-SuperTimeline { New-Item -ItemType Directory -Path (Join-Path $CsvDir 'derived') -Force | Out-Null; 'ts,source' | Set-Content -LiteralPath (Join-Path $CsvDir 'derived\supertimeline.csv') -Encoding UTF8 }
+function New-HtmlReport { '<html>fixture report</html>' | Set-Content -LiteralPath (Join-Path $CaseDir 'report.html') -Encoding UTF8; return 'x' }
+function Get-CaseNarrative { 'draft text' }
+function Get-TriageLeads { return @([pscustomobject]@{ Rank = 1; Title = 'lead one'; Class = 'hunt rule: x'; Why = 'why'; Ident = 'id'; Extra = 'ATT&CK T0000'; Anchor = 'hunt'; Rule = 'x' }) }
+$t74 = Join-Path $env:TEMP ("ophira_v270t74_" + (Get-Date -Format 'HHmmss'))
+$Csv74 = Join-Path $t74 'csv'
+New-Item -ItemType Directory -Path $Csv74, (Join-Path $Csv74 'artifacts'), (Join-Path $t74 'raw') -Force | Out-Null
+'ApplicationName,Path' | Set-Content -LiteralPath (Join-Path $Csv74 'prefetch_parsed.csv') -Encoding UTF8
+'x.exe,C:\x' | Add-Content -LiteralPath (Join-Path $Csv74 'prefetch_parsed.csv') -Encoding UTF8
+'hdr1,hdr2' | Set-Content -LiteralPath (Join-Path $Csv74 'amcache_DevicePnp.csv') -Encoding UTF8
+'v1,v2' | Add-Content -LiteralPath (Join-Path $Csv74 'amcache_DevicePnp.csv') -Encoding UTF8
+'hdr' | Set-Content -LiteralPath (Join-Path $Csv74 'jumplist_parsed_AutomaticDestinations.csv') -Encoding UTF8
+'hdr' | Set-Content -LiteralPath (Join-Path $Csv74 'prefetch_parsed_Timeline.csv') -Encoding UTF8
+'WindowStart,Drive' | Set-Content -LiteralPath (Join-Path $Csv74 'usn_write_bursts.csv') -Encoding UTF8
+'ApplicationName,Path' | Set-Content -LiteralPath (Join-Path $Csv74 'artifacts\amcache.csv') -Encoding UTF8
+'old.exe,C:\old' | Add-Content -LiteralPath (Join-Path $Csv74 'artifacts\amcache.csv') -Encoding UTF8
+'whatever' | Set-Content -LiteralPath (Join-Path $Csv74 'notes.csv') -Encoding UTF8
+'txt' | Set-Content -LiteralPath (Join-Path $t74 'readme.txt') -Encoding UTF8
+$CaseDir = $t74; $CsvDir = $Csv74
+Invoke-RegenerateOutputs -Case $null
+Check "t14 sweep: all five loose mapped files moved, one line each" ((@($script:regenLog | Where-Object { $_ -match '^    sortment: moved ' }).Count -eq 5) -and ($script:regenLog -contains '    sortment: moved amcache_DevicePnp.csv -> csv\artifacts\'))
+Check "t14 sweep: files landed in csv\artifacts" ((Test-Path (Join-Path $Csv74 'artifacts\amcache_DevicePnp.csv')) -and (Test-Path (Join-Path $Csv74 'artifacts\jumplist_parsed_AutomaticDestinations.csv')) -and (Test-Path (Join-Path $Csv74 'artifacts\prefetch_parsed_Timeline.csv')) -and (Test-Path (Join-Path $Csv74 'artifacts\usn_write_bursts.csv')))
+Check "t14 sweep: csv root no longer holds them" ((-not (Test-Path (Join-Path $Csv74 'amcache_DevicePnp.csv'))) -and (-not (Test-Path (Join-Path $Csv74 'jumplist_parsed_AutomaticDestinations.csv'))) -and (-not (Test-Path (Join-Path $Csv74 'prefetch_parsed.csv'))) -and (-not (Test-Path (Join-Path $Csv74 'usn_write_bursts.csv'))))
+Check "t14 sweep: already-foldered file untouched" ((Test-Path (Join-Path $Csv74 'artifacts\amcache.csv')) -and (@(Import-Csv (Join-Path $Csv74 'artifacts\amcache.csv'))[0].ApplicationName -eq 'old.exe'))
+Check "t14 sweep: unmapped csv and non-csv stay in root" ((Test-Path (Join-Path $Csv74 'notes.csv')) -and (Test-Path (Join-Path $t74 'readme.txt')))
+$pp74 = @(Import-CaseCsv 'prefetch_parsed')
+Check "t14 parity: Import-CaseCsv 'prefetch_parsed' resolves AFTER the move" ($pp74.Count -eq 1 -and "$($pp74[0].ApplicationName)" -eq 'x.exe')
+Check "t14 parity: Test-CaseCsv wildcard covers the mapped splits" ((Test-CaseCsv 'jumplist_parsed*') -eq $true)
+$script:regenLog = New-Object System.Collections.Generic.List[string]
+Invoke-RegenerateOutputs -Case $null
+Check "t14 idempotent: second run moves nothing, errors nothing" ((@($script:regenLog | Where-Object { $_ -match 'sortment:' }).Count -eq 0))
+'ApplicationName,Path' | Set-Content -LiteralPath (Join-Path $Csv74 'prefetch_parsed.csv') -Encoding UTF8
+'late.exe,C:\late' | Add-Content -LiteralPath (Join-Path $Csv74 'prefetch_parsed.csv') -Encoding UTF8
+$script:regenLog = New-Object System.Collections.Generic.List[string]
+Invoke-RegenerateOutputs -Case $null
+Check "t14 flat-wins: destination exists -> flat duplicate left alone (read contract keeps it authoritative)" ((Test-Path (Join-Path $Csv74 'prefetch_parsed.csv')) -and (@(Import-CaseCsv 'prefetch_parsed')[0].ApplicationName -eq 'late.exe') -and (@($script:regenLog | Where-Object { $_ -match 'sortment: moved prefetch_parsed' }).Count -eq 0))
+Remove-Item -LiteralPath (Join-Path $Csv74 'prefetch_parsed.csv') -Force -ErrorAction SilentlyContinue
+'hdr' | Set-Content -LiteralPath (Join-Path $Csv74 'amcache_LockedTable.csv') -Encoding UTF8
+$fs74 = [IO.File]::Open((Join-Path $Csv74 'amcache_LockedTable.csv'), 'Open', 'Read', 'None')
+$script:regenLog = New-Object System.Collections.Generic.List[string]
+Invoke-RegenerateOutputs -Case $null
+$fs74.Close()
+Check "t14 locked: move failure logged + file skipped" ((Test-Path (Join-Path $Csv74 'amcache_LockedTable.csv')) -and (@($script:regenLog | Where-Object { $_ -match 'sortment: could not move amcache_LockedTable\.csv' }).Count -eq 1))
+Check "t14 locked: regen continued to completion (START-HERE + report written)" ((Test-Path (Join-Path $t74 'ANALYST-START-HERE.txt')) -and (Test-Path (Join-Path $t74 'report.html')))
+$sh74 = Get-Content -LiteralPath (Join-Path $t74 'ANALYST-START-HERE.txt') -Raw
+Check "t15: START-HERE at case root, header names the host" ($sh74 -match [regex]::Escape('OPHIRA CASE - V270HOST'))
+Check "t15: verdict one-liner (draft ASSESSMENT wording family)" ($sh74 -match [regex]::Escape('ASSESSMENT: SUSPICIOUS (evidence coverage 60% of expected sources - 3/4 sources, not a probability of compromise). fixture owner line'))
+Check "t15: open-report instruction present" ($sh74 -match 'START HERE: open report\.html')
+$t74mapOk = $true
+foreach ($fm74 in @('csv\volatile\', 'csv\persistence\', 'csv\network\', 'csv\logs\', 'csv\artifacts\', 'csv\defender\', 'csv\memory\', 'csv\context\', 'csv\derived\', 'focus\', 'raw\')) {
+    if (@(@($sh74 -split "\r?\n") | Where-Object { $_ -match [regex]::Escape("$fm74 = ") }).Count -ne 1) { $t74mapOk = $false }
+}
+Check "t15: folder map - all 11 folders, one line each" $t74mapOk
+Check "t15: top list only-existing entries, focus line absent when no dossier" (($sh74 -match [regex]::Escape('1. report.html')) -and ($sh74 -match [regex]::Escape('2. csv\derived\supertimeline.csv')) -and ($sh74 -match [regex]::Escape('3. case_draft.txt')) -and ($sh74 -match [regex]::Escape('4. csv\derived\leads.csv')) -and (-not ($sh74 -match 'focus_report\.html')))
+Check "t15: START-HERE wrote without failure" ((@($script:regenLog | Where-Object { $_ -match 'start-here failed' }).Count -eq 0))
+New-Item -ItemType Directory -Path (Join-Path $t74 'focus') -Force | Out-Null
+'focus' | Set-Content -LiteralPath (Join-Path $t74 'focus\focus_report.html') -Encoding UTF8
+Invoke-RegenerateOutputs -Case $null
+$sh74b = Get-Content -LiteralPath (Join-Path $t74 'ANALYST-START-HERE.txt') -Raw
+Check "t15: re-regen inserts the focus dossier line in position" (($sh74b -match [regex]::Escape('3. focus\focus_report.html')) -and ($sh74b -match [regex]::Escape('4. case_draft.txt')) -and ($sh74b -match [regex]::Escape('5. csv\derived\leads.csv')))
+Check "t15: re-regen overwrites cleanly (single ASSESSMENT line)" ((@([regex]::Matches($sh74b, 'ASSESSMENT:')).Count -eq 1))
+Remove-Item -LiteralPath $t74 -Recurse -Force -ErrorAction SilentlyContinue
+
+# C) [O] offer statics
+Check "t15 static: OfferOpenReport defined once" ((@([regex]::Matches($src, [regex]::Escape('$script:OfferOpenReport = {'))).Count -eq 1))
+Check "t15 static: wired on all three done screens" ((@([regex]::Matches($src, [regex]::Escape('& $script:OfferOpenReport'))).Count -eq 3))
+Check "t15 static: -NoMenu/unattended never prompts" ($src -match [regex]::Escape('if (-not $Prompt) { return }'))
+Check "t15 static: Parse offer gated on interactive path entry + NoMenu" (($src -match [regex]::Escape("-not `$PSBoundParameters.ContainsKey('Path') -and -not `$NoMenu")) -and ($src -match [regex]::Escape('Before the re-pack so the temp copy of a zip-parsed case still exists')))
+Check "t15 static: missing report answers honestly" ($src -match [regex]::Escape('no report.html in'))
+Check "t15 static: key read uses the try/catch ReadKey pattern, opens via Invoke-Item" (($src -match [regex]::Escape("try { `$k = `$Host.UI.RawUI.ReadKey('NoEcho,IncludeKeyDown').Character } catch { return }")) -and ($src -match [regex]::Escape('Invoke-Item -LiteralPath $rep')))
+
+# D) worker map round-trip: the seeded CsvCatMap literal must stay a valid hashtable carrying
+# the wildcard entries (Save-Rows in pooled workers writes through it) - v2.58-style smoke
+foreach ($nW74 in 'New-WorkerPreamble') {
+    $mW74 = [regex]::Match($src, "(?s)function $nW74 \{.*?\r?\n\}")
+    if (-not $mW74.Success) { throw "extract failed: $nW74" }
+    Invoke-Expression $mW74.Value
+}
+$sf74 = [regex]::Match($src, "(?s)\`$script:SharedFunctions = @\(.*?\r?\n\)").Value
+Invoke-Expression $sf74
+foreach ($fn74 in $script:SharedFunctions) {
+    $mW75 = [regex]::Match($src, "(?s)function $fn74 \{.*?\r?\n\}")
+    if ($mW75.Success) { Invoke-Expression $mW75.Value }
+}
+$wt74 = [regex]::Match($src, "(?s)\`$script:ModuleWorkerText = @'.*?'@").Value
+Invoke-Expression $wt74
+$w74 = Join-Path $env:TEMP ("ophira_v270w74_" + (Get-Date -Format 'HHmmss'))
+$CsvW74 = Join-Path $w74 'csv'
+New-Item -ItemType Directory -Path $CsvW74, (Join-Path $w74 'raw'), (Join-Path $w74 'mem') -Force | Out-Null
+$CaseDir = $w74; $CsvDir = $CsvW74; $RawDir = Join-Path $w74 'raw'; $MemDir = Join-Path $w74 'mem'
+$Preset = 'Standard'; $global:CaseLog = Join-Path $w74 'c.log'
+$script:SimpleUI = $true; $script:Verbosity = 1
+$fakeW74 = @{ Id = 'W74'; Name = 'map-roundtrip'; RunText = "@(`$script:CsvCatMap['amcache_*'], (Get-CaseCsvPath 'amcache_DevicePnp'), (Get-CaseCsvPath 'prefetch_parsed_Timeline'), (Get-CaseCsvPath 'usn_write_bursts')) | Set-Content -LiteralPath '$w74\out.txt'; Save-Rows -Name 'usn_write_bursts' -Rows @([pscustomobject]@{ WindowStart = 't'; Drive = 'C'; WriteEvents = 1; DistinctFiles = 1 })" }
+$ps74 = [powershell]::Create()
+$null = $ps74.AddScript($script:ModuleWorkerText).AddArgument((New-WorkerPreamble -WorkerLog (Join-Path $w74 'w.log'))).AddArgument($fakeW74)
+$rW74 = $ps74.Invoke() | Select-Object -First 1
+$ps74.Dispose()
+Check "t14 worker: module ran without error" ($rW74 -and -not $rW74.Error)
+$outW74 = @(Get-Content -LiteralPath (Join-Path $w74 'out.txt') -ErrorAction SilentlyContinue)
+Check "t14 worker: seeded map round-trips with the wildcard entries" (($outW74.Count -eq 4) -and ($outW74[0] -eq 'artifacts') -and ($outW74[1] -eq 'artifacts\amcache_DevicePnp.csv') -and ($outW74[2] -eq 'artifacts\prefetch_parsed_Timeline.csv') -and ($outW74[3] -eq 'artifacts\usn_write_bursts.csv'))
+Check "t14 worker: Save-Rows writes through the seeded wildcard-era map" ((Test-Path (Join-Path $CsvW74 'artifacts\usn_write_bursts.csv')) -and (@(Import-Csv (Join-Path $CsvW74 'artifacts\usn_write_bursts.csv')).Count -eq 1))
+Remove-Item -LiteralPath $w74 -Recurse -Force -ErrorAction SilentlyContinue
+
 if ($fail -gt 0) { Write-Host "`ntest_v270: $pass passed, $fail FAILED" -ForegroundColor Red; exit 1 }
 Write-Host "`ntest_v270: $pass passed, 0 failed" -ForegroundColor Green
 exit 0
