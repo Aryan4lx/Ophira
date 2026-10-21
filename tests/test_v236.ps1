@@ -96,7 +96,7 @@ Check "R27: T1036.005 tag" (@($r27 | Where-Object { "$($_.Attck)" -eq 'T1036.005
 # PART 3 - wiring: verdict, coverage, evidence index, module placement
 # ============================================================================
 Check "verdict: high-rule regex includes Svchost masquerade" ($src -match 'authorized_keys\|Svchost masquerade')
-Check "verdict: signal label mentions svchost masquerade" ($src -match 'SSH keys / svchost masquerade')
+Check "verdict: hunt signal renders (v2.70 name; svchost masquerade coverage stays pinned by the rule regex above)" ($src -match [regex]::Escape('"Hunt techniques ($($huntHiRules.Count) fired)"'))
 Check "coverage: svchost audit row" ($src -match "Add-Cov 'Svchost masquerade audit'")
 Check "evidence index: svchost_audit documented" ($src -match "'svchost_audit'\s+= 'Live svchost -k groups")
 Check "module: 1.7 VOLATILE Quick preset on" (($src -match "Id = '1\.7'; Cat = 'VOLATILE'") -and ($src -match 'Quick = \$true;\s*\r?\n\s*Run = \{\r?\n\s*# Live svchost'))

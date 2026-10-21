@@ -24,7 +24,7 @@ Check "sortment: both new CSVs mapped to logs" (($src -match [regex]::Escape("'s
 Check "evidence index: entries for both new CSVs" (($src -match [regex]::Escape("'sysmon_remote_thread'            =")) -and ($src -match [regex]::Escape("'sysmon_pipes'                    =")))
 Check "weave: remote thread + pipe rows in the master timeline" (($src -match [regex]::Escape("weave 'sysmon_remote_thread'")) -and ($src -match [regex]::Escape("weave 'sysmon_pipes'")))
 Check "coverage: injection/pipe telemetry row" ($src -match "Add-Cov 'Injection/pipe telemetry \(Sysmon 8/17/18\)'")
-Check "verdict: high-rule regex includes R28/R29" (($src -match 'Cross-process injection\|C2-style named pipe') -and ($src -match 'svchost masquerade / injection / C2 pipe'))
+Check "verdict: high-rule regex includes R28/R29 + hunt signal renders (v2.70 name)" (($src -match 'Cross-process injection\|C2-style named pipe') -and ($src -match [regex]::Escape('"Hunt techniques ($($huntHiRules.Count) fired)"')))
 Check "config gap: hint covers EID 8/17/18" (($src -match 'remote-thread \(EID 8\) / named-pipe \(EID 17/18\)') -and ($src -match [regex]::Escape("(Import-CaseCsv 'sysmon_pipes').Count -eq 0")))
 # v2.49: the bundled sysmon config was removed (Ophira never deploys Sysmon) - the EID
 # coverage the config used to provide is documented in the README + config-gap hint instead.

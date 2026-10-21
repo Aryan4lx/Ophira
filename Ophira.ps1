@@ -1,5 +1,5 @@
 ﻿<#
-Ophira v2.69  -  Windows Incident Response Triage Toolkit
+Ophira v2.70  -  Windows Incident Response Triage Toolkit
 READ-ONLY by design: never modifies the system, only reads and copies data
 into its own output folder. Intended to be handed to a system owner or run
 by a responder during early triage / threat hunting.
@@ -309,7 +309,7 @@ param(
     [switch]$ExitVerdict
 )
 
-$ScriptVersion = "2.69"
+$ScriptVersion = "2.70"
 $ErrorActionPreference = 'Continue'
 $ProgressPreference = 'SilentlyContinue'
 
@@ -3794,7 +3794,12 @@ $script:Modules = @(
             $d1116 = @($ev | Where-Object { "$($_.Id)" -eq '1116' } | ForEach-Object {
                 $msg = "$($_.Message)"
                 $tn = ''; $sev = ''; $pth = ''
+                # v2.70: real WIN11 1116 messages carry 'Name: <value> ID: <n>' - the old
+                # 'Threat Name:' pattern alone captured nothing, so ThreatName came out empty and
+                # the verdict rendered bare ' @ <date>' stamps. Lazy capture up to ' ID: <n>';
+                # graceful empty when no name dialect is present (never invent a name).
                 if ($msg -match '(?i)Threat Name:\s*(.+)') { $tn = $Matches[1].Trim() }
+                elseif ($msg -match '(?i)\bName:\s*(.+?)\s+ID:\s+\d') { $tn = $Matches[1].Trim() }
                 if ($msg -match '(?i)Severity:\s*(\w+)') { $sev = $Matches[1].Trim() }
                 if ($msg -match '(?i)Path:\s*(.+?)(?:\s*\(|$)') { $pth = $Matches[1].Trim() }
                 [pscustomobject]@{ ThreatName = $tn; Severity = $sev; ResourcePath = $pth; DetectedUTC = $_.TimeCreated; Source = 'evtx-history' }
@@ -4117,13 +4122,35 @@ public class OphiraDump {
                 if (-not (Test-Path -LiteralPath $amcCsv)) { $amcCsv = Get-CaseCsvFullPath 'amcache' }
                 if (-not (Test-Path $amcCsv)) {
                     # AmcacheParser 2026+ writes split CSVs (amcache_UnassociatedFileEntries etc.) - merge the
-                    # file-entry family back into amcache.csv so the IOC xref / hunt / timeline consumers work
-                    $parts = @(Get-ChildItem -Path $CsvDir -Filter 'amcache_*.csv' -ErrorAction SilentlyContinue | Where-Object { (Get-Content -LiteralPath $_.FullName -First 1) -match '^"?ApplicationName' })
+                    # file-entry family back into amcache.csv so the IOC xref / hunt / timeline consumers work.
+                    # The freshly written split CSVs AND the merged output can carry a transient real-time AV
+                    # lock (v2.52 hive-stat class of flake), so each single-try op below gets a small bounded
+                    # retry (-ErrorAction Stop makes lock errors catchable under both EAP=Stop and Continue)
+                    # before the catch logs an honest failure.
+                    $parts = @(Get-ChildItem -Path $CsvDir -Filter 'amcache_*.csv' -ErrorAction SilentlyContinue | Where-Object {
+                        $hdr = $null
+                        for ($i = 0; $i -lt 3; $i++) {
+                            try { $hdr = Get-Content -LiteralPath $_.FullName -First 1 -ErrorAction Stop; break } catch { Start-Sleep -Milliseconds 250 }
+                        }
+                        "$hdr" -match '^"?ApplicationName'
+                    })
                     if ($parts.Count -eq 0) { $parts = @(Get-ChildItem -Path $CsvDir -Filter 'amcache_DriveBinaries.csv' -File -ErrorAction SilentlyContinue) }
                     if ($parts.Count -gt 0) {
                         try {
-                            $rows = @(); foreach ($p in $parts) { $rows += @(Import-Csv -LiteralPath $p.FullName) }
-                            $rows | Export-Csv -LiteralPath $amcCsv -NoTypeInformation -Encoding UTF8
+                            $rows = @()
+                            foreach ($p in $parts) {
+                                $pr = $null
+                                for ($i = 0; $i -lt 3; $i++) {
+                                    try { $pr = @(Import-Csv -LiteralPath $p.FullName -ErrorAction Stop); break } catch { Start-Sleep -Milliseconds 250 }
+                                }
+                                if ($null -eq $pr) { throw "split CSV unreadable after retries: $(Split-Path -Leaf $p.FullName)" }
+                                $rows += $pr
+                            }
+                            $ok = $false
+                            for ($i = 0; $i -lt 3; $i++) {
+                                try { $rows | Export-Csv -LiteralPath $amcCsv -NoTypeInformation -Encoding UTF8 -ErrorAction Stop; $ok = $true; break } catch { Start-Sleep -Milliseconds 250 }
+                            }
+                            if (-not $ok) { throw "could not write merged amcache.csv after retries" }
                             Write-CaseLog "    amcache: $($rows.Count) entries (merged $($parts.Count) split CSVs)" 'Gray'
                         } catch { Write-CaseLog "    amcache split-CSV merge failed: $($_.Exception.Message)" 'DarkYellow' }
                     }
@@ -5568,32 +5595,44 @@ tr.techrow{cursor:pointer}
             2 = 'Enough suspicious evidence exists to justify a closer look before this host returns to service - work the leads below (or review the Sigma findings and process scores if no lead met the threshold).'
         }
         if ($donow[[int]$v.LevelRank]) { $null = $sb.AppendLine("<div class='donow'><b>Do now:</b> $(ConvertTo-HtmlEsc $donow[[int]$v.LevelRank])</div>") }
-        if (@($v.Signals).Count -gt 0) {
+        # report-accuracy task 2: weight-0 signals carry no verdict weight - they leave the
+        # contributing list and render in a separate 'Noted' group below it, so a [w0] row can
+        # no longer read as evidence sitting between real [w1]+ rows. Both groups share one row
+        # renderer (badge class, anchor resolution, ConvertTo-HtmlEsc escaping unchanged).
+        $vContrib = @($v.Signals | Where-Object { $_.Weight -ge 1 })
+        $vNoted = @($v.Signals | Where-Object { $_.Weight -eq 0 })
+        $sigRow = {
+            param($s)
+            $wcol = if ($s.Weight -ge 4) { 'crit' } elseif ($s.Weight -ge 3) { 'high' } elseif ($s.Weight -ge 2) { 'med' } else { 'info' }
+            $anc = ''
+            if ("$($s.Signal)" -match '^YARA') { $anc = 'yara' }
+            elseif ("$($s.Signal)" -match '^Sigma') { $anc = 'sigma' }
+            elseif ("$($s.Signal)" -match '^C2') { $anc = 'beacons' }
+            elseif ("$($s.Signal)" -match '^Process anomaly') { $anc = 'processes' }
+            elseif ("$($s.Signal)" -match '^IOC') { $anc = 'ioc' }
+            elseif ("$($s.Signal)" -match '^Hunt technique') { $anc = 'hunt' }
+            elseif ("$($s.Signal)" -match '^Uncommon persistence') { $anc = 'persistence' }
+            elseif ("$($s.Signal)" -match '^Ransomware') { $anc = 'filesystem' }
+            elseif ("$($s.Signal)" -match '^Memory malfind') { $anc = 'snapshot' }
+            elseif ("$($s.Signal)" -match '^Known-malicious driver') { $anc = 'drivers' }
+            elseif ("$($s.Signal)" -match '^Defender detection') { $anc = 'snapshot' }
+            elseif ("$($s.Signal)" -match '^Security tooling') { $anc = 'coverage' }
+            elseif ("$($s.Signal)" -match '^Brute') { $anc = 'logons' }
+            elseif ("$($s.Signal)" -match '^Security posture gaps') { $anc = 'snapshot' } # v2.66: was a dead anchor - the posture table renders in the snapshot section
+            elseif ("$($s.Signal)" -match '^Credential material exposure') { $anc = 'snapshot' } # v2.66: was a dead anchor - the credential sweep renders in the snapshot section
+            $sigTxt = "$(ConvertTo-HtmlEsc $s.Signal) x$($s.Count)$(if ("$($s.Detail)") { " - <span class='path'>$(ConvertTo-HtmlEsc $s.Detail)</span>" })"
+            if ($anc) { return "<div class='sig'><span class='$wcol'>[w$($s.Weight)]</span> <a href='#$anc' style='color:inherit'>$sigTxt</a></div>" }
+            return "<div class='sig'><span class='$wcol'>[w$($s.Weight)]</span> $sigTxt</div>"
+        }
+        if ($vContrib.Count -gt 0) {
             $null = $sb.AppendLine("<p style='margin-top:12px'><b>Contributing signals</b> (click a signal to jump to its evidence)</p>")
-            foreach ($s in @($v.Signals)) {
-                $wcol = if ($s.Weight -ge 4) { 'crit' } elseif ($s.Weight -ge 3) { 'high' } elseif ($s.Weight -ge 2) { 'med' } else { 'info' }
-                $anc = ''
-                if ("$($s.Signal)" -match '^YARA') { $anc = 'yara' }
-                elseif ("$($s.Signal)" -match '^Sigma') { $anc = 'sigma' }
-                elseif ("$($s.Signal)" -match '^C2') { $anc = 'beacons' }
-                elseif ("$($s.Signal)" -match '^Process anomaly') { $anc = 'processes' }
-                elseif ("$($s.Signal)" -match '^IOC') { $anc = 'ioc' }
-                elseif ("$($s.Signal)" -match '^Hunt technique') { $anc = 'hunt' }
-                elseif ("$($s.Signal)" -match '^Uncommon persistence') { $anc = 'persistence' }
-                elseif ("$($s.Signal)" -match '^Ransomware') { $anc = 'filesystem' }
-                elseif ("$($s.Signal)" -match '^Memory malfind') { $anc = 'snapshot' }
-                elseif ("$($s.Signal)" -match '^Known-malicious driver') { $anc = 'drivers' }
-                elseif ("$($s.Signal)" -match '^Defender detection') { $anc = 'snapshot' }
-                elseif ("$($s.Signal)" -match '^Security tooling') { $anc = 'coverage' }
-                elseif ("$($s.Signal)" -match '^Brute') { $anc = 'logons' }
-                elseif ("$($s.Signal)" -match '^Security posture gaps') { $anc = 'snapshot' } # v2.66: was a dead anchor - the posture table renders in the snapshot section
-                elseif ("$($s.Signal)" -match '^Credential material exposure') { $anc = 'snapshot' } # v2.66: was a dead anchor - the credential sweep renders in the snapshot section
-                $sigTxt = "$(ConvertTo-HtmlEsc $s.Signal) x$($s.Count)$(if ("$($s.Detail)") { " - <span class='path'>$(ConvertTo-HtmlEsc $s.Detail)</span>" })"
-                if ($anc) { $null = $sb.AppendLine("<div class='sig'><span class='$wcol'>[w$($s.Weight)]</span> <a href='#$anc' style='color:inherit'>$sigTxt</a></div>") }
-                else { $null = $sb.AppendLine("<div class='sig'><span class='$wcol'>[w$($s.Weight)]</span> $sigTxt</div>") }
-            }
+            foreach ($s in $vContrib) { $null = $sb.AppendLine((& $sigRow $s)) }
         } else {
             $null = $sb.AppendLine("<p style='margin-top:12px' class='meta'>No compromising signals were observed in the collected evidence.</p>")
+        }
+        if ($vNoted.Count -gt 0) {
+            $null = $sb.AppendLine("<p style='margin-top:12px'><b>Noted</b> (no verdict weight - context, not evidence of compromise)</p>")
+            foreach ($s in $vNoted) { $null = $sb.AppendLine((& $sigRow $s)) }
         }
         # v2.61: negative evidence - every check that ran and found NOTHING, with counts
         $clean = @()
@@ -5667,8 +5706,28 @@ tr.techrow{cursor:pointer}
         foreach ($b in @(Import-CaseCsv 'beacon_candidates' | Where-Object { "$($_.Severity)" -match '^high$' } | Select-Object -First 2)) {
             $leads.Add([pscustomobject]@{ Rank = 'crit'; Title = "$($b.Process) -> $($b.RemoteIp):$($b.Port)"; Class = 'C2 beacon (regular callbacks)'; Why = "$($b.Events) connections over $($b.SpanMin) min, median interval ~$($b.MedianIntervalSec)s, regularity $([math]::Round((ConvertTo-SafeDbl $b.Regularity), 2))"; Ident = "$($b.RemoteIp)"; Extra = ''; Anchor = 'beacons' })
         }
-        foreach ($h2 in @(Import-CaseCsv 'hunt_findings' | Where-Object { "$($_.Severity)" -eq 'high' } | Select-Object -First 2)) {
-            $leads.Add([pscustomobject]@{ Rank = 'crit'; Title = "$($h2.Entity)"; Class = "hunt rule: $($h2.Rule)"; Why = "$($h2.Evidence)"; Ident = "$($h2.Entity)"; Extra = "ATT&CK $($h2.Attck)"; Anchor = 'hunt' })
+        # v2.70 (task 4): hunt leads collapse per ENTITY (case-insensitive) BEFORE the window -
+        # one card per entity, rules joined (' + '), ATT&CK tags '/'-joined, evidence from the
+        # first row. Only within-source dedupe: other lead sources are untouched.
+        $hfEnts = New-Object System.Collections.Generic.List[object]
+        $hfSeen = @{}
+        foreach ($h1 in @(Import-CaseCsv 'hunt_findings' | Where-Object { "$($_.Severity)" -eq 'high' })) {
+            $hk = "$($h1.Entity)".ToLower()
+            if ($hfSeen.ContainsKey($hk)) {
+                $hg = $hfSeen[$hk]
+                if ("$($h1.Rule)" -and @($hg.Rules.ToArray()) -notcontains "$($h1.Rule)") { $null = $hg.Rules.Add("$($h1.Rule)") }
+                if ("$($h1.Attck)" -and @($hg.Tags.ToArray()) -notcontains "$($h1.Attck)") { $null = $hg.Tags.Add("$($h1.Attck)") }
+            } else {
+                $hg = [pscustomobject]@{ Entity = "$($h1.Entity)"; Evidence = "$($h1.Evidence)"; Rules = (New-Object System.Collections.Generic.List[string]); Tags = (New-Object System.Collections.Generic.List[string]) }
+                if ("$($h1.Rule)") { $null = $hg.Rules.Add("$($h1.Rule)") }
+                if ("$($h1.Attck)") { $null = $hg.Tags.Add("$($h1.Attck)") }
+                $hfSeen[$hk] = $hg
+                $null = $hfEnts.Add($hg)
+            }
+            if ($hfEnts.Count -ge 2) { break }
+        }
+        foreach ($hg in $hfEnts) {
+            $leads.Add([pscustomobject]@{ Rank = 'crit'; Title = "$($hg.Entity)"; Class = "hunt rule: $(($hg.Rules.ToArray()) -join ' + ')"; Why = "$($hg.Evidence)"; Ident = "$($hg.Entity)"; Extra = "ATT&CK $(($hg.Tags.ToArray()) -join '/')"; Anchor = 'hunt' })
         }
         foreach ($io in @(Import-CaseCsv 'ioc_hits_amcache' | Select-Object -First 2)) {
             $leads.Add([pscustomobject]@{ Rank = 'crit'; Title = "$($io.Application)"; Class = 'IOC hash match (known-bad binary ran on this host)'; Why = "SHA1 $($io.Indicator) matched the IOC feed"; Ident = "$($io.SourceFile)"; Extra = ''; Anchor = 'ioc' })
@@ -8751,7 +8810,12 @@ function Get-CompromiseVerdict {
     Add-Signal 'Known-malicious driver on disk (LOLDrivers)' 2 $lolMal (($lol | Where-Object { $_.Status -eq 'malicious' } | Select-Object -First 3 | ForEach-Object { "$($_.Name): $($_.Path)" }) -join '; ')
     Add-Signal 'Security posture gaps' 1 @($postureBad).Count (($postureBad | ForEach-Object { "$($_.Check): $($_.Detail)" }) -join '; ') # v2.64: was $_.Setting - that column never existed, the detail lost the check name
     Add-Signal 'Credential material exposure' 2 @($credMed).Count (($credMed | Select-Object -First 3 | ForEach-Object { "$($_.Item): $($_.Detail)" }) -join '; ')
-    Add-Signal 'Hunt technique - renamed binary / side-load / download-exec / LSASS access / Office chain / proxy-exec / share staging / Defender tamper / DCSync / spray / webshell / tunnel / RDP hijack / SSH keys / svchost masquerade / injection / C2 pipe / hollowing / raw volume / WMI persistence' 2 $huntHi.Count (($huntHi | Select-Object -First 3 | ForEach-Object { $_.Rule }) -join '; ')
+    # v2.70: the name reports WHICH fired - "Hunt techniques (N fired)" where N is the count of
+    # DISTINCT rules in the (unchanged) $huntHi input - and the detail dedupes rule names with
+    # per-rule counts (count desc, name asc), capped at 3 with a '+N more' suffix (Defender shape).
+    # Count stays total events (verdict Count contract unchanged); zero findings still add nothing.
+    $huntHiRules = @($huntHi | Group-Object Rule | Sort-Object @{Expression = 'Count'; Descending = $true }, Name)
+    Add-Signal "Hunt techniques ($($huntHiRules.Count) fired)" 2 $huntHi.Count ((($huntHiRules | Select-Object -First 3 | ForEach-Object { "$($_.Name) x$($_.Count)" }) -join '; ') + $(if ($huntHiRules.Count -gt 3) { "; +$($huntHiRules.Count - 3) more" }))
     Add-Signal 'Ransomware-like mass file modification (USN journal)' 3 $usnBurstN ((($usnBursts | Select-Object -First 3 | ForEach-Object { "$($_.WindowStart): $($_.WriteEvents) writes / $($_.DistinctFiles) files" }) -join '; ') + $(if ($rExt) { " - RANSOM EXTENSIONS: $rExt" }))
     Add-Signal 'Uncommon persistence mechanism (IFEO/AppInit/Winlogon/netsh/LSA)' 2 $asepHotN (($asep | Where-Object { $_.Flags -match 'user-path|nondefault' -and "$($_.Category)" -notmatch 'ComHijack|StartupApproved' } | Select-Object -First 3 | ForEach-Object { "$($_.Category): $($_.Name) = $($_.Value)" }) -join '; ')
     Add-Signal 'Memory malfind indicators (injected code regions)' 2 @($memMf).Count (($memMf | Select-Object -First 3 | ForEach-Object { "$($_.Process)($($_.PID))" }) -join '; ')
@@ -8813,7 +8877,18 @@ function Get-CompromiseVerdict {
         }
         if ($fresh) { $defFresh.Add($t) } else { $defStale.Add($t) }
     }
-    $defDetail = { param($list) ((@($list | Select-Object -First 3 | ForEach-Object { "$($_.ThreatName)$(if ("$($_.SeverityID)") { ' (sev ' + $_.SeverityID + ')' })$(if ("$($_.DetectedUTC)") { " @ $($_.DetectedUTC)" })" } | Where-Object { "$_" -ne '' -and "$_" -notmatch '^ \(sev \)' }) -join '; ') + $(if ($list.Count -gt 3) { "; +$($list.Count - 3) more" })) }
+    # v2.70: nameless rows (empty ThreatName + a date - the pre-v2.70 1116 parse output) contribute
+    # NOTHING to the detail, so bare ' @ <date>' fragments are impossible; stamps normalize to
+    # 'yyyy-MM-dd HH:mm' (raw string kept when the stamp fails to parse).
+    # v2.70 (task 4): nameless rows are filtered BEFORE the 3-entry window and the '+N more'
+    # suffix counts NAMED rows only - an all-nameless list renders an empty detail, never a
+    # bare '; +N more' headless tail.
+    $defDetail = { param($list) $named = @($list | Where-Object { "$($_.ThreatName)".Trim() })
+        ((@($named | Select-Object -First 3 | ForEach-Object {
+            $ts = "$($_.DetectedUTC)".Trim()
+            if ($ts) { $d = [datetime]::MinValue; if ([datetime]::TryParse($ts, [ref]$d)) { $ts = $d.ToString('yyyy-MM-dd HH:mm') } }
+            "$($_.ThreatName)".Trim() + "$(if ("$($_.SeverityID)") { ' (sev ' + $_.SeverityID + ')' })$(if ($ts) { " @ $ts" })"
+        }) -join '; ') + $(if ($named.Count -gt 3) { "; +$($named.Count - 3) more" })) }
     Add-Signal 'Defender detection - active or in log window' 2 $defFresh.Count (& $defDetail $defFresh)
     Add-Signal 'Defender detection - stale history (resolved / outside log window)' 1 $defStale.Count (& $defDetail $defStale)
     Add-Signal 'Security tooling tampering / log clearing' 2 $gapTamper "log cleared or security service stopped"
@@ -8990,10 +9065,29 @@ function Get-CaseNarrative {
         $L.Add("WHAT THE EVIDENCE SHOWS: no compromising signals in the collected evidence.")
     }
     $L.Add("")
-    $leads = @(Import-CaseCsv 'hunt_findings' | Where-Object { "$($_.Severity)" -eq 'high' } | Select-Object -First 5)
-    if ($leads.Count -gt 0) {
+    # v2.70 (task 4): entity-level lead dedupe - one lead per entity (case-insensitive), multiple
+    # rules listed together (rules ' + ', ATT&CK tags '/'-joined, evidence from the first row),
+    # cap stays 5 entities.
+    $leadEnts = New-Object System.Collections.Generic.List[object]
+    $leadSeen = @{}
+    foreach ($f in @(Import-CaseCsv 'hunt_findings' | Where-Object { "$($_.Severity)" -eq 'high' })) {
+        $k = "$($f.Entity)".ToLower()
+        if ($leadSeen.ContainsKey($k)) {
+            $g = $leadSeen[$k]
+            if ("$($f.Rule)" -and @($g.Rules.ToArray()) -notcontains "$($f.Rule)") { $null = $g.Rules.Add("$($f.Rule)") }
+            if ("$($f.Attck)" -and @($g.Tags.ToArray()) -notcontains "$($f.Attck)") { $null = $g.Tags.Add("$($f.Attck)") }
+        } else {
+            $g = [pscustomobject]@{ Entity = "$($f.Entity)"; Evidence = "$($f.Evidence)"; Rules = (New-Object System.Collections.Generic.List[string]); Tags = (New-Object System.Collections.Generic.List[string]) }
+            if ("$($f.Rule)") { $null = $g.Rules.Add("$($f.Rule)") }
+            if ("$($f.Attck)") { $null = $g.Tags.Add("$($f.Attck)") }
+            $leadSeen[$k] = $g
+            $null = $leadEnts.Add($g)
+        }
+    }
+    while ($leadEnts.Count -gt 5) { $null = $leadEnts.RemoveAt($leadEnts.Count - 1) }
+    if ($leadEnts.Count -gt 0) {
         $L.Add("BEST LEADS (high-severity hunt detections - verify against cited evidence)")
-        foreach ($f in $leads) { $L.Add(" - [$($f.Attck)] $($f.Rule) on $($f.Entity): $($f.Evidence)") }
+        foreach ($g in $leadEnts) { $L.Add(" - [$(($g.Tags.ToArray()) -join '/')] $(($g.Rules.ToArray()) -join ' + ') on $($g.Entity): $($g.Evidence)") }
         $L.Add("")
     }
     $missing = @($v.Coverage | Where-Object { -not $_.Collected })
@@ -9020,7 +9114,15 @@ function Get-CaseNarrative {
         $L.Add("")
     }
     $L.Add("(Machine-generated starting draft - verify every lead against the cited evidence, then rewrite in your own words.)")
-    return $L.ToArray()
+    # v2.70 (task 4): one generated stamp dialect - locale timestamps embedded in signal details /
+    # lead evidence (e.g. '10/12/2026 7:43:01 AM') rewrite to 'yyyy-MM-dd HH:mm'. Only the matched
+    # stamp substring is rewritten (the rest of a quoted cmdline stays verbatim); text the regex
+    # matches but [datetime] cannot parse is left untouched.
+    $out = New-Object System.Collections.Generic.List[string]
+    foreach ($ln in $L) {
+        $null = $out.Add([regex]::Replace($ln, '\b\d{1,2}/\d{1,2}/\d{4} \d{1,2}:\d{2}(?::\d{2})?(?: [AP]M)?\b', { param($m) $dd = [datetime]::MinValue; if ([datetime]::TryParse($m.Value, [Globalization.CultureInfo]::InvariantCulture, [Globalization.DateTimeStyles]::None, [ref]$dd)) { $dd.ToString('yyyy-MM-dd HH:mm') } else { $m.Value } }))
+    }
+    return $out.ToArray()
 }
 
 function ConvertFrom-SrumCsv {

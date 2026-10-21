@@ -118,7 +118,7 @@ Check "hunt: T1572/T1219/T1098.004 tags" (@($hf | Where-Object { @('T1572', 'T12
 # PART 3 - verdict wiring + coverage
 # ============================================================================
 Check "verdict: high-rule regex includes R23/R25/R26" ($src -match 'Remote-access tunnel\|ServiceDll tamper\|authorized_keys')
-Check "verdict: signal label mentions tunnel/RDP hijack/SSH keys" ($src -match 'webshell / tunnel / RDP hijack / SSH keys')
+Check "verdict: hunt signal renders (v2.70 name; tunnel/RDP hijack/SSH keys coverage stays pinned by the rule regex above)" ($src -match [regex]::Escape('"Hunt techniques ($($huntHiRules.Count) fired)"'))
 Check "coverage: remote access sweep row" ($src -match "Add-Cov 'Remote access sweep \(tunnels/RA tools/SSH keys\)'")
 
 # ============================================================================
