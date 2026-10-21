@@ -14,7 +14,7 @@ $ErrorActionPreference = 'Stop'
 $repo = Split-Path -Parent $PSScriptRoot
 $src = Get-Content -LiteralPath (Join-Path $repo 'Ophira.ps1') -Raw
 . (Join-Path $PSScriptRoot '_casehelpers.ps1')
-$names = @('ConvertTo-HtmlEsc', 'New-VtLink', 'Import-CaseCsv', 'Get-CompromiseVerdict', 'New-HtmlReport', 'Get-LvlRank', 'Split-TagList', 'Get-TacticLabel')
+$names = @('ConvertTo-HtmlEsc', 'New-VtLink', 'Import-CaseCsv', 'Get-CompromiseVerdict', 'New-HtmlReport', 'Get-LvlRank', 'Split-TagList', 'Get-TacticLabel', 'ConvertTo-SafeInt', 'ConvertTo-SafeDbl', 'Get-IpCloudClass', 'Get-TriageLeads')
 $defs = ''
 foreach ($n in $names) {
     $m = [regex]::Match($src, "(?s)function $n \{.*?\r?\n\}")

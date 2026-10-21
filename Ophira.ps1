@@ -1,5 +1,5 @@
 ﻿<#
-Ophira v2.70  -  Windows Incident Response Triage Toolkit
+Ophira v2.71  -  Windows Incident Response Triage Toolkit
 READ-ONLY by design: never modifies the system, only reads and copies data
 into its own output folder. Intended to be handed to a system owner or run
 by a responder during early triage / threat hunting.
@@ -309,7 +309,7 @@ param(
     [switch]$ExitVerdict
 )
 
-$ScriptVersion = "2.70"
+$ScriptVersion = "2.71"
 $ErrorActionPreference = 'Continue'
 $ProgressPreference = 'SilentlyContinue'
 
@@ -545,7 +545,7 @@ $script:CsvCatMap = @{
     'session_activity' = 'derived'; 'process_chains' = 'derived'; 'logging_gaps' = 'derived'
     'ioc_hits_amcache' = 'derived'; 'ioc_hits_browser' = 'derived'; 'ioc_hits_dns' = 'derived'
     'ioc_hits_network' = 'derived'; 'ioc_hits_mft' = 'derived'; 'ioc_hits_hash' = 'derived'
-    'ioc_export' = 'derived'; 'process_pivot' = 'derived'
+    'ioc_export' = 'derived'; 'process_pivot' = 'derived'; 'leads' = 'derived'
 }
 
 function Get-LocalAdminMembers {
@@ -5694,64 +5694,13 @@ tr.techrow{cursor:pointer}
     # The 30-minute TP/FP workflow: the strongest signals as ranked lead cards, pure evidence -
     # identity, why it was flagged, which evidence categories corroborate it, and the auto-built
     # correlation story one click away in the Focus section.
+    # v2.71: the ranking is built ONCE by Invoke-RegenerateOutputs (Get-TriageLeads ->
+    # csv\derived\leads.csv). This render reads the persisted rows; old cases / direct renders
+    # without the file fall back to the same builder inline. The draft's BEST LEADS projects
+    # the same list - one builder, one order, no second truth.
     try {
-        $leads = New-Object System.Collections.Generic.List[object]
-        foreach ($p in @(Import-CaseCsv 'flash_process_scored' | Where-Object { "$($_.Verdict)" -eq 'HIGH' -and "$($_.Name)" } | Sort-Object { ConvertTo-SafeInt $_.Score } -Descending | Select-Object -First 3)) {
-            $leads.Add([pscustomobject]@{ Rank = 'crit'; Title = "$($p.Name) (PID $($p.PID))"; Class = "malicious process - correlation score $($p.Score)"; Why = "$($p.Evidence)"; Ident = "$($p.Path)"; Extra = "signer: $(if ("$($p.Signer)") { $p.Signer } else { 'NONE' })"; Anchor = 'processes' })
-        }
-        foreach ($y in @(Import-CaseCsv 'yara_hits' | Where-Object { "$($_.File)" } | Select-Object -First 3)) {
-            $rk = if ("$($y.Severity)" -match '^(high|critical)$') { 'crit' } else { 'med' }
-            $leads.Add([pscustomobject]@{ Rank = $rk; Title = (Split-Path "$($y.File)" -Leaf); Class = "YARA $($y.Severity): $($y.Rule)"; Why = "$($y.Description)"; Ident = "$($y.File)"; Extra = ''; Anchor = 'yara' })
-        }
-        foreach ($b in @(Import-CaseCsv 'beacon_candidates' | Where-Object { "$($_.Severity)" -match '^high$' } | Select-Object -First 2)) {
-            $leads.Add([pscustomobject]@{ Rank = 'crit'; Title = "$($b.Process) -> $($b.RemoteIp):$($b.Port)"; Class = 'C2 beacon (regular callbacks)'; Why = "$($b.Events) connections over $($b.SpanMin) min, median interval ~$($b.MedianIntervalSec)s, regularity $([math]::Round((ConvertTo-SafeDbl $b.Regularity), 2))"; Ident = "$($b.RemoteIp)"; Extra = ''; Anchor = 'beacons' })
-        }
-        # v2.70 (task 4): hunt leads collapse per ENTITY (case-insensitive) BEFORE the window -
-        # one card per entity, rules joined (' + '), ATT&CK tags '/'-joined, evidence from the
-        # first row. Only within-source dedupe: other lead sources are untouched.
-        $hfEnts = New-Object System.Collections.Generic.List[object]
-        $hfSeen = @{}
-        foreach ($h1 in @(Import-CaseCsv 'hunt_findings' | Where-Object { "$($_.Severity)" -eq 'high' })) {
-            $hk = "$($h1.Entity)".ToLower()
-            if ($hfSeen.ContainsKey($hk)) {
-                $hg = $hfSeen[$hk]
-                if ("$($h1.Rule)" -and @($hg.Rules.ToArray()) -notcontains "$($h1.Rule)") { $null = $hg.Rules.Add("$($h1.Rule)") }
-                if ("$($h1.Attck)" -and @($hg.Tags.ToArray()) -notcontains "$($h1.Attck)") { $null = $hg.Tags.Add("$($h1.Attck)") }
-            } else {
-                $hg = [pscustomobject]@{ Entity = "$($h1.Entity)"; Evidence = "$($h1.Evidence)"; Rules = (New-Object System.Collections.Generic.List[string]); Tags = (New-Object System.Collections.Generic.List[string]) }
-                if ("$($h1.Rule)") { $null = $hg.Rules.Add("$($h1.Rule)") }
-                if ("$($h1.Attck)") { $null = $hg.Tags.Add("$($h1.Attck)") }
-                $hfSeen[$hk] = $hg
-                $null = $hfEnts.Add($hg)
-            }
-            if ($hfEnts.Count -ge 2) { break }
-        }
-        foreach ($hg in $hfEnts) {
-            $leads.Add([pscustomobject]@{ Rank = 'crit'; Title = "$($hg.Entity)"; Class = "hunt rule: $(($hg.Rules.ToArray()) -join ' + ')"; Why = "$($hg.Evidence)"; Ident = "$($hg.Entity)"; Extra = "ATT&CK $(($hg.Tags.ToArray()) -join '/')"; Anchor = 'hunt' })
-        }
-        foreach ($io in @(Import-CaseCsv 'ioc_hits_amcache' | Select-Object -First 2)) {
-            $leads.Add([pscustomobject]@{ Rank = 'crit'; Title = "$($io.Application)"; Class = 'IOC hash match (known-bad binary ran on this host)'; Why = "SHA1 $($io.Indicator) matched the IOC feed"; Ident = "$($io.SourceFile)"; Extra = ''; Anchor = 'ioc' })
-        }
-        # v2.55: medium-weight lead sources - a case can be SUSPICIOUS without any HIGH/YARA/beacon
-        $hayMed = @($hayRows | Where-Object { "$($_.Level)" -match '^(medium|high|crit)$' })
-        if ($hayMed.Count -ge 20) {
-            $hayTop = @($hayMed | Group-Object RuleTitle | Sort-Object Count -Descending | Select-Object -First 3)
-            # v2.66 (B7): Rule = the noisiest rule, so the lead link can open that drill-down
-            $leads.Add([pscustomobject]@{ Rank = 'med'; Title = "Sigma storm: $([int]$hayMed.Count) detection rows"; Class = "review: sigma volume spike"; Why = (($hayTop | ForEach-Object { "$($_.Name) ($($_.Count) hits)" }) -join '; '); Ident = ''; Extra = ''; Anchor = 'sigma'; Rule = "$($hayTop[0].Name)" })
-        }
-        foreach ($ch2 in @(Import-CaseCsv 'process_chains' | Where-Object { "$($_.Child)" } | Select-Object -First 2)) {
-            $leads.Add([pscustomobject]@{ Rank = 'crit'; Title = "$($ch2.Parent) -> $($ch2.Child)"; Class = "process lineage: spawned child process"; Why = "$($ch2.Evidence)"; Ident = "$($ch2.Child)"; Extra = ''; Anchor = 'entities' })
-        }
-        foreach ($pm in @(Import-CaseCsv 'flash_process_scored' | Where-Object { "$($_.Verdict)" -eq 'MEDIUM' -and "$($_.Name)" -and (ConvertTo-SafeInt $_.Score) -ge 4 } | Sort-Object { ConvertTo-SafeInt $_.Score } -Descending | Select-Object -First 2)) {
-            $leads.Add([pscustomobject]@{ Rank = 'med'; Title = "$($pm.Name) (PID $($pm.PID))"; Class = "review: medium process score $($pm.Score)"; Why = "$($pm.Evidence)"; Ident = "$($pm.Path)"; Extra = "signer: $(if ("$($pm.Signer)") { $pm.Signer } else { 'NONE' })"; Anchor = 'processes' })
-        }
-        foreach ($pc in @($pubConns | Where-Object { "$($_.RemoteAddress)" -and -not (Get-IpCloudClass "$($_.RemoteAddress)") } | Group-Object RemoteAddress, RemotePort | ForEach-Object { $_.Group[0] } | Select-Object -First 2)) {
-            $pn = if ("$($pc.ProcessPath)") { Split-Path "$($pc.ProcessPath)" -Leaf } else { "PID $($pc.PID)" }
-            $leads.Add([pscustomobject]@{ Rank = 'med'; Title = "$pn -> $($pc.RemoteAddress):$($pc.RemotePort)"; Class = "review: outbound to non-cloud public IP"; Why = "established connection to unknown provider (not Microsoft/AWS/Google/Cloudflare/Akamai) - verify destination ownership and purpose"; Ident = "$($pc.RemoteAddress)"; Extra = ''; Anchor = 'network' })
-        }
-        $leads = [System.Collections.Generic.List[object]]@(
-            @($leads | Sort-Object @{e = { if ($_.Rank -eq 'crit') { 0 } else { 1 } } } | Group-Object Title, Class | ForEach-Object { $_.Group[0] } | Select-Object -First 8)
-        )
+        if (Test-CaseCsv 'leads') { $leads = @(Import-CaseCsv 'leads') }
+        else { $leads = @(Get-TriageLeads) }
         $null = $sb.AppendLine("<a name='leads'></a><h2>Triage leads - decide these first</h2>")
         if ($leads.Count -eq 0) {
             $null = $sb.AppendLine("<div class='meta'>No signal rose to lead level - nothing here demands a decision before the reference sections.</div>")
@@ -5761,12 +5710,31 @@ tr.techrow{cursor:pointer}
             $ftAll = $null
             try { $ftAll = Get-Content -LiteralPath (Join-Path (Join-Path (Split-Path -Parent $CsvDir) 'focus') 'focus_terms.json') -Raw -ErrorAction Stop | ConvertFrom-Json } catch { }
             $n2 = 0
+            # v2.71 task 8: ONE static Upgrade/Dismiss guidance line per lead card, keyed on the
+            # Class prefix the shared builder writes (same strings as leads.csv's Class column).
+            # Ordered patterns, first match wins - a multi-rule hunt lead keys on its first joined
+            # rule. Classes with no entry (IOC hash = near-certain already, review:* = explicitly
+            # not verdicts, YARA, lineage, anything future) render NO line. Render-local on
+            # purpose: leads.csv keeps its 8-column shape and the draft projection is untouched.
+            $leadUpg = @(
+                @{ K = 'hunt rule: Renamed LOLBin*';             L = 'Upgrade if: the embedded identity is a known-malicious tool or the path is user-writable - Dismiss if: the path is a known test/canary or software-updater staging dir' },
+                @{ K = 'hunt rule: Downloaded then executed*';   L = 'Upgrade if: the download came from a non-cloud unknown host or re-appears in persistence - Dismiss if: a signed installer from a known vendor path with plausible download history' },
+                @{ K = 'hunt rule: Cross-process injection*';    L = 'Upgrade if: the target is LSASS or a system process - Dismiss if: both ends are the same protected process from one signer (self-injection noise)' },
+                @{ K = 'hunt rule: Defender exclusion*';         L = 'Upgrade if: no installed software plausibly explains the change - Dismiss if: a management/AV agent made a documented configuration change' },
+                @{ K = 'hunt rule: Defender real-time*';         L = 'Upgrade if: no installed software plausibly explains the change - Dismiss if: a management/AV agent made a documented configuration change' },
+                @{ K = 'malicious process - correlation score*'; L = 'Upgrade if: unsigned AND user-path AND talking externally - Dismiss if: the signer and path check out as the vendor''s known install location' },
+                @{ K = 'C2 beacon*';                             L = 'Upgrade if: the destination resolves to a hosting/previously-unseen ASN - Dismiss if: an OS/updater process with matching vendor telemetry' }
+            )
             foreach ($ld in $leads) {
                 $n2++
                 $cls = if ($ld.Rank -eq 'crit') { 'lead lead-crit' } else { 'lead lead-med' }
                 $null = $sb.AppendLine("<div class='$cls'><div class='leadtitle'>$n2. $(ConvertTo-HtmlEsc $ld.Title) <span class='leadclass'>$(ConvertTo-HtmlEsc $ld.Class)</span></div>")
                 if ("$($ld.Ident)") { $null = $sb.AppendLine("<div class='path' style='word-break:break-all'>$(ConvertTo-HtmlEsc $ld.Ident)$(if ($ld.Extra) { " - $(ConvertTo-HtmlEsc $ld.Extra)" })</div>") }
                 if ("$($ld.Why)") { $null = $sb.AppendLine("<div style='margin-top:4px'>$(ConvertTo-HtmlEsc $ld.Why)</div>") }
+                # task 8: the one upgrade/dismiss line (absent for unmapped classes)
+                $up2 = $null
+                foreach ($up in $leadUpg) { if ("$($ld.Class)" -like $up.K) { $up2 = $up.L; break } }
+                if ($up2) { $null = $sb.AppendLine("<div style='margin-top:4px' class='meta'>$(ConvertTo-HtmlEsc $up2)</div>") }
                 $ent2 = $entByPath["$($ld.Ident)".ToLower()]
                 if ($ent2 -and "$($ent2.Categories)") {
                     $chips = @("$($ent2.Categories)" -split ';' | Where-Object { $_ })
@@ -7045,6 +7013,7 @@ tr.techrow{cursor:pointer}
         'memory_live_scan'                = 'no processes were minidumped - the memory module was not selected, no flagged process qualified, or the dumps failed (see collection.log)'
         'mft_recent'                      = 'no $MFT entries kept - nothing born in the window on executable/user paths, or the MFTECmd parse did not run (see parse_needed.csv)'
         'parse_needed'                    = 'everything collected was parsed with the bundled tools - nothing is pending analyst-side completion (empty is good)'
+        'leads'                           = 'ranked triage leads (report artifact - the one ranking behind the lead cards + the draft BEST LEADS, not evidence)'
         'powershell_console_history'      = 'no PSReadLine console history for any profile - the file only exists after interactive PowerShell console use (or history is disabled)'
         'prefetch_index'                  = 'the Prefetch directory exists but holds no .pf files - Prefetch is disabled (common on servers and SSD-tweaked builds) or was wiped'
         'processes_flagged'               = 'no processes tripped the suspicious-process heuristics (empty is good)'
@@ -9038,6 +9007,106 @@ function Get-CompromiseVerdict {
     }
 }
 
+function Get-TriageLeads {
+    # v2.71: ONE triage-lead builder, two consumers. Invoke-RegenerateOutputs persists the
+    # ranked list to csv\derived\leads.csv; New-HtmlReport renders those rows (inline fallback
+    # on old cases / direct renders) and the draft's BEST LEADS projects the hunt-source rows.
+    # Source blocks are the ones New-HtmlReport used through v2.70, moved verbatim (same CSV
+    # reads, same per-source caps, same per-entity hunt dedupe).
+    # Ranking key, crit leads first: (1) corroboration category count desc (entities_binaries
+    # Categories ';' fields for the lead's Ident, case-insensitive, 0 when unresolvable - the
+    # same resolution the lead-card chips use at render time), (2) stable source priority
+    # HIGH process > YARA > beacon > hunt > IOC > chain, (3) Title, (4) Class - fully
+    # deterministic. Med leads keep source-block order (sigma > med proc > public conn) after
+    # the crits. Cap stays 8, crit-first.
+    if (-not (Get-Command ConvertTo-SafeInt -ErrorAction SilentlyContinue)) {
+        function ConvertTo-SafeInt { param([string]$Value, [int]$Default = 0) if ([string]::IsNullOrWhiteSpace($Value)) { return $Default }; try { return [int]$Value } catch { return $Default } }
+        function ConvertTo-SafeDbl { param([string]$Value, [double]$Default = 0) if ([string]::IsNullOrWhiteSpace($Value)) { return $Default }; try { return [double]$Value } catch { return $Default } }
+    }
+    $hayRows = @(Import-CaseCsv 'hayabusa_timeline.csv')
+    if (Get-Command Remove-SigmaDuplicateEvents -ErrorAction SilentlyContinue) {
+        $hayRows = @(Remove-SigmaDuplicateEvents $hayRows | Where-Object { -not (Test-SigmaSelfNoise $_) })
+    }
+    $pubConns = @(Import-CaseCsv 'flash_public_connections.csv')
+    # corroboration categories per entity path - the same map the render resolves for its chips
+    $catCnt = @{}
+    foreach ($e2 in @(Import-CaseCsv 'entities_binaries')) {
+        if ("$($e2.Categories)") {
+            $c2 = @("$($e2.Categories)" -split ';' | Where-Object { "$($_)".Trim() }).Count
+            $k2 = "$($e2.Path)".ToLower()
+            if (-not $catCnt.ContainsKey($k2) -or $c2 -gt $catCnt[$k2]) { $catCnt[$k2] = $c2 }
+        }
+    }
+    $srcPri = @{ 'crit|processes' = 0; 'crit|yara' = 1; 'crit|beacons' = 2; 'crit|hunt' = 3; 'crit|ioc' = 4; 'crit|entities' = 5; 'med|sigma' = 6; 'med|processes' = 7; 'med|network' = 8 }
+    $leads = New-Object System.Collections.Generic.List[object]
+    foreach ($p in @(Import-CaseCsv 'flash_process_scored' | Where-Object { "$($_.Verdict)" -eq 'HIGH' -and "$($_.Name)" } | Sort-Object { ConvertTo-SafeInt $_.Score } -Descending | Select-Object -First 3)) {
+        $leads.Add([pscustomobject]@{ Rank = 'crit'; Title = "$($p.Name) (PID $($p.PID))"; Class = "malicious process - correlation score $($p.Score)"; Why = "$($p.Evidence)"; Ident = "$($p.Path)"; Extra = "signer: $(if ("$($p.Signer)") { $p.Signer } else { 'NONE' })"; Anchor = 'processes' })
+    }
+    foreach ($y in @(Import-CaseCsv 'yara_hits' | Where-Object { "$($_.File)" } | Select-Object -First 3)) {
+        $rk = if ("$($y.Severity)" -match '^(high|critical)$') { 'crit' } else { 'med' }
+        $leads.Add([pscustomobject]@{ Rank = $rk; Title = (Split-Path "$($y.File)" -Leaf); Class = "YARA $($y.Severity): $($y.Rule)"; Why = "$($y.Description)"; Ident = "$($y.File)"; Extra = ''; Anchor = 'yara' })
+    }
+    foreach ($b in @(Import-CaseCsv 'beacon_candidates' | Where-Object { "$($_.Severity)" -match '^high$' } | Select-Object -First 2)) {
+        $leads.Add([pscustomobject]@{ Rank = 'crit'; Title = "$($b.Process) -> $($b.RemoteIp):$($b.Port)"; Class = 'C2 beacon (regular callbacks)'; Why = "$($b.Events) connections over $($b.SpanMin) min, median interval ~$($b.MedianIntervalSec)s, regularity $([math]::Round((ConvertTo-SafeDbl $b.Regularity), 2))"; Ident = "$($b.RemoteIp)"; Extra = ''; Anchor = 'beacons' })
+    }
+    # v2.70 (task 4): hunt leads collapse per ENTITY (case-insensitive) BEFORE the window -
+    # one card per entity, rules joined (' + '), ATT&CK tags '/'-joined, evidence from the
+    # first row. Only within-source dedupe: other lead sources are untouched.
+    $hfEnts = New-Object System.Collections.Generic.List[object]
+    $hfSeen = @{}
+    foreach ($h1 in @(Import-CaseCsv 'hunt_findings' | Where-Object { "$($_.Severity)" -eq 'high' })) {
+        $hk = "$($h1.Entity)".ToLower()
+        if ($hfSeen.ContainsKey($hk)) {
+            $hg = $hfSeen[$hk]
+            if ("$($h1.Rule)" -and @($hg.Rules.ToArray()) -notcontains "$($h1.Rule)") { $null = $hg.Rules.Add("$($h1.Rule)") }
+            if ("$($h1.Attck)" -and @($hg.Tags.ToArray()) -notcontains "$($h1.Attck)") { $null = $hg.Tags.Add("$($h1.Attck)") }
+        } else {
+            $hg = [pscustomobject]@{ Entity = "$($h1.Entity)"; Evidence = "$($h1.Evidence)"; Rules = (New-Object System.Collections.Generic.List[string]); Tags = (New-Object System.Collections.Generic.List[string]) }
+            if ("$($h1.Rule)") { $null = $hg.Rules.Add("$($h1.Rule)") }
+            if ("$($h1.Attck)") { $null = $hg.Tags.Add("$($h1.Attck)") }
+            $hfSeen[$hk] = $hg
+            $null = $hfEnts.Add($hg)
+        }
+        if ($hfEnts.Count -ge 2) { break }
+    }
+    foreach ($hg in $hfEnts) {
+        $leads.Add([pscustomobject]@{ Rank = 'crit'; Title = "$($hg.Entity)"; Class = "hunt rule: $(($hg.Rules.ToArray()) -join ' + ')"; Why = "$($hg.Evidence)"; Ident = "$($hg.Entity)"; Extra = "ATT&CK $(($hg.Tags.ToArray()) -join '/')"; Anchor = 'hunt' })
+    }
+    foreach ($io in @(Import-CaseCsv 'ioc_hits_amcache' | Select-Object -First 2)) {
+        $leads.Add([pscustomobject]@{ Rank = 'crit'; Title = "$($io.Application)"; Class = 'IOC hash match (known-bad binary ran on this host)'; Why = "SHA1 $($io.Indicator) matched the IOC feed"; Ident = "$($io.SourceFile)"; Extra = ''; Anchor = 'ioc' })
+    }
+    # v2.55: medium-weight lead sources - a case can be SUSPICIOUS without any HIGH/YARA/beacon
+    $hayMed = @($hayRows | Where-Object { "$($_.Level)" -match '^(medium|high|crit)$' })
+    if ($hayMed.Count -ge 20) {
+        $hayTop = @($hayMed | Group-Object RuleTitle | Sort-Object Count -Descending | Select-Object -First 3)
+        # v2.66 (B7): Rule = the noisiest rule, so the lead link can open that drill-down
+        $leads.Add([pscustomobject]@{ Rank = 'med'; Title = "Sigma storm: $([int]$hayMed.Count) detection rows"; Class = "review: sigma volume spike"; Why = (($hayTop | ForEach-Object { "$($_.Name) ($($_.Count) hits)" }) -join '; '); Ident = ''; Extra = ''; Anchor = 'sigma'; Rule = "$($hayTop[0].Name)" })
+    }
+    foreach ($ch2 in @(Import-CaseCsv 'process_chains' | Where-Object { "$($_.Child)" } | Select-Object -First 2)) {
+        $leads.Add([pscustomobject]@{ Rank = 'crit'; Title = "$($ch2.Parent) -> $($ch2.Child)"; Class = "process lineage: spawned child process"; Why = "$($ch2.Evidence)"; Ident = "$($ch2.Child)"; Extra = ''; Anchor = 'entities' })
+    }
+    foreach ($pm in @(Import-CaseCsv 'flash_process_scored' | Where-Object { "$($_.Verdict)" -eq 'MEDIUM' -and "$($_.Name)" -and (ConvertTo-SafeInt $_.Score) -ge 4 } | Sort-Object { ConvertTo-SafeInt $_.Score } -Descending | Select-Object -First 2)) {
+        $leads.Add([pscustomobject]@{ Rank = 'med'; Title = "$($pm.Name) (PID $($pm.PID))"; Class = "review: medium process score $($pm.Score)"; Why = "$($pm.Evidence)"; Ident = "$($pm.Path)"; Extra = "signer: $(if ("$($pm.Signer)") { $pm.Signer } else { 'NONE' })"; Anchor = 'processes' })
+    }
+    foreach ($pc in @($pubConns | Where-Object { "$($_.RemoteAddress)" -and -not (Get-IpCloudClass "$($_.RemoteAddress)") } | Group-Object RemoteAddress, RemotePort | ForEach-Object { $_.Group[0] } | Select-Object -First 2)) {
+        $pn = if ("$($pc.ProcessPath)") { Split-Path "$($pc.ProcessPath)" -Leaf } else { "PID $($pc.PID)" }
+        $leads.Add([pscustomobject]@{ Rank = 'med'; Title = "$pn -> $($pc.RemoteAddress):$($pc.RemotePort)"; Class = "review: outbound to non-cloud public IP"; Why = "established connection to unknown provider (not Microsoft/AWS/Google/Cloudflare/Akamai) - verify destination ownership and purpose"; Ident = "$($pc.RemoteAddress)"; Extra = ''; Anchor = 'network' })
+    }
+    # rank: crit-first, crits by corroboration desc then source priority then Title/Class
+    # (deterministic); med leads by source priority only. Dedupe + cap as before.
+    # Uniform 8-column shape so Export-Csv cannot drop the sigma Rule column when the first
+    # lead carries no Rule property.
+    return [System.Collections.Generic.List[object]]@(
+        @($leads | Sort-Object @{ e = { if ("$($_.Rank)" -eq 'crit') { 0 } else { 1 } } },
+                @{ e = { $cc = 0; if ("$($_.Rank)" -eq 'crit' -and $catCnt.ContainsKey("$($_.Ident)".ToLower())) { $cc = $catCnt["$($_.Ident)".ToLower()] }; $cc }; Descending = $true },
+                @{ e = { $k3 = "$($_.Rank)|$($_.Anchor)"; if ($srcPri.ContainsKey($k3)) { $srcPri[$k3] } else { 9 } } },
+                @{ e = { "$($_.Title)" } },
+                @{ e = { "$($_.Class)" } } | Group-Object Title, Class | ForEach-Object { $_.Group[0] } | Select-Object -First 8 | ForEach-Object {
+                [pscustomobject]@{ Rank = "$($_.Rank)"; Title = "$($_.Title)"; Class = "$($_.Class)"; Why = "$($_.Why)"; Ident = "$($_.Ident)"; Extra = "$($_.Extra)"; Anchor = "$($_.Anchor)"; Rule = "$($_.Rule)" }
+            })
+    )
+}
+
 function Get-CaseNarrative {
     # Plain-language executive draft built from the verdict + hunt findings (v2.31).
     # Written to case_draft.txt and rendered under the verdict in report.html - a starting
@@ -9065,29 +9134,17 @@ function Get-CaseNarrative {
         $L.Add("WHAT THE EVIDENCE SHOWS: no compromising signals in the collected evidence.")
     }
     $L.Add("")
-    # v2.70 (task 4): entity-level lead dedupe - one lead per entity (case-insensitive), multiple
-    # rules listed together (rules ' + ', ATT&CK tags '/'-joined, evidence from the first row),
-    # cap stays 5 entities.
-    $leadEnts = New-Object System.Collections.Generic.List[object]
-    $leadSeen = @{}
-    foreach ($f in @(Import-CaseCsv 'hunt_findings' | Where-Object { "$($_.Severity)" -eq 'high' })) {
-        $k = "$($f.Entity)".ToLower()
-        if ($leadSeen.ContainsKey($k)) {
-            $g = $leadSeen[$k]
-            if ("$($f.Rule)" -and @($g.Rules.ToArray()) -notcontains "$($f.Rule)") { $null = $g.Rules.Add("$($f.Rule)") }
-            if ("$($f.Attck)" -and @($g.Tags.ToArray()) -notcontains "$($f.Attck)") { $null = $g.Tags.Add("$($f.Attck)") }
-        } else {
-            $g = [pscustomobject]@{ Entity = "$($f.Entity)"; Evidence = "$($f.Evidence)"; Rules = (New-Object System.Collections.Generic.List[string]); Tags = (New-Object System.Collections.Generic.List[string]) }
-            if ("$($f.Rule)") { $null = $g.Rules.Add("$($f.Rule)") }
-            if ("$($f.Attck)") { $null = $g.Tags.Add("$($f.Attck)") }
-            $leadSeen[$k] = $g
-            $null = $leadEnts.Add($g)
-        }
-    }
-    while ($leadEnts.Count -gt 5) { $null = $leadEnts.RemoveAt($leadEnts.Count - 1) }
-    if ($leadEnts.Count -gt 0) {
+    # v2.71: BEST LEADS is a projection of the ONE shared lead list (csv\derived\leads.csv,
+    # built + persisted by the regen via Get-TriageLeads): hunt-source rows, report ranking,
+    # cap 5, same line format. With no leads.csv (old case, direct render) the block is
+    # skipped - the draft never rebuilds a second ranking.
+    $leadRows = @()
+    if (Test-CaseCsv 'leads') { $leadRows = @(Import-CaseCsv 'leads' | Where-Object { "$($_.Anchor)" -eq 'hunt' }) }
+    if ($leadRows.Count -gt 0) {
         $L.Add("BEST LEADS (high-severity hunt detections - verify against cited evidence)")
-        foreach ($g in $leadEnts) { $L.Add(" - [$(($g.Tags.ToArray()) -join '/')] $(($g.Rules.ToArray()) -join ' + ') on $($g.Entity): $($g.Evidence)") }
+        foreach ($ld in @($leadRows | Select-Object -First 5)) {
+            $L.Add(" - [$(("$($ld.Extra)") -replace '^ATT&CK ', '')] $(("$($ld.Class)") -replace '^hunt rule: ', '') on $($ld.Title): $($ld.Why)")
+        }
         $L.Add("")
     }
     $missing = @($v.Coverage | Where-Object { -not $_.Collected })
@@ -9253,7 +9310,7 @@ function Invoke-RegenerateOutputs {
     try {
         $focusTermsP = Join-Path (Join-Path $CaseDir 'focus') 'focus_terms.json'
         if (-not (Test-Path -LiteralPath $focusTermsP)) {
-            $seed = $null; $seedWhy = ''
+            $seed = $null; $seedWhy = ''; $seedLeaf = $null
             $hiProc = @(Import-CaseCsv 'flash_process_scored' | Where-Object { "$($_.Verdict)" -eq 'HIGH' -and "$($_.Name)" } | Sort-Object { ([int]"$($_.Score)") } -Descending)
             if ($hiProc.Count -gt 0) { $seed = "$($hiProc[0].Name)"; $seedWhy = "malicious process score $($hiProc[0].Score)" }
             if (-not $seed) {
@@ -9270,8 +9327,12 @@ function Invoke-RegenerateOutputs {
             if (-not $seed) {
                 $hf = @(Import-CaseCsv 'hunt_findings' | Where-Object { "$($_.Severity)" -eq 'high' -and "$($_.Entity)" -match '(?i)\.(exe|sys|dll)$' } | Select-Object -First 1)
                 if ($hf) {
+                    # v2.71: seed the Entity AS-IS - the focus core classifies path seeds itself
+                    # (HarddiskVolume normalization + lowercase). Stripping to the leaf seeded the
+                    # OS process name (e.g. svchost.exe) and buried the one malicious instance
+                    # under every legit one. The leaf is kept only as the zero-hit fallback below.
                     $seed = "$($hf[0].Entity)"
-                    if ($seed.Contains('\')) { try { $seed = (Split-Path $seed -Leaf) } catch { } }
+                    if ($seed.Contains('\')) { try { $seedLeaf = (Split-Path $seed -Leaf) } catch { } }
                     $seedWhy = "hunt rule '$($hf[0].Rule)'"
                 }
             }
@@ -9289,10 +9350,23 @@ function Invoke-RegenerateOutputs {
             }
             if ($seed) {
                 Write-CaseLog "    auto-focus: $seedWhy on '$seed' -> building the dossier (focus\focus_report.html)" 'Cyan'
-                Invoke-FocusCore -Indicator $seed -Meta ([pscustomobject]@{ Computer = "$Computer"; CaseID = "$($script:CurrentCaseID)" }) | Out-Null
+                try { Invoke-FocusCore -Indicator $seed -Meta ([pscustomobject]@{ Computer = "$Computer"; CaseID = "$($script:CurrentCaseID)" }) | Out-Null } catch { Write-CaseLog "    auto-focus core failed: $($_.Exception.Message)" 'DarkYellow' }
+                # v2.71: a path seed that matched nothing (or a failed core run) wrote no dossier -
+                # re-seed ONCE with the leaf name (pre-v2.71 behavior) so the case still ships a story
+                if ($seedLeaf -and -not (Test-Path -LiteralPath $focusTermsP)) {
+                    Write-CaseLog "    auto-focus: path seed '$seed' matched nothing - fallback re-seed with leaf name '$seedLeaf'" 'Yellow'
+                    try { Invoke-FocusCore -Indicator $seedLeaf -Meta ([pscustomobject]@{ Computer = "$Computer"; CaseID = "$($script:CurrentCaseID)" }) | Out-Null } catch { Write-CaseLog "    auto-focus fallback failed: $($_.Exception.Message)" 'DarkYellow' }
+                }
             }
         }
     } catch { Write-CaseLog "    auto-focus failed: $($_.Exception.Message)" 'DarkYellow' }
+    # v2.71: triage leads built ONCE and persisted to csv\derived\leads.csv - the report
+    # renders these rows and the draft's BEST LEADS projects the same list (one builder,
+    # one ranking). Empty result -> no file, both consumers degrade gracefully.
+    try {
+        $leadExport = @(Get-TriageLeads)
+        if ($leadExport.Count -gt 0) { $leadExport | Export-Csv -LiteralPath (Get-CaseCsvFullPath 'leads') -NoTypeInformation -Encoding UTF8 }
+    } catch { Write-CaseLog "    lead export failed: $($_.Exception.Message)" 'DarkYellow' }
     try { Get-CaseNarrative | Set-Content -LiteralPath (Join-Path $CaseDir 'case_draft.txt') -Encoding UTF8 } catch { Write-CaseLog "    case draft failed: $($_.Exception.Message)" 'DarkYellow' }
     try { New-SiemExport } catch { Write-CaseLog "    siem export failed: $($_.Exception.Message)" 'DarkYellow' }
     try { New-AttackLayer } catch { Write-CaseLog "    ATT&CK layer failed: $($_.Exception.Message)" 'DarkYellow' }
@@ -10246,7 +10320,7 @@ function Invoke-FocusCore {
 
     # ---- iterative scan ---------------------------------------------------
     $files = @(Get-ChildItem -LiteralPath $script:CsvDir -Filter '*.csv' -File -Recurse -ErrorAction SilentlyContinue |
-        Where-Object { @('sigma_rules', 'evtx_ecmd', 'recmd_out') -notcontains $_.Directory.Name -and $_.BaseName -notmatch '^(focus_|process_pivot|supertimeline|parse_needed)' } | Sort-Object Name)
+        Where-Object { @('sigma_rules', 'evtx_ecmd', 'recmd_out') -notcontains $_.Directory.Name -and $_.BaseName -notmatch '^(focus_|process_pivot|supertimeline|parse_needed|leads)' } | Sort-Object Name)
     $cache = @{}
     $hits = New-Object System.Collections.Generic.List[object]
     $hitKeys = New-Object 'System.Collections.Generic.HashSet[string]'

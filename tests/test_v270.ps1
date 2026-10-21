@@ -24,7 +24,7 @@ $CaseDir = $tmp
 $global:LogHours = 168
 $script:EndpointAdmin = $true
 
-function Import-CaseCsv([string]$name) { if ($script:fixtureRows.ContainsKey($name)) { return $script:fixtureRows[$name] }; return @() }
+function Import-CaseCsv([string]$name) { $name = "$name" -replace '\.csv$', ''; if ($script:fixtureRows.ContainsKey($name)) { return $script:fixtureRows[$name] }; return @() }
 function Test-CaseCsv([string]$n) { return ($script:presentCsvs -contains $n) }
 function Save-Rows { param([string]$Name, $Rows) }
 function Write-CaseLog { param([string]$Message, [string]$Color = 'Gray') }
@@ -87,14 +87,15 @@ Check "static: old laundry-list signal name removed" ($src -notmatch 'Hunt techn
 Check "static: huntHi input filter unchanged (high severity + rule regex)" ($src -match '-match ''Renamed LOLBin\|side-load\|Downloaded then executed\|LSASS access')
 Check "static: distinct-rule grouping present" ($src -match [regex]::Escape('$huntHiRules = @($huntHi | Group-Object Rule'))
 
-# ---- v2.70 task 4: draft BEST LEADS entity dedupe + generated-stamp dialect ----
-# Real WIN11 case shape: the SAME file flagged by TWO hunt rules rendered as two draft leads and
-# two cards. The draft builder now dedupes hunt findings by Entity (case-insensitive), joins rules
-# with ' + ' / ATT&CK tags with '/', keeps the first row's evidence, and rewrites embedded locale
-# stamps (10/12/2026 7:43:01 AM) to the generated dialect yyyy-MM-dd HH:mm (unparseable untouched).
-$mNar = [regex]::Match($src, "(?s)function Get-CaseNarrative \{.*?\r?\n\}")
-if (-not $mNar.Success) { throw 'extract failed: Get-CaseNarrative' }
-Invoke-Expression $mNar.Value
+# ---- v2.71 task 5+6: ONE lead builder (Get-TriageLeads) + strength-ordered leads ----
+$mTl = [regex]::Match($src, "(?s)function Get-TriageLeads \{.*?\r?\n\}")
+Check "task5: Get-TriageLeads extractable (column-0 brace)" ($mTl.Success)
+if (-not $mTl.Success) { throw 'extract failed: Get-TriageLeads' }
+Invoke-Expression $mTl.Value
+foreach ($n3 in @('ConvertTo-SafeInt', 'ConvertTo-SafeDbl', 'Get-IpCloudClass')) {
+    $m3 = [regex]::Match($src, "(?s)function $n3 \{.*?\r?\n\}")
+    if ($m3.Success) { Invoke-Expression $m3.Value }
+}
 $Computer = 'V270HOST'; $script:HostRole = 'workstation'; $StartTime = Get-Date; $ScriptVersion = '9.99'
 $CsvDir = Join-Path $tmp 'csv'
 $mkVd = {
@@ -105,15 +106,95 @@ $mkVd = {
 function Hf2([string]$rule, [string]$entity, [string]$attck, [string]$evidence) {
     [pscustomobject]@{ Found = '2026-10-14 12:00:00'; Rule = $rule; Severity = 'high'; Entity = $entity; Attck = $attck; Evidence = $evidence }
 }
+function Ent2([string]$path, [string]$cats) {
+    [pscustomobject]@{ Path = $path; Categories = $cats }
+}
+$toCsvRow = {
+    param($ld)
+    [pscustomobject]@{ Rank = "$($ld.Rank)"; Title = "$($ld.Title)"; Class = "$($ld.Class)"; Why = "$($ld.Why)"; Ident = "$($ld.Ident)"; Extra = "$($ld.Extra)"; Anchor = "$($ld.Anchor)"; Rule = "$($ld.Rule)" }
+}
 
-# task4-1: same entity (row 2 differs in case only), two rules -> ONE lead naming both rules
-$script:Verdict = & $mkVd @()
+# task6-1: strength order - the 2-corroboration renamed binary outranks the 1-corroboration download
+$script:fixtureRows = @{
+    'hunt_findings'     = @(
+        (Hf2 'Downloaded then executed' 'C:\Users\Ary\Downloads\7z2603-x64.exe' 'T1650' 'downloaded then executed')
+        (Hf2 'Renamed LOLBin at rest (Sysmon identity mismatch)' 'C:\Windows\Temp\svcroot.exe' 'T1036.003' 'identity mismatch evidence')
+    )
+    'entities_binaries' = @(
+        (Ent2 'c:\users\ary\downloads\7z2603-x64.exe' 'hunt_findings')
+        (Ent2 'C:\Windows\Temp\svcroot.exe' 'hunt_findings;processes')
+    )
+}
+$leadsT6 = @(Get-TriageLeads)
+Check "task6: 2-corroboration renamed binary ranks #1 (download #2)" ($leadsT6.Count -eq 2 -and "$($leadsT6[0].Title)" -eq 'C:\Windows\Temp\svcroot.exe' -and "$($leadsT6[1].Title)" -eq 'C:\Users\Ary\Downloads\7z2603-x64.exe')
+Check "task6: hunt lead shape preserved (Class/Extra/Ident)" ("$($leadsT6[0].Class)" -eq 'hunt rule: Renamed LOLBin at rest (Sysmon identity mismatch)' -and "$($leadsT6[0].Extra)" -eq 'ATT&CK T1036.003' -and "$($leadsT6[0].Ident)" -eq 'C:\Windows\Temp\svcroot.exe')
+$leadsT6r = @(Get-TriageLeads)
+Check "task6: ranking deterministic across two calls" ((@($leadsT6r | ForEach-Object { "$($_.Title)" }) -join '|') -eq (@($leadsT6 | ForEach-Object { "$($_.Title)" }) -join '|'))
+
+# task4 (builder side, unchanged semantics): entity dedupe + joins + first-row evidence
 $script:fixtureRows = @{
     'hunt_findings' = @(
         (Hf2 'Downloaded then executed' 'C:\Users\Ary\Downloads\7z2603-x64.exe' 'T1650' 'downloaded 10/12/2026 7:43:01 AM then executed')
         (Hf2 'Renamed LOLBin at rest (Sysmon identity mismatch)' 'c:\users\ary\downloads\7z2603-x64.exe' 'T1036.003' 'second-rule evidence')
     )
 }
+$leadEntT4 = @(Get-TriageLeads | Where-Object { "$($_.Anchor)" -eq 'hunt' })
+Check "task4 builder: same entity two rules -> ONE lead" ($leadEntT4.Count -eq 1)
+Check "task4 builder: lead joins both rules with +" ("$($leadEntT4[0].Class)" -eq 'hunt rule: Downloaded then executed + Renamed LOLBin at rest (Sysmon identity mismatch)')
+Check "task4 builder: ATT&CK tags deduped + joined with /" ("$($leadEntT4[0].Extra)" -eq 'ATT&CK T1650/T1036.003')
+Check "task4 builder: entity keeps the first row's casing" ("$($leadEntT4[0].Title)" -eq 'C:\Users\Ary\Downloads\7z2603-x64.exe')
+Check "task4 builder: evidence from the first row" ("$($leadEntT4[0].Why)" -eq 'downloaded 10/12/2026 7:43:01 AM then executed')
+Check "task4 builder: second row's evidence not duplicated" ("$($leadEntT4[0].Why)" -notmatch 'second-rule evidence')
+
+$script:fixtureRows = @{
+    'hunt_findings' = @(
+        (Hf2 'RuleAlpha' 'C:\a\one.exe' 'T1000' 'ev a')
+        (Hf2 'RuleBeta' 'C:\b\two.exe' 'T1001' 'ev b')
+    )
+}
+$leadEntT4b = @(Get-TriageLeads)
+Check "task4 builder: two different entities -> two leads" ($leadEntT4b.Count -eq 2)
+
+# task6-2: cap 8, crit-first, stable source priority when corroboration ties at 0
+$manyT6 = @{
+    'hunt_findings'          = (New-Object System.Collections.Generic.List[object])
+    'flash_process_scored'   = (New-Object System.Collections.Generic.List[object])
+    'yara_hits'              = (New-Object System.Collections.Generic.List[object])
+    'beacon_candidates'      = (New-Object System.Collections.Generic.List[object])
+    'ioc_hits_amcache'       = (New-Object System.Collections.Generic.List[object])
+    'process_chains'         = (New-Object System.Collections.Generic.List[object])
+    'hayabusa_timeline'      = (New-Object System.Collections.Generic.List[object])
+}
+1..3 | ForEach-Object { $null = $manyT6['flash_process_scored'].Add([pscustomobject]@{ Name = "proc$_"; PID = "$_"; Verdict = 'HIGH'; Score = "$_"; Evidence = 'e'; Path = "C:\p\proc$_.exe"; Signer = '' }) }
+1..3 | ForEach-Object { $null = $manyT6['yara_hits'].Add([pscustomobject]@{ File = "C:\y\y$_.exe"; Severity = 'high'; Rule = "R$_"; Description = 'd' }) }
+1..3 | ForEach-Object { $null = $manyT6['beacon_candidates'].Add([pscustomobject]@{ Severity = 'high'; Process = "p$_"; RemoteIp = "10.0.0.$_"; Port = '8443'; Events = '10'; SpanMin = '60'; MedianIntervalSec = '30'; Regularity = '0.9' }) }
+1..3 | ForEach-Object { $null = $manyT6['hunt_findings'].Add([pscustomobject]@{ Found = 'x'; Rule = "HR$_"; Severity = 'high'; Entity = "C:\h\h$_.exe"; Attck = "T10$_"; Evidence = 'he' }) }
+1..3 | ForEach-Object { $null = $manyT6['ioc_hits_amcache'].Add([pscustomobject]@{ Application = "ioc$_.exe"; Indicator = "sha$_"; SourceFile = "C:\i\ioc$_.exe" }) }
+1..3 | ForEach-Object { $null = $manyT6['process_chains'].Add([pscustomobject]@{ Parent = "C:\p\par$_.exe"; Child = "C:\c\kid$_.exe"; Evidence = 'ce' }) }
+$script:fixtureRows = $manyT6
+$leadsCap = @(Get-TriageLeads)
+Check "task6: cap 8 enforced (14 crit candidates -> 8 leads)" ($leadsCap.Count -eq 8)
+Check "task6: crit source priority on corroboration ties (proc,yara,beacon)" ((@($leadsCap | ForEach-Object { "$($_.Anchor)" }) -join ',') -eq 'processes,processes,processes,yara,yara,yara,beacons,beacons')
+1..20 | ForEach-Object { $null = $manyT6['hayabusa_timeline'].Add([pscustomobject]@{ RuleTitle = 'StormRule'; Level = 'medium'; Timestamp = '2026-10-14 12:00:00' }) }
+$null = $manyT6['flash_process_scored'].Add([pscustomobject]@{ Name = 'medproc'; PID = '99'; Verdict = 'MEDIUM'; Score = '5'; Evidence = 'e'; Path = 'C:\p\medproc.exe'; Signer = '' })
+$leadsCap2 = @(Get-TriageLeads)
+Check "task6: med leads stay behind the crit cap (storm capped out)" ($leadsCap2.Count -eq 8 -and @($leadsCap2 | Where-Object { "$($_.Rank)" -eq 'med' }).Count -eq 0)
+$medOnly = @{
+    'hayabusa_timeline'        = $manyT6['hayabusa_timeline']
+    'flash_process_scored'     = @([pscustomobject]@{ Name = 'medproc'; PID = '99'; Verdict = 'MEDIUM'; Score = '5'; Evidence = 'e'; Path = 'C:\p\medproc.exe'; Signer = '' })
+    'flash_public_connections' = @([pscustomobject]@{ RemoteAddress = '1.2.3.4'; RemotePort = '4444'; ProcessPath = ''; PID = '5' })
+}
+$script:fixtureRows = $medOnly
+$leadsMed = @(Get-TriageLeads)
+Check "task6: med-only case keeps today's relative order (storm, med proc, conn)" ((@($leadsMed | ForEach-Object { "$($_.Anchor)" }) -join ',') -eq 'sigma,processes,network')
+
+# ---- v2.70 task 4 (retargeted v2.71): draft BEST LEADS is a projection of leads.csv ----
+$mNar = [regex]::Match($src, "(?s)function Get-CaseNarrative \{.*?\r?\n\}")
+if (-not $mNar.Success) { throw 'extract failed: Get-CaseNarrative' }
+Invoke-Expression $mNar.Value
+$script:Verdict = & $mkVd @()
+$script:presentCsvs = @('leads')
+$script:fixtureRows = @{ 'leads' = @(& $toCsvRow $leadEntT4[0]) }
 $draftT4 = @(Get-CaseNarrative)
 $leadT4 = @($draftT4 | Where-Object { $_ -match '^ - \[' })
 Check "task4 draft: same entity two rules -> ONE lead" ($leadT4.Count -eq 1)
@@ -123,36 +204,50 @@ Check "task4 draft: entity keeps the first row's casing" ("$($leadT4[0])" -match
 Check "task4 draft: evidence from the first row, locale stamp normalized" ("$($leadT4[0])" -match ': downloaded 2026-10-12 07:43 then executed')
 Check "task4 draft: second row's evidence not duplicated" ("$($leadT4[0])" -notmatch 'second-rule evidence')
 
-# task4-2: two different entities -> two leads (dedupe not over-eager)
-$script:fixtureRows = @{
-    'hunt_findings' = @(
-        (Hf2 'RuleAlpha' 'C:\a\one.exe' 'T1000' 'ev a')
-        (Hf2 'RuleBeta' 'C:\b\two.exe' 'T1001' 'ev b')
-    )
-}
-$draftT4b = @(Get-CaseNarrative)
-$leadT4b = @($draftT4b | Where-Object { $_ -match '^ - \[' })
-Check "task4 draft: two different entities -> two leads" ($leadT4b.Count -eq 2)
+# task5: draft entities + order == the shared list's hunt rows (exact projected lines)
+$script:fixtureRows = @{ 'leads' = @($leadEntT4b | ForEach-Object { & $toCsvRow $_ }) }
+$draftT4b2 = @(Get-CaseNarrative)
+$leadT4b2 = @($draftT4b2 | Where-Object { $_ -match '^ - \[' })
+$expectedT5 = @($script:fixtureRows['leads'] | Where-Object { "$($_.Anchor)" -eq 'hunt' } | Select-Object -First 5 | ForEach-Object { " - [$(("$($_.Extra)") -replace '^ATT&CK ', '')] $(("$($_.Class)") -replace '^hunt rule: ', '') on $($_.Title): $($_.Why)" })
+Check "task5: draft BEST LEADS == shared hunt rows (exact lines, order)" ((($leadT4b2 -join "`n")) -eq (($expectedT5 -join "`n")))
+Check "task4 draft: two different entities -> two leads" ($leadT4b2.Count -eq 2)
+
+# task5: missing leads.csv -> the draft skips its BEST LEADS block gracefully (no second builder)
+$script:presentCsvs = @()
+$draftT4skip = @(Get-CaseNarrative)
+Check "task5: missing leads.csv -> draft skips its BEST LEADS block gracefully" ((@($draftT4skip | Where-Object { $_ -match 'BEST LEADS' }).Count -eq 0) -and (@($draftT4skip | Where-Object { $_ -match '^ - \[' }).Count -eq 0))
 
 # task4-3: locale stamp inside a signal detail normalizes to yyyy-MM-dd HH:mm
 $script:Verdict = & $mkVd @([pscustomobject]@{ Signal = 'Hunt techniques (1 fired)'; Weight = 3; Count = 1; Detail = 'first seen 10/12/2026 7:43:01 AM on HOST' })
 $draftT4c = @(Get-CaseNarrative)
 Check "task4 draft: signal detail locale stamp normalizes" (@($draftT4c | Where-Object { $_ -match 'first seen 2026-10-12 07:43 on HOST' }).Count -eq 1)
 
-# task4-4: text the regex matches but DateTime cannot parse stays verbatim (no mangle)
+# task4-4: text the regex matches but DateTime cannot parse stays verbatim (no mangle) - now
+# flowing through the leads.csv projection dialect
 $script:Verdict = & $mkVd @()
-$script:fixtureRows = @{
-    'hunt_findings' = @((Hf2 'RuleOdd' 'C:\x\odd.exe' 'T9' 'seen 99/99/2026 9:99:99 AM and not-a-date'))
-}
+$script:presentCsvs = @('leads')
+$script:fixtureRows = @{ 'leads' = @([pscustomobject]@{ Rank = 'crit'; Title = 'C:\x\odd.exe'; Class = 'hunt rule: RuleOdd'; Why = 'seen 99/99/2026 9:99:99 AM and not-a-date'; Ident = 'C:\x\odd.exe'; Extra = 'ATT&CK T9'; Anchor = 'hunt'; Rule = '' }) }
 $draftT4d = @(Get-CaseNarrative)
 $leadT4d = @($draftT4d | Where-Object { $_ -match '^ - \[' })
 Check "task4 draft: unparseable timestamp text stays verbatim" ($leadT4d.Count -eq 1 -and "$($leadT4d[0])" -match 'seen 99/99/2026 9:99:99 AM and not-a-date')
+
+# ---- v2.71 task 5 statics: regen writes leads.csv; it is a report artifact, never evidence ----
+$mReT5 = [regex]::Match($src, "(?s)function Invoke-RegenerateOutputs \{.*?\r?\n\}")
+Check "task5 static: regen calls Get-TriageLeads" ($mReT5.Success -and $mReT5.Value.Contains('Get-TriageLeads'))
+Check "task5 static: leads export uses the derived path" ($mReT5.Success -and $mReT5.Value.Contains("Export-Csv -LiteralPath (Get-CaseCsvFullPath 'leads')"))
+Check "task5 static: leads built before the case draft write" ($mReT5.Success -and $mReT5.Value.IndexOf('Get-TriageLeads') -lt $mReT5.Value.IndexOf('Get-CaseNarrative'))
+Check "task5 static: leads built before the report render" ($mReT5.Success -and $mReT5.Value.IndexOf('Get-TriageLeads') -lt $mReT5.Value.IndexOf('New-HtmlReport | Out-Null'))
+Check "task5 static: leads routed to csv\derived (sortment)" ($src -match [regex]::Escape("'leads' = 'derived'"))
+$mStT5 = [regex]::Match($src, "(?s)function New-SuperTimeline \{.*?\r?\n\}")
+Check "task5 static: supertimeline weave never weaves leads.csv" ($mStT5.Success -and $mStT5.Value -notmatch "'leads'")
+Check "task5 static: report reads persisted leads, falls back inline" (($src -match [regex]::Escape("if (Test-CaseCsv 'leads') { `$leads = @(Import-CaseCsv 'leads') }")) -and ($src -match [regex]::Escape("else { `$leads = @(Get-TriageLeads) }")))
+Check "task5 static: focus scan excludes the leads report artifact" ($src -match [regex]::Escape('^(focus_|process_pivot|supertimeline|parse_needed|leads)'))
 
 # ---- render: weight-0 signals leave the contributing list (Release 1 task 2) ----
 # Full-report harness (test_v266/test_v268 pattern): the real New-HtmlReport renders a
 # hand-built fixture verdict in a temp case dir; assertions run on the banner HTML.
 . (Join-Path $PSScriptRoot '_casehelpers.ps1')
-foreach ($n2 in @('Import-CaseCsv', 'New-VtLink', 'Split-TagList', 'Get-TacticLabel', 'New-HtmlReport')) {
+foreach ($n2 in @('ConvertTo-SafeInt', 'ConvertTo-SafeDbl', 'Get-IpCloudClass', 'Get-TriageLeads', 'Import-CaseCsv', 'New-VtLink', 'Split-TagList', 'Get-TacticLabel', 'New-HtmlReport')) {
     $m2 = [regex]::Match($src, "(?s)function $n2 \{.*?\r?\n\}")
     if (-not $m2.Success) { throw "render extract failed: $n2" }
     Invoke-Expression $m2.Value
@@ -235,9 +330,104 @@ Check "task4 render: no second card for the case-variant entity path" (@([regex]
 $null = New-HtmlReport
 $htmlT4b = Get-Content -LiteralPath (Join-Path $CaseDir 'report.html') -Raw
 Check "task4 render: two different entities -> two hunt lead cards" ((@([regex]::Matches($htmlT4b, [regex]::Escape('hunt rule: RuleAlpha'))).Count -eq 1) -and (@([regex]::Matches($htmlT4b, [regex]::Escape('hunt rule: RuleBeta'))).Count -eq 1))
+Check "task4 render: no leads.csv -> inline fallback still rendered the cards" (-not (Test-CaseCsv 'leads'))
 
 # restore the empty fixture so the file's remaining scenarios see the original shape
 "# no entries" | Set-Content -LiteralPath (Join-Path $rcsv 'hunt_findings.csv') -Encoding UTF8
+
+# ---- v2.71 task 5 render/export: regen's export path mirrored, report + draft on one list ----
+# two-entity hunt fixture + corroboration counts -> builder ranks two.exe (2 categories) first,
+# the export persists that order, the report renders it verbatim and the draft projects it.
+@"
+"Found","Rule","Severity","Entity","Attck","Evidence"
+"2026-10-14 12:00:00","RuleAlpha","high","C:\a\one.exe","T1000","ev a"
+"2026-10-14 12:05:00","RuleBeta","high","C:\b\two.exe","T1001","ev b"
+"@ | Set-Content -LiteralPath (Join-Path $rcsv 'hunt_findings.csv') -Encoding UTF8
+@"
+"Path","Categories"
+"c:\a\one.exe","hunt_findings"
+"c:\b\two.exe","hunt_findings;processes"
+"@ | Set-Content -LiteralPath (Join-Path $rcsv 'entities_binaries.csv') -Encoding UTF8
+$leadsExp = @(Get-TriageLeads)
+Check "task5 export: builder ranks the 2-corroboration entity first" ($leadsExp.Count -eq 2 -and "$($leadsExp[0].Title)" -eq 'C:\b\two.exe')
+$leadsExp | Export-Csv -LiteralPath (Get-CaseCsvFullPath 'leads') -NoTypeInformation -Encoding UTF8
+Check "task5 export: leads.csv lands in csv\derived and Test-CaseCsv finds it" ((Test-Path -LiteralPath (Join-Path $rcsv 'derived\leads.csv')) -and (Test-CaseCsv 'leads'))
+$leadsRb = @(Import-Csv -LiteralPath (Join-Path $rcsv 'derived\leads.csv'))
+Check "task5 export: persisted rows keep the ranked order + uniform 8 columns" ((@($leadsRb | ForEach-Object { "$($_.Title)" }) -join '|') -eq (@($leadsExp | ForEach-Object { "$($_.Title)" }) -join '|') -and ((@($leadsRb[0].PSObject.Properties.Name) -join ',') -eq 'Rank,Title,Class,Why,Ident,Extra,Anchor,Rule'))
+
+# report renders the PERSISTED order (no re-rank at render time)
+$null = New-HtmlReport
+$htmlT5 = Get-Content -LiteralPath (Join-Path $CaseDir 'report.html') -Raw
+Check "task5 render: report card #1 == persisted rank #1 (2-corroboration entity)" ($htmlT5.Contains("leadtitle'>1. C:\b\two.exe <span"))
+Check "task5 render: report card #2 == persisted rank #2" ($htmlT5.Contains("leadtitle'>2. C:\a\one.exe <span"))
+
+# draft reads the SAME persisted rows -> same entities, same order, hunt rows only
+$draftT5 = @(Get-CaseNarrative)
+$draftLeads5 = @($draftT5 | Where-Object { $_ -match '^ - \[' })
+Check "task5: draft BEST LEADS == report lead cards (same list, same order)" ($draftLeads5.Count -eq 2 -and "$($draftLeads5[0])" -match '^ - \[T1001\] RuleBeta on C:\\b\\two\.exe: ev b' -and "$($draftLeads5[1])" -match 'RuleAlpha on C:\\a\\one\.exe: ')
+
+# a med lead rides along in leads.csv: the report shows it, the draft (hunt-only) does not
+$leadsExp2 = New-Object System.Collections.Generic.List[object]
+foreach ($r in $leadsExp) { $null = $leadsExp2.Add($r) }
+$null = $leadsExp2.Add([pscustomobject]@{ Rank = 'med'; Title = 'Sigma storm: 40 detection rows'; Class = 'review: sigma volume spike'; Why = 'review sample'; Ident = ''; Extra = ''; Anchor = 'sigma'; Rule = 'SomeRule' })
+$leadsExp2.ToArray() | Export-Csv -LiteralPath (Get-CaseCsvFullPath 'leads') -NoTypeInformation -Encoding UTF8
+$null = New-HtmlReport
+$htmlT5b = Get-Content -LiteralPath (Join-Path $CaseDir 'report.html') -Raw
+Check "task5 render: med lead from leads.csv shows in the report (card #3)" ($htmlT5b.Contains("leadtitle'>3. Sigma storm: 40 detection rows"))
+$draftT5b = @(Get-CaseNarrative)
+$draftLeads5b = @($draftT5b | Where-Object { $_ -match '^ - \[' })
+Check "task5: draft projects hunt-source rows only (med lead stays report-side)" ($draftLeads5b.Count -eq 2)
+
+# cleanup: back to the empty shape
+"# no entries" | Set-Content -LiteralPath (Join-Path $rcsv 'entities_binaries.csv') -Encoding UTF8
+
+# ---- v2.71 task 8: lead cards gain ONE static Upgrade/Dismiss line after the Why ----
+# Map keyed on the Class prefix the builder writes (leads.csv's Class column): mapped classes
+# render 'Upgrade if: <x> - Dismiss if: <y>'; IOC hash, review:* and unmapped classes render none.
+# Scenarios ride the render harness above (persisted leads.csv -> real render).
+$upL1 = [pscustomobject]@{ Rank = 'crit'; Title = 'C:\Windows\Temp\svcroot.exe'; Class = 'hunt rule: Renamed LOLBin at rest (Sysmon identity mismatch)'; Why = 'identity mismatch'; Ident = 'C:\Windows\Temp\svcroot.exe'; Extra = 'ATT&CK T1036.003'; Anchor = 'hunt'; Rule = '' }
+$upL2 = [pscustomobject]@{ Rank = 'crit'; Title = 'C:\Users\Ary\Downloads\setup.exe'; Class = 'hunt rule: Downloaded then executed'; Why = 'downloaded then executed'; Ident = 'C:\Users\Ary\Downloads\setup.exe'; Extra = 'ATT&CK T1105'; Anchor = 'hunt'; Rule = '' }
+@($upL1, $upL2) | Export-Csv -LiteralPath (Get-CaseCsvFullPath 'leads') -NoTypeInformation -Encoding UTF8
+$null = New-HtmlReport
+$upHtml = Get-Content -LiteralPath (Join-Path $CaseDir 'report.html') -Raw
+Check "task8: renamed-LOLBin lead renders its exact mapped Upgrade/Dismiss text" ($upHtml.Contains('Upgrade if: the embedded identity is a known-malicious tool or the path is user-writable - Dismiss if: the path is a known test/canary or software-updater staging dir'))
+Check "task8: download-exec lead renders its exact mapped text" ($upHtml.Contains('Upgrade if: the download came from a non-cloud unknown host or re-appears in persistence - Dismiss if: a signed installer from a known vendor path with plausible download history'))
+Check "task8: exactly one line per mapped card (2 cards -> 2 lines)" (@([regex]::Matches($upHtml, 'Upgrade if: ')).Count -eq 2)
+
+$upL3 = [pscustomobject]@{ Rank = 'crit'; Title = 'iocapp.exe'; Class = 'IOC hash match (known-bad binary ran on this host)'; Why = 'SHA1 abc matched the IOC feed'; Ident = 'C:\i\ioc.exe'; Extra = ''; Anchor = 'ioc'; Rule = '' }
+$upL4 = [pscustomobject]@{ Rank = 'med'; Title = 'Sigma storm: 40 detection rows'; Class = 'review: sigma volume spike'; Why = 'review sample'; Ident = ''; Extra = ''; Anchor = 'sigma'; Rule = 'SomeRule' }
+$upL5 = [pscustomobject]@{ Rank = 'crit'; Title = 'y5.exe'; Class = 'YARA high: RuleY'; Why = 'yara description'; Ident = 'C:\y\y5.exe'; Extra = ''; Anchor = 'yara'; Rule = '' }
+@($upL3, $upL4, $upL5) | Export-Csv -LiteralPath (Get-CaseCsvFullPath 'leads') -NoTypeInformation -Encoding UTF8
+$null = New-HtmlReport
+$upHtml2 = Get-Content -LiteralPath (Join-Path $CaseDir 'report.html') -Raw
+Check "task8: IOC hash lead renders NO upgrade line (near-certain already)" (@([regex]::Matches($upHtml2, 'Upgrade if: ')).Count -eq 0)
+Check "task8: review: lead renders NO upgrade line (explicitly not a verdict)" (@([regex]::Matches($upHtml2, 'Upgrade if: ')).Count -eq 0)
+Check "task8: unmapped class (YARA) renders no line AND no crash (all 3 cards still render)" ((@([regex]::Matches($upHtml2, "leadtitle'>")).Count -eq 3) -and ($upHtml2.Contains("leadtitle'>1. iocapp.exe <span")))
+
+Check "task8 static: the line routes through ConvertTo-HtmlEsc like sibling card text" ($src -match [regex]::Escape("<div style='margin-top:4px' class='meta'>`$(ConvertTo-HtmlEsc `$up2)</div>"))
+
+# hostile Class text: still matches the map prefix, card text escapes, the static line renders once
+$upL6 = [pscustomobject]@{ Rank = 'crit'; Title = 'C:\x\img.exe'; Class = 'hunt rule: Renamed LOLBin <img src=x onerror=alert(1)>'; Why = 'ev'; Ident = 'C:\x\img.exe'; Extra = ''; Anchor = 'hunt'; Rule = '' }
+@($upL6) | Export-Csv -LiteralPath (Get-CaseCsvFullPath 'leads') -NoTypeInformation -Encoding UTF8
+$null = New-HtmlReport
+$upHtml3 = Get-Content -LiteralPath (Join-Path $CaseDir 'report.html') -Raw
+Check "task8: hostile Class escaped, mapped line still renders exactly once" ((@([regex]::Matches($upHtml3, [regex]::Escape('Upgrade if: the embedded identity is a known-malicious tool'))).Count -eq 1) -and (-not $upHtml3.Contains('<img src=x')) -and $upHtml3.Contains('&lt;img src=x'))
+
+# fix: the config-change guidance is for the Defender-tamper family only. R30's hollowing rule
+# (no agent makes an in-memory image swap) must render NO line; R14's DISABLED leg must render it.
+$upL7 = [pscustomobject]@{ Rank = 'high'; Title = 'C:\Windows\System32\svchost.exe'; Class = 'hunt rule: Process image tampering (hollowing)'; Why = 'Sysmon EID 25 image swap'; Ident = 'C:\Windows\System32\svchost.exe'; Extra = 'ATT&CK T1055.012'; Anchor = 'hunt'; Rule = 'Process image tampering (hollowing)' }
+@($upL7) | Export-Csv -LiteralPath (Get-CaseCsvFullPath 'leads') -NoTypeInformation -Encoding UTF8
+$null = New-HtmlReport
+$upHtml4 = Get-Content -LiteralPath (Join-Path $CaseDir 'report.html') -Raw
+Check "task8 fix: R30 hollowing lead renders NO config-change upgrade line (incoherent guidance removed)" ((@([regex]::Matches($upHtml4, 'Upgrade if: ')).Count -eq 0) -and (@([regex]::Matches($upHtml4, "leadtitle'>")).Count -eq 1))
+
+$upL8 = [pscustomobject]@{ Rank = 'high'; Title = 'Defender real-time protection DISABLED'; Class = 'hunt rule: Defender real-time protection DISABLED'; Why = '2 disable event(s) - tamper or manual change'; Ident = ''; Extra = 'ATT&CK T1562.001'; Anchor = 'hunt'; Rule = 'Defender real-time protection DISABLED' }
+@($upL8) | Export-Csv -LiteralPath (Get-CaseCsvFullPath 'leads') -NoTypeInformation -Encoding UTF8
+$null = New-HtmlReport
+$upHtml5 = Get-Content -LiteralPath (Join-Path $CaseDir 'report.html') -Raw
+Check "task8 fix: R14 DISABLED lead renders the exact mapped config-change line" ((@([regex]::Matches($upHtml5, [regex]::Escape('Upgrade if: no installed software plausibly explains the change - Dismiss if: a management/AV agent made a documented configuration change'))).Count -eq 1) -and $upHtml5.Contains("hunt rule: Defender real-time protection DISABLED</span>"))
+
+Remove-Item -LiteralPath (Join-Path $rcsv 'derived\leads.csv') -Force -ErrorAction SilentlyContinue
 
 Remove-Item -LiteralPath $rcase -Recurse -Force -ErrorAction SilentlyContinue
 
@@ -326,6 +516,72 @@ Check "rider: 4 named + 2 nameless -> 3 named entries + '; +1 more', no nameless
 Remove-Item -LiteralPath $t3 -Recurse -Force -ErrorAction SilentlyContinue
 Remove-Item -LiteralPath $d61 -Recurse -Force -ErrorAction SilentlyContinue
 Remove-Item -LiteralPath $tmp -Recurse -Force -ErrorAction SilentlyContinue
+
+# ---- v2.71 task 7: auto-focus seeds the FULL hunt path (leaf only as zero-hit fallback) ----
+# Real WIN11 repro: the hunt entity C:\Windows\Temp\needle-am-hsbxrtoq\svchost.exe was stripped
+# to its leaf -> the core seeded the OS process name and buried the ONE malicious instance under
+# 400 legit svchosts. Now the Entity goes to the focus core AS-IS (its own seed classification
+# handles paths); the leaf re-seeds ONCE only when the path run wrote no dossier (zero hits).
+# Harness: the full regen is EXECUTED against a fixture case (test_v215 PART 2 pattern) - the
+# real Invoke-FocusCore scans the CSVs on disk, everything else stays on the in-memory stubs.
+$mRe7 = [regex]::Match($src, "(?s)function Invoke-RegenerateOutputs \{.*?\r?\n\}")
+$mFc7 = [regex]::Match($src, "(?s)function Invoke-FocusCore \{.*?\r?\n\}")
+if (-not $mRe7.Success) { throw 'extract failed: Invoke-RegenerateOutputs' }
+if (-not $mFc7.Success) { throw 'extract failed: Invoke-FocusCore' }
+Invoke-Expression $mRe7.Value
+Invoke-Expression $mFc7.Value
+function Get-CaseCsvPath { param($Name) "$Name.csv" }
+function Get-CaseCsvFullPath { param($Name) Join-Path $script:CsvDir "derived\$Name.csv" }
+function New-HtmlReport { }
+# the render section above swapped in the REAL Import-CaseCsv (disk reader) - the seed
+# selection must see the in-memory fixture again (same stub shape as the file top)
+function Import-CaseCsv([string]$name) { $name = "$name" -replace '\.csv$', ''; if ($script:fixtureRows.ContainsKey($name)) { return $script:fixtureRows[$name] }; return @() }
+function New-Af7Row([string]$Entity) {
+    [pscustomobject]@{ Found = '2026-10-14 12:00:00'; Rule = 'Renamed LOLBin at rest (Sysmon identity mismatch)'; Severity = 'high'; Entity = $Entity; Attck = 'T1036.003'; Evidence = 'identity mismatch evidence' }
+}
+$script:afLog = New-Object System.Collections.Generic.List[string]
+function Write-CaseLog { param([string]$Message, [string]$Color = 'Gray') $script:afLog.Add("$Message") }
+$Computer = 'V270HOST'; $script:CurrentCaseID = 'CASE-270'
+
+function Invoke-Af7Scenario {
+    param([string]$Tag, [string]$Entity, [string]$ProcsPath, [string]$ProcsName, [string]$ProcsPid)
+    $case7 = Join-Path $env:TEMP "ophira_v270af$Tag"
+    $csv7 = Join-Path $case7 'csv'
+    New-Item -ItemType Directory -Path $csv7, (Join-Path $csv7 'derived') -Force | Out-Null
+    @"
+"PID","PPID","Name","Path","Created"
+"$ProcsPid","800","$ProcsName","$ProcsPath","2026-10-14 12:00:00"
+"@ | Set-Content -LiteralPath (Join-Path $csv7 'processes.csv') -Encoding UTF8
+    $script:fixtureRows = @{ 'hunt_findings' = @(New-Af7Row $Entity) }
+    $null = $script:afLog.Clear()
+    $script:CaseDir = $case7; $script:CsvDir = $csv7
+    $script:RawDir = Join-Path $case7 'raw'; $script:MemDir = Join-Path $case7 'mem'
+    Invoke-RegenerateOutputs -Case ([pscustomobject]@{ Computer = $Computer })
+    $termsP7 = Join-Path (Join-Path $case7 'focus') 'focus_terms.json'
+    $terms7 = $null
+    if (Test-Path -LiteralPath $termsP7) { $terms7 = Get-Content -LiteralPath $termsP7 -Raw | ConvertFrom-Json }
+    Remove-Item -LiteralPath $case7 -Recurse -Force -ErrorAction SilentlyContinue
+    return @{ Terms = $terms7; Log = $script:afLog.ToArray() }
+}
+
+# s1: full-path entity with an OS-shared leaf -> the dossier seeds the FULL PATH (not the leaf)
+$s1 = Invoke-Af7Scenario -Tag 'p' -Entity 'C:\Windows\Temp\needle-am-hsbxrtoq\svchost.exe' -ProcsPath 'C:\Windows\Temp\needle-am-hsbxrtoq\svchost.exe' -ProcsName 'svchost.exe' -ProcsPid '4242'
+Check "task7 s1: path entity seeds AS-IS (focus_terms Indicator == full path, not the leaf)" ($null -ne $s1.Terms -and "$($s1.Terms.Indicator)" -eq 'C:\Windows\Temp\needle-am-hsbxrtoq\svchost.exe')
+Check "task7 s1: the path seed matched evidence (dossier not empty)" ($null -ne $s1.Terms -and [int]"$($s1.Terms.HitCount)" -ge 1)
+Check "task7 s1: no fallback re-seed logged" (@($s1.Log | Where-Object { $_ -match 'fallback re-seed' }).Count -eq 0)
+
+# s2: path matches nothing on disk -> one leaf re-seed, fallback line in the log
+$s2 = Invoke-Af7Scenario -Tag 'f' -Entity 'C:\Windows\Temp\ghostdir-xyzabc\svchost.exe' -ProcsPath 'C:\Windows\System32\svchost.exe' -ProcsName 'svchost.exe' -ProcsPid '777'
+Check "task7 s2: zero-hit path run re-seeds with the leaf (Indicator == leaf)" ($null -ne $s2.Terms -and "$($s2.Terms.Indicator)" -eq 'svchost.exe')
+Check "task7 s2: fallback line names the path seed + the leaf" (@($s2.Log | Where-Object { $_ -match "path seed 'C:\\Windows\\Temp\\ghostdir-xyzabc\\svchost\.exe' matched nothing" -and $_ -match "leaf name 'svchost\.exe'" }).Count -eq 1)
+Check "task7 s2: the leaf fallback run matched evidence" ($null -ne $s2.Terms -and [int]"$($s2.Terms.HitCount)" -ge 1)
+
+# s3: bare-name hunt entity (no separator) -> direct name seed, identical to v2.70 behavior
+$s3 = Invoke-Af7Scenario -Tag 'n' -Entity 'evil.exe' -ProcsPath 'C:\Users\Ary\AppData\evil.exe' -ProcsName 'evil.exe' -ProcsPid '999'
+Check "task7 s3: bare-name entity seeds directly (Indicator == name)" ($null -ne $s3.Terms -and "$($s3.Terms.Indicator)" -eq 'evil.exe')
+Check "task7 s3: no fallback re-seed for bare names" (@($s3.Log | Where-Object { $_ -match 'fallback re-seed' }).Count -eq 0)
+Check "task7 s3: the name seed matched evidence" ($null -ne $s3.Terms -and [int]"$($s3.Terms.HitCount)" -ge 1)
+
 if ($fail -gt 0) { Write-Host "`ntest_v270: $pass passed, $fail FAILED" -ForegroundColor Red; exit 1 }
 Write-Host "`ntest_v270: $pass passed, 0 failed" -ForegroundColor Green
 exit 0

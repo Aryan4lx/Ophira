@@ -20,7 +20,9 @@ $m = [regex]::Match($src, "(?s)function Get-CaseNarrative \{.*?\r?\n\}")
 if (-not $m.Success) { throw 'extract failed: Get-CaseNarrative' }
 $m2 = [regex]::Match($src, "(?s)function Import-CaseCsv \{.*?\r?\n\}")
 if (-not $m2.Success) { throw 'extract failed: Import-CaseCsv' }
-Invoke-Expression ($m2.Value + "`r`n" + $m.Value)
+$mTl31 = [regex]::Match($src, "(?s)function Get-TriageLeads \{.*?\r?\n\}")
+if (-not $mTl31.Success) { throw 'extract failed: Get-TriageLeads' }
+Invoke-Expression ($m2.Value + "`r`n" + $mTl31.Value + "`r`n" + $m.Value)
 $CaseDir = $case1
 $CsvDir = Join-Path $case1 'csv'
 New-Item -ItemType Directory -Path $CsvDir -Force | Out-Null
@@ -29,6 +31,10 @@ New-Item -ItemType Directory -Path $CsvDir -Force | Out-Null
   '"2026-10-04 12:05:00","Account lifecycle - created + group change","info","canary_test","T1136","1 account + 1 group change"',
   '"2026-10-04 12:06:00","Discovery command storm","medium","recon","T1087","20 recon commands"') |
   Set-Content -LiteralPath (Join-Path $CsvDir 'hunt_findings.csv') -Encoding UTF8
+# v2.71: the draft projects leads.csv - build it the way Invoke-RegenerateOutputs does
+$leads31 = @(Get-TriageLeads)
+$leads31 | Export-Csv -LiteralPath (Get-CaseCsvFullPath 'leads') -NoTypeInformation -Encoding UTF8
+Check "leads: only the high finding became a lead (info/medium excluded)" (@($leads31 | Where-Object { "$($_.Anchor)" -eq 'hunt' }).Count -eq 1 -and "$($leads31[0].Ident)" -eq 'C:\Users\Public\winupd.exe')
 $Computer = 'DC-IIS'
 $script:HostRole = 'DC'
 $StartTime = Get-Date '2026-10-04 12:00:00'
