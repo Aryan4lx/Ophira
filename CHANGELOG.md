@@ -1,5 +1,12 @@
 # Changelog
 
+## v2.75
+- **Post-release review fixes** (final whole-branch review v2.69->v2.74, one fix wave, scoped re-review clean)
+  - Scripted CLI focus runs zero-prompt again: the v2.73 From/To window prompts gated only on window-arg absence, so `-Mode Focus -ParsePath <case> -ProcessName x` blocked on two Read-Hosts (v2.72 ran without prompts); the gate now requires the interactive auto-detect flow (Path unbound) - `-ParsePath` CLI never prompts, the menu [9] wizard keeps all three prompts, menu [P] follows CLI parity by design
+  - `-SimpleUI -NoMenu` can no longer block on the [O] Open-report ReadKey (the SimpleUI site passed `-Prompt:$true` unconditionally - now guarded like the Parse and standard sites)
+  - A re-parse that ranks zero leads now deletes the stale `csv\derived\leads.csv` (previously both the report and the draft silently served the previous case's ranking); report falls back to inline building, draft skips the block
+- Tests: test_v270 grown to 226 checks (CLI-zero-prompt behavioral pin, SimpleUI [O] NoMenu pin, zero-lead deletion scenario); full suite green
+
 ## v2.74
 - **Analyst-first case folder - the results folder reads like a report, not a dump** (executed as one task-batch with per-task review)
   - **Sortment completed** (R5.1): the EZ native tools (`PECmd`/`LECmd`/`JLECmd`/`AmcacheParser`) wrote straight into the csv root, so real cases carried loose files the v2.42 category folders never caught (`amcache_*.csv`, `jumplist_parsed_*.csv`, `lnk_parsed.csv`, `prefetch_parsed*.csv`, `usn_write_bursts.csv`). The sortment map gains wildcard entries (`amcache_*`, `jumplist_parsed*`, `prefetch_parsed*` -> artifacts) with wildcard-aware root resolution in `Get-CaseCsvPath` (exact names still outrank wildcards), and `Invoke-RegenerateOutputs` now sweeps loose csv-root files into their category folder before any reader runs - one log line per move, idempotent, locked-file failures skip with a log. The worker map-literal seeding round-trips the wildcards (real-runspace smoke). The csv root now holds only folders

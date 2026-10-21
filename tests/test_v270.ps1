@@ -234,7 +234,7 @@ Check "task4 draft: unparseable timestamp text stays verbatim" ($leadT4d.Count -
 # ---- v2.71 task 5 statics: regen writes leads.csv; it is a report artifact, never evidence ----
 $mReT5 = [regex]::Match($src, "(?s)function Invoke-RegenerateOutputs \{.*?\r?\n\}")
 Check "task5 static: regen calls Get-TriageLeads" ($mReT5.Success -and $mReT5.Value.Contains('Get-TriageLeads'))
-Check "task5 static: leads export uses the derived path" ($mReT5.Success -and $mReT5.Value.Contains("Export-Csv -LiteralPath (Get-CaseCsvFullPath 'leads')"))
+Check "task5 static: leads export uses the derived path" ($mReT5.Success -and $mReT5.Value.Contains("`$leadP = Get-CaseCsvFullPath 'leads'") -and $mReT5.Value.Contains('Export-Csv -LiteralPath $leadP'))
 Check "task5 static: leads built before the case draft write" ($mReT5.Success -and $mReT5.Value.IndexOf('Get-TriageLeads') -lt $mReT5.Value.IndexOf('Get-CaseNarrative'))
 Check "task5 static: leads built before the report render" ($mReT5.Success -and $mReT5.Value.IndexOf('Get-TriageLeads') -lt $mReT5.Value.IndexOf('New-HtmlReport | Out-Null'))
 Check "task5 static: leads routed to csv\derived (sortment)" ($src -match [regex]::Escape("'leads' = 'derived'"))
@@ -974,6 +974,13 @@ $theDir = Join-Path $script:feKit 'OPHIRA_HOST_20261019_090000'
 $script:feOpens.Clear(); $script:feCores.Clear(); $script:fePrompts.Clear(); $script:feAnswers.Clear()
 $rCli = Invoke-FocusEngine -Path $theDir -Indicator 'x' -After '2026-10-01'
 Check "t13 wizard: -After on the CLI skips every prompt, Before stays blank" ($rCli -eq $true -and $script:fePrompts.Count -eq 0 -and "$($script:feCores[0].After)" -eq '2026-10-01' -and "$($script:feCores[0].Before)" -eq '')
+# v2.75 fix pin: a -Path (CLI -ParsePath) run WITHOUT window args must stay zero-prompt -
+# v2.73 regressed this into two From/To Read-Hosts. The wizard (unbound -Path) still asks
+# indicator + From + To (pinned above by the t12 'one' scenario: Prompts.Count -eq 3).
+$script:feOpens.Clear(); $script:feCores.Clear(); $script:fePrompts.Clear(); $script:feAnswers.Clear()
+$rCliNw = Invoke-FocusEngine -Path $theDir -Indicator 'evil.exe'
+Check "t13 fix: -ParsePath CLI run without window args performs NO prompts" ($rCliNw -eq $true -and $script:fePrompts.Count -eq 0 -and $script:feOpens.Count -eq 1 -and "$($script:feCores[0].After)" -eq '' -and "$($script:feCores[0].Before)" -eq '')
+Check "t13 fix static: window prompts gated on unbound -Path (wizard-only)" ($src.Contains("if (-not `$PSBoundParameters.ContainsKey('Path') -and -not `$After -and -not `$Before) {"))
 # invalid window input: re-prompt once, then proceed without the bound (warning)
 $feI = Invoke-FeScenario -Tag 'inv' -Dirs @('OPHIRA_HOST_20261019_090000') -Answers @('ind', 'garbage1', 'garbage2', 'garbage3', '2026-10-05')
 Check "t13 wizard: From invalid twice -> dropped with warning, To valid on retry" ("$($feI.Cores[0].After)" -eq '' -and "$($feI.Cores[0].Before)" -eq '2026-10-05' -and $feI.Prompts.Count -eq 5)
@@ -1071,6 +1078,16 @@ Invoke-RegenerateOutputs -Case $null
 $sh74b = Get-Content -LiteralPath (Join-Path $t74 'ANALYST-START-HERE.txt') -Raw
 Check "t15: re-regen inserts the focus dossier line in position" (($sh74b -match [regex]::Escape('3. focus\focus_report.html')) -and ($sh74b -match [regex]::Escape('4. case_draft.txt')) -and ($sh74b -match [regex]::Escape('5. csv\derived\leads.csv')))
 Check "t15: re-regen overwrites cleanly (single ASSESSMENT line)" ((@([regex]::Matches($sh74b, 'ASSESSMENT:')).Count -eq 1))
+# v2.75 fix: a re-parse that ranks ZERO leads removes the stale leads.csv so the report's
+# inline fallback + the draft's skip-block take over (the old code kept serving the previous
+# ranking). leads.csv exists here from the earlier t14 regens (1-lead stub).
+$leads74Was = Test-Path -LiteralPath (Join-Path $Csv74 'derived\leads.csv')
+function Get-TriageLeads { return @() }
+$script:regenLog = New-Object System.Collections.Generic.List[string]
+Invoke-RegenerateOutputs -Case $null
+Check "t14 leads: regen wrote leads.csv before the zero-lead re-parse" $leads74Was
+Check "t14 leads: zero-lead re-parse removed the stale leads.csv" (-not (Test-Path -LiteralPath (Join-Path $Csv74 'derived\leads.csv')))
+Check "t14 leads: stale removal logged" ((@($script:regenLog | Where-Object { $_ -match 'stale ranking removed' }).Count -eq 1))
 Remove-Item -LiteralPath $t74 -Recurse -Force -ErrorAction SilentlyContinue
 
 # C) [O] offer statics
@@ -1080,6 +1097,7 @@ Check "t15 static: -NoMenu/unattended never prompts" ($src -match [regex]::Escap
 Check "t15 static: Parse offer gated on interactive path entry + NoMenu" (($src -match [regex]::Escape("-not `$PSBoundParameters.ContainsKey('Path') -and -not `$NoMenu")) -and ($src -match [regex]::Escape('Before the re-pack so the temp copy of a zip-parsed case still exists')))
 Check "t15 static: missing report answers honestly" ($src -match [regex]::Escape('no report.html in'))
 Check "t15 static: key read uses the try/catch ReadKey pattern, opens via Invoke-Item" (($src -match [regex]::Escape("try { `$k = `$Host.UI.RawUI.ReadKey('NoEcho,IncludeKeyDown').Character } catch { return }")) -and ($src -match [regex]::Escape('Invoke-Item -LiteralPath $rep')))
+Check "t15 static: SimpleUI [O] offer suppressed under -NoMenu (v2.75 fix)" ($src.Contains('& $script:OfferOpenReport -Dir $CaseDir -Prompt:(-not $script:NoMenu)'))
 
 # D) worker map round-trip: the seeded CsvCatMap literal must stay a valid hashtable carrying
 # the wildcard entries (Save-Rows in pooled workers writes through it) - v2.58-style smoke

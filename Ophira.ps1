@@ -1,5 +1,5 @@
 ﻿<#
-Ophira v2.74  -  Windows Incident Response Triage Toolkit
+Ophira v2.75  -  Windows Incident Response Triage Toolkit
 READ-ONLY by design: never modifies the system, only reads and copies data
 into its own output folder. Intended to be handed to a system owner or run
 by a responder during early triage / threat hunting.
@@ -323,7 +323,7 @@ param(
     [switch]$ExitVerdict
 )
 
-$ScriptVersion = "2.74"
+$ScriptVersion = "2.75"
 $ErrorActionPreference = 'Continue'
 $ProgressPreference = 'SilentlyContinue'
 
@@ -9495,10 +9495,13 @@ function Invoke-RegenerateOutputs {
     } catch { Write-CaseLog "    auto-focus failed: $($_.Exception.Message)" 'DarkYellow' }
     # v2.71: triage leads built ONCE and persisted to csv\derived\leads.csv - the report
     # renders these rows and the draft's BEST LEADS projects the same list (one builder,
-    # one ranking). Empty result -> no file, both consumers degrade gracefully.
+    # one ranking). Empty result -> no file (v2.75 fix: a stale ranking from a previous
+    # parse is deleted so it can't keep serving), both consumers degrade gracefully.
     try {
         $leadExport = @(Get-TriageLeads)
-        if ($leadExport.Count -gt 0) { $leadExport | Export-Csv -LiteralPath (Get-CaseCsvFullPath 'leads') -NoTypeInformation -Encoding UTF8 }
+        $leadP = Get-CaseCsvFullPath 'leads'
+        if ($leadExport.Count -gt 0) { $leadExport | Export-Csv -LiteralPath $leadP -NoTypeInformation -Encoding UTF8 }
+        elseif (Test-Path -LiteralPath $leadP) { Remove-Item -LiteralPath $leadP -Force; Write-CaseLog "    leads: stale ranking removed - this parse ranked zero leads" 'DarkYellow' }
     } catch { Write-CaseLog "    lead export failed: $($_.Exception.Message)" 'DarkYellow' }
     try { Get-CaseNarrative | Set-Content -LiteralPath (Join-Path $CaseDir 'case_draft.txt') -Encoding UTF8 } catch { Write-CaseLog "    case draft failed: $($_.Exception.Message)" 'DarkYellow' }
     try { New-SiemExport } catch { Write-CaseLog "    siem export failed: $($_.Exception.Message)" 'DarkYellow' }
@@ -10441,9 +10444,10 @@ function Invoke-FocusEngine {
     }
     if (-not $Indicator) { $Indicator = (Read-Host "  Name, PID, path, hash, IP, ip:port or port").Trim() }
     if (-not $Indicator) { Write-Host "  no indicator given" -ForegroundColor Red; return $false }
-    # v2.73 optional time window: prompted only in the interactive flow (both bounds blank =
-    # everything); -After/-Before on the CLI skip the prompts entirely
-    if (-not $After -and -not $Before) {
+    # v2.73 optional time window, v2.75 fix: prompted only in the interactive auto-detect
+    # flow (-Path unbound = menu [9] wizard); -Path callers (CLI -ParsePath, menu [P]) never
+    # prompt - -After/-Before set the window directly, both bounds blank = everything
+    if (-not $PSBoundParameters.ContainsKey('Path') -and -not $After -and -not $Before) {
         $After = (Read-Host "  From (yyyy-MM-dd [HH:mm], blank = all)").Trim()
         $d0 = [datetime]::MinValue
         if ($After -and -not [datetime]::TryParse($After, [ref]$d0)) {
@@ -12474,7 +12478,8 @@ if ($script:SimpleUI) {
         try { Start-Process explorer.exe -ArgumentList "/select,`"$($script:FinalZipPath)`"" } catch { }
     }
     # v2.74: [O] opens the case report - the DONE screen now waits for one keypress
-    & $script:OfferOpenReport -Dir $CaseDir -Prompt:$true
+    # (v2.75 fix: -SimpleUI -NoMenu is unattended and must never block on the keypress)
+    & $script:OfferOpenReport -Dir $CaseDir -Prompt:(-not $script:NoMenu)
 } elseif (-not $NoMenu) {
     # v2.74: [O] opens the case report before the close key
     & $script:OfferOpenReport -Dir $CaseDir -Prompt:$true
