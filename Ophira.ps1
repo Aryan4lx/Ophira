@@ -1,5 +1,5 @@
 ﻿<#
-Ophira v2.71  -  Windows Incident Response Triage Toolkit
+Ophira v2.72  -  Windows Incident Response Triage Toolkit
 READ-ONLY by design: never modifies the system, only reads and copies data
 into its own output folder. Intended to be handed to a system owner or run
 by a responder during early triage / threat hunting.
@@ -309,7 +309,7 @@ param(
     [switch]$ExitVerdict
 )
 
-$ScriptVersion = "2.71"
+$ScriptVersion = "2.72"
 $ErrorActionPreference = 'Continue'
 $ProgressPreference = 'SilentlyContinue'
 
@@ -5644,14 +5644,27 @@ tr.techrow{cursor:pointer}
             }
         }
         # v2.61: incident window from the master timeline
+        # task 10 (display-window clamp): both the banner's evidence window and the master
+        # timeline's sparkline render only the case's analysis window (LogHours), clamped to
+        # [30d, 90d] (90d when LogHours is 0/unset) - stray decade-old amcache/MFT stamps no
+        # longer stretch them into a 20-year span. Display only: supertimeline.csv,
+        # -Mode Timeline and the newest-150 table keep every event.
+        try { $tlLh = if ($script:LogHours -gt 0) { $script:LogHours } elseif ($LogHours -gt 0) { $LogHours } else { 0 } } catch { $tlLh = 0 }
+        $tlWinDays = if ($tlLh -gt 0) { [Math]::Max(30, [Math]::Min([int][double]($tlLh / 24), 90)) } else { 90 }
+        $tlCut = (Get-Date).Date.AddDays(-1 * $tlWinDays)
+        $tlCutKey = $tlCut.ToString('yyyy-MM-dd')
         try {
             $tlGlance = @($tlRows | ForEach-Object { $tg = $null; try { $tg = [datetime]"$($_.Timestamp)" } catch { }; if ($tg) { $tg } })
             if ($tlGlance.Count -gt 1) {
                 $tlSorted2 = @($tlGlance | Sort-Object)
+                $tlIn2 = @($tlSorted2 | Where-Object { $_ -ge $tlCut })
+                $tlClamp2 = ($tlIn2.Count -gt 0 -and $tlIn2.Count -lt $tlSorted2.Count)
                 $days2 = @{}
-                foreach ($t2 in $tlGlance) { $k2 = $t2.ToString('yyyy-MM-dd'); if (-not $days2.ContainsKey($k2)) { $days2[$k2] = 0 }; $days2[$k2]++ }
+                foreach ($t2 in $(if ($tlClamp2) { $tlIn2 } else { $tlSorted2 })) { $k2 = $t2.ToString('yyyy-MM-dd'); if (-not $days2.ContainsKey($k2)) { $days2[$k2] = 0 }; $days2[$k2]++ }
                 $top2 = @($days2.Keys | Sort-Object { $days2[$_] } -Descending | Select-Object -First 1)[0]
-                $null = $sb.AppendLine("<p class='meta' style='margin-top:10px'><b>Evidence window:</b> $($tlSorted2[0].ToString('yyyy-MM-dd HH:mm')) UTC to $($tlSorted2[$tlSorted2.Count - 1].ToString('yyyy-MM-dd HH:mm')) UTC ($($tlGlance.Count) events) - busiest day $top2 ($($days2[$top2]) events). Full chronology: <a href='#timeline'>master timeline</a></p>")
+                $tlFirst2 = if ($tlClamp2) { $tlIn2[0] } else { $tlSorted2[0] }
+                $tlNote2 = if ($tlClamp2) { " + $($tlSorted2.Count - $tlIn2.Count) older event(s) before $tlCutKey (stray timestamps)." } else { '' }
+                $null = $sb.AppendLine("<p class='meta' style='margin-top:10px'><b>Evidence window:</b> $($tlFirst2.ToString('yyyy-MM-dd HH:mm')) UTC to $($tlSorted2[$tlSorted2.Count - 1].ToString('yyyy-MM-dd HH:mm')) UTC ($($tlGlance.Count) events) - busiest day $top2 ($($days2[$top2]) events).$tlNote2 Full chronology: <a href='#timeline'>master timeline</a></p>")
             }
         } catch { }
         if (@($v.Caveats).Count -gt 0) {
@@ -6564,11 +6577,16 @@ tr.techrow{cursor:pointer}
     $null = $sb.AppendLine("<div class='card'>The full chronology lives in <b>csv\$(ConvertTo-HtmlEsc (Get-CaseCsvPath 'supertimeline'))</b> ($(ConvertTo-HtmlEsc $tlAll.Count) events from $($tlSources.Count) evidence sources - open it in Excel/Timeline Explorer and filter by Timestamp). Evidence sources woven: $(ConvertTo-HtmlEsc ($tlSources -join ', ')). Scanner conclusions (Sigma detections, hunt findings, beacons) are intentionally NOT part of it - they have their own sections above. For windowed pivots with per-source/busiest-minute summaries run <b>-Mode Timeline</b>.</div>")
     if ($tlAll.Count -gt 0) {
         # v2.59: per-day activity sparkline - the case's shape at a glance before the newest-150 table
+        # task 10: bars only for days inside the clamped display window ($tlCut from the banner
+        # block); older events collapse into one caption note. Busiest-day pick = busiest INSIDE
+        # the window (identical output when nothing predates the cutoff).
         $tlDays = @{}
+        $tlOlder = 0
         foreach ($t in $tlAll) {
             $d = "$($t.Timestamp)"
             if ($d.Length -ge 10 -and $d -match '^\d{4}-\d{2}-\d{2}') {
                 $k = $d.Substring(0, 10)
+                if ($k -lt $tlCutKey) { $tlOlder++; continue }
                 if (-not $tlDays.ContainsKey($k)) { $tlDays[$k] = 0 }
                 $tlDays[$k]++
             }
@@ -6588,13 +6606,39 @@ tr.techrow{cursor:pointer}
                 $x += $bw + $tGap
             }
             $sw = $x - $tGap
-            $null = $sb.AppendLine("<div class='card'><b>Activity per day</b> <span class='meta'>(busiest: $tlTop with $($tlDays[$tlTop]) events - hover a bar for its count; showing the last $($tlDayKeys.Count) day(s) with activity)</span><svg viewBox='0 0 $sw $sh' width='100%' height='$sh' preserveAspectRatio='none' style='margin-top:6px'>$($bars.ToString())</svg></div>")
+            $tlNote = if ($tlOlder -gt 0) { " + $tlOlder older event(s) before $tlCutKey (stray timestamps)" } else { '' }
+            $null = $sb.AppendLine("<div class='card'><b>Activity per day</b> <span class='meta'>(busiest: $tlTop with $($tlDays[$tlTop]) events - hover a bar for its count; showing the last $($tlDayKeys.Count) day(s) with activity)$tlNote</span><svg viewBox='0 0 $sw $sh' width='100%' height='$sh' preserveAspectRatio='none' style='margin-top:6px'>$($bars.ToString())</svg></div>")
         }
     }
     if ($tlAll.Count -gt 0) {
-        $tlShow = @(@($tlAll | Sort-Object { "$($_.Timestamp)" } | Select-Object -Last 150))
-        [array]::Reverse($tlShow)
-        $null = $sb.AppendLine("<div class='meta'>Newest 150 of $($tlAll.Count) events, newest first:</div>")
+        # task 11 (collector self-noise): the collector runs last before export, so a plain newest-150
+        # pick leads with Ophira's own wevtutil evtx-export commands. Rows whose Detail/Entity carry
+        # the case's raw\evtx\*.evtx export path, the case folder name, or a kit path (same vocabulary
+        # as Test-SigmaSelfNoise, minus its sigma-specific PID logic) are skipped and replaced by the
+        # next newest unsuppressed events. Display only: supertimeline.csv, the sparkline, the evidence
+        # window and -Mode Timeline keep every event; the caption states the true numbers. On by
+        # default, no toggle - the note explains it.
+        $tlSorted = @($tlAll | Sort-Object { "$($_.Timestamp)" } -Descending)
+        $tlShowL = New-Object System.Collections.Generic.List[object]
+        $tlNoise = 0
+        $tlCaseName = ''
+        try { $tlCaseName = Split-Path -Leaf (Split-Path -Parent $CsvDir) } catch { }
+        foreach ($t in $tlSorted) {
+            if ($tlShowL.Count -ge 150) { break }
+            $tlTxt = "$($t.Detail) $($t.Entity)"
+            $tlHit = ($tlTxt.IndexOf('raw\evtx\', [StringComparison]::OrdinalIgnoreCase) -ge 0 -and $tlTxt -match '\.evtx\b')
+            if (-not $tlHit -and $tlCaseName) { $tlHit = $tlTxt.IndexOf($tlCaseName, [StringComparison]::OrdinalIgnoreCase) -ge 0 }
+            if (-not $tlHit -and $script:KitPaths) {
+                foreach ($kp in @($script:KitPaths)) {
+                    if ($kp -and $tlTxt.IndexOf("$kp", [StringComparison]::OrdinalIgnoreCase) -ge 0) { $tlHit = $true; break }
+                }
+            }
+            if ($tlHit) { $tlNoise++; continue }
+            $null = $tlShowL.Add($t)
+        }
+        $tlShow = $tlShowL.ToArray()
+        $tlCap = if ($tlNoise -gt 0) { "Newest $($tlShow.Count) of $($tlAll.Count) events (collector self-noise suppressed: $tlNoise rows)" } else { "Newest 150 of $($tlAll.Count) events, newest first:" }
+        $null = $sb.AppendLine("<div class='meta'>$tlCap</div>")
         # v2.66 (B11): text + source + from/to date filters compose (AND) - inline table only,
         # the full CSV / -Mode Timeline stay the pivoting surface
         $tlSrcOpts = (@($tlShow | ForEach-Object { "$($_.Source)" } | Where-Object { "$_" } | Sort-Object -Unique) | ForEach-Object { "<option>$(ConvertTo-HtmlEsc $_)</option>" }) -join ''
@@ -6605,7 +6649,7 @@ tr.techrow{cursor:pointer}
         }
         $null = $sb.AppendLine("</tbody></table><div class='meta' id='tlcount'></div>")
         # v2.66 (B11): substring AND source AND from/to date window (YYYY-MM-DD prefix compare)
-        $null = $sb.AppendLine("<script>function tlFilter(){var q=document.getElementById('tlf').value.toLowerCase();var s=document.getElementById('tls').value;var f=document.getElementById('tlfrom').value;var t=document.getElementById('tlto').value;var n=0;var rs=document.querySelectorAll('#tlt tbody tr');for(var i=0;i<rs.length;i++){var c=rs[i].cells;var d=c[0].textContent.substring(0,10);var hit=rs[i].textContent.toLowerCase().indexOf(q)>=0&&(!s||c[1].textContent===s)&&(!f||d>=f)&&(!t||d<=t);rs[i].style.display=hit?'':'none';if(hit)n++;}document.getElementById('tlcount').textContent=(q||s||f||t)?('showing '+n+' matching of 150 shown'):'';}</script>")
+        $null = $sb.AppendLine("<script>function tlFilter(){var q=document.getElementById('tlf').value.toLowerCase();var s=document.getElementById('tls').value;var f=document.getElementById('tlfrom').value;var t=document.getElementById('tlto').value;var n=0;var rs=document.querySelectorAll('#tlt tbody tr');for(var i=0;i<rs.length;i++){var c=rs[i].cells;var d=c[0].textContent.substring(0,10);var hit=rs[i].textContent.toLowerCase().indexOf(q)>=0&&(!s||c[1].textContent===s)&&(!f||d>=f)&&(!t||d<=t);rs[i].style.display=hit?'':'none';if(hit)n++;}document.getElementById('tlcount').textContent=(q||s||f||t)?('showing '+n+' matching of $($tlShow.Count) shown'):'';}</script>")
     }
 
     # ---------- focus dossier (v2.40: built by -Mode Focus / menu option 9) ----------
@@ -6685,7 +6729,30 @@ tr.techrow{cursor:pointer}
             if ($hasGraph -and @($fDetail.Instances).Count -gt 0) {
                 $null = $sb.AppendLine("<div class='mkey' id='focusminikey'>activity-graph key: <i style=""background:#1f2a3d;border-color:#3a5a83""></i>parent process <i style=""background:#3a1518;border-color:#a33""></i>focused instance <i style=""background:#33290f;border-color:#c93""></i>child process <i style=""background:#1f2a3d;border-color:#a33""></i>artifact chip (red border = INJECT/TAMPER)</div>")
             }
-            foreach ($pd2 in @($fDetail.Instances)) {
+            # task 9 (focus embed cap): interesting-first - injection/tamper/beacon/persistence/
+            # file-drop evidence embeds in full ahead of the cap; ordinary instances follow capped
+            # at 15, heaviest evidence first (tie-break Pid then Guid). Presentation only -
+            # focus_instances_detail.json / focus_report.html / the CSVs keep every instance.
+            $fAllInst = New-Object System.Collections.Generic.List[object]
+            foreach ($pd2 in @($fDetail.Instances)) { if ($pd2) { $null = $fAllInst.Add($pd2) } }
+            $fEmbed = New-Object System.Collections.Generic.List[object]
+            $fOrd = New-Object System.Collections.Generic.List[object]
+            foreach ($pd2 in $fAllInst.ToArray()) {
+                $fInt = $false
+                foreach ($fk in @('CrtIn', 'CrtOut', 'Tamper', 'Beacon', 'Persist', 'FileCreate', 'FileDelete')) {
+                    $fv = $pd2.$fk
+                    if ($null -ne $fv -and @($fv).Count -gt 0) { $fInt = $true; break }
+                }
+                if ($fInt) { $null = $fEmbed.Add($pd2); continue }
+                $fn = 0
+                foreach ($fk in @('Children', 'CrtIn', 'CrtOut', 'Pipes', 'Tamper', 'RawDisk', 'Exec', 'Persist', 'Beacon', 'Net', 'Dns', 'Dll', 'Reg', 'File', 'FileCreate', 'FileDelete')) {
+                    $fv = $pd2.$fk
+                    if ($null -ne $fv) { $fn += @($fv).Count }
+                }
+                $null = $fOrd.Add([pscustomobject]@{ N = $fn; PidS = "$($pd2.Pid)"; GuidS = "$($pd2.Guid)"; P = $pd2 })
+            }
+            foreach ($ow in @($fOrd.ToArray() | Sort-Object -Property @{Expression = 'N'; Descending = $true }, 'PidS', 'GuidS' | Select-Object -First 15)) { $null = $fEmbed.Add($ow.P) }
+            foreach ($pd2 in $fEmbed.ToArray()) {
                 if (-not $pd2) { continue }
                 $hdr2 = "Instance PID $($pd2.Pid)"
                 if ("$($pd2.Guid)") { $hdr2 += " - $($pd2.Guid)" }
@@ -6723,6 +6790,9 @@ tr.techrow{cursor:pointer}
                     $null = $sb.AppendLine("</table>")
                 }
                 $null = $sb.AppendLine("</details>")
+            }
+            if ($fAllInst.Count -gt $fEmbed.Count) {
+                $null = $sb.AppendLine("<div class='meta'>showing $($fEmbed.Count) of $($fAllInst.Count) instances - everything else: $(ConvertTo-CaseFileLink (Join-Path $focusDirP 'focus_report.html') 'focus\focus_report.html')</div>")
             }
         }
     }

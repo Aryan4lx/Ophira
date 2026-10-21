@@ -429,6 +429,219 @@ Check "task8 fix: R14 DISABLED lead renders the exact mapped config-change line"
 
 Remove-Item -LiteralPath (Join-Path $rcsv 'derived\leads.csv') -Force -ErrorAction SilentlyContinue
 
+# ---- task 9 (focus embed cap): interesting-first instance embed + 15-ordinary cap ----
+# Rides the render case above: write focus_instances_detail.json per scenario, render the real
+# report, assert on the Focus section HTML. Presentation only - the JSON on disk must stay
+# byte-identical through every render (the focus engine keeps all instances in its own outputs).
+'fixture focus report body' | Set-Content -LiteralPath (Join-Path $rcase 'focus\focus_report.html') -Encoding UTF8
+function New-T9Rows([int]$n, [string]$img) {
+    $l = New-Object System.Collections.Generic.List[object]
+    1..$n | ForEach-Object { $null = $l.Add([pscustomobject]@{ Time = "2026-10-14 10:$('{0:d2}' -f ($_ % 60))"; Image = $img; ProcessId = "$_"; User = 'u' }) }
+    return $l.ToArray()
+}
+function New-T9Inst([string]$pid9, [hashtable]$secs) {
+    $o = [ordered]@{ Pid = $pid9; Guid = "g-$pid9"; Started = '2026-10-14 10:00'; Image = "C:\mal\$pid9.exe"; Parent = ''; User = 'u'; Lineage = @(); Respawn = ''
+        Children = @(); CrtIn = @(); CrtOut = @(); Pipes = @(); Tamper = @(); RawDisk = @(); Exec = @(); Persist = @(); Beacon = @(); Net = @(); Dns = @(); Dll = @(); Reg = @(); File = @(); FileCreate = @(); FileDelete = @() }
+    foreach ($k in $secs.Keys) { $o[$k] = $secs[$k] }
+    return [pscustomobject]$o
+}
+function Invoke-T9Scenario {
+    param($Insts)
+    $detailT9 = [pscustomobject]@{ Indicator = 'x.exe'; GraphSvg = "<svg id='g9'></svg>"; CorrNotes = @(); Instances = @($Insts) }
+    $jsonT9 = Join-Path $rcase 'focus\focus_instances_detail.json'
+    (ConvertTo-Json -InputObject $detailT9 -Depth 8) | Set-Content -LiteralPath $jsonT9 -Encoding UTF8
+    $beforeT9 = Get-Content -LiteralPath $jsonT9 -Raw
+    $null = New-HtmlReport
+    $htmlT9 = Get-Content -LiteralPath (Join-Path $CaseDir 'report.html') -Raw
+    return @{ Html = $htmlT9; JsonUnchanged = ("$beforeT9" -ceq (Get-Content -LiteralPath $jsonT9 -Raw)) }
+}
+
+# s1: 20 ordinary (Children rows 1..20) + 3 interesting -> 18 embedded: interesting first
+# (JSON order), then ordinary by total evidence rows desc (o20..o06); pointer line present
+$s1i = New-Object System.Collections.Generic.List[object]
+$null = $s1i.Add((New-T9Inst 'i01' @{ CrtIn = (New-T9Rows 1 'C:\inj.exe') }))
+$null = $s1i.Add((New-T9Inst 'i02' @{ Beacon = (New-T9Rows 2 'C2') }))
+$null = $s1i.Add((New-T9Inst 'i03' @{ Persist = (New-T9Rows 1 'run key') }))
+1..20 | ForEach-Object { $null = $s1i.Add((New-T9Inst ('o{0:d2}' -f $_) @{ Children = (New-T9Rows $_ 'C:\c.exe') })) }
+$r1 = Invoke-T9Scenario $s1i.ToArray()
+Check "task9 s1: 20 ordinary + 3 interesting -> exactly 18 embedded" (([regex]::Matches($r1.Html, 'everything it did</summary>')).Count -eq 18)
+Check "task9 s1: pointer line reads 'showing 18 of 23 instances' with the focus_report.html link" ($r1.Html.Contains("showing 18 of 23 instances - everything else: <a href='focus/focus_report.html'>focus\focus_report.html</a>"))
+$pos1 = @('g-i01', 'g-i02', 'g-i03', 'g-o20', 'g-o19', 'g-o06') | ForEach-Object { $r1.Html.IndexOf("$_ ") }
+Check "task9 s1: order - 3 interesting first (JSON order), then ordinary rows-desc (o20,o19..o06)" (($pos1 | Where-Object { $_ -lt 0 }).Count -eq 0 -and $pos1[0] -lt $pos1[1] -and $pos1[1] -lt $pos1[2] -and $pos1[2] -lt $pos1[3] -and $pos1[3] -lt $pos1[4] -and $pos1[4] -lt $pos1[5])
+Check "task9 s1: o01..o05 (smallest ordinary) are the skipped tail" (-not $r1.Html.Contains('g-o05'))
+Check "task9 s1: focus_instances_detail.json byte-identical after render" $r1.JsonUnchanged
+Check "task9 s1: sticky mini-key still renders above the embedded instances" (($r1.Html.IndexOf("class='mkey'") -ge 0) -and ($r1.Html.IndexOf("class='mkey'") -lt $pos1[0]))
+
+# s2: a 1-row interesting instance still embeds ahead of a 50-row ordinary one
+$r2 = Invoke-T9Scenario @((New-T9Inst 'x01' @{ CrtIn = (New-T9Rows 1 'C:\inj.exe') }), (New-T9Inst 'x02' @{ Children = (New-T9Rows 50 'C:\c.exe') }))
+Check "task9 s2: 1-row interesting embeds ahead of the 50-row ordinary" (($r2.Html.IndexOf('g-x01 ') -ge 0) -and ($r2.Html.IndexOf('g-x01 ') -lt $r2.Html.IndexOf('g-x02 ')))
+Check "task9 s2: both embedded, nothing skipped -> no pointer line" (([regex]::Matches($r2.Html, 'everything it did</summary>')).Count -eq 2 -and (-not $r2.Html.Contains('instances - everything else')))
+Check "task9 s2: per-instance 25-row truncation note intact on the 50-row section" ($r2.Html.Contains("showing 25 of 50 - full table: <a href='focus/focus_report.html'>"))
+Check "task9 s2: focus_instances_detail.json byte-identical after render" $r2.JsonUnchanged
+
+# s3: all-interesting dossier -> everything embedded, no pointer line
+$r3 = Invoke-T9Scenario @(
+    (New-T9Inst 'y01' @{ Tamper = (New-T9Rows 1 'T') }),
+    (New-T9Inst 'y02' @{ FileCreate = (New-T9Rows 1 'F') }),
+    (New-T9Inst 'y03' @{ FileDelete = (New-T9Rows 2 'D') })
+)
+Check "task9 s3: all-interesting (3, 0 ordinary) -> all 3 embedded" (([regex]::Matches($r3.Html, 'everything it did</summary>')).Count -eq 3)
+Check "task9 s3: no pointer line" (-not $r3.Html.Contains('instances - everything else'))
+Check "task9 s3: focus_instances_detail.json byte-identical after render" $r3.JsonUnchanged
+
+# s4: 15 ordinary + 1 interesting = small-dossier behavior (everything embedded, no pointer)
+$s4i = New-Object System.Collections.Generic.List[object]
+$null = $s4i.Add((New-T9Inst 'z01' @{ Beacon = (New-T9Rows 1 'C2') }))
+1..15 | ForEach-Object { $null = $s4i.Add((New-T9Inst ('w{0:d2}' -f $_) @{ Children = (New-T9Rows $_ 'C:\c.exe') })) }
+$r4 = Invoke-T9Scenario $s4i.ToArray()
+Check "task9 s4: 16 total (<=15 ordinary) -> everything embedded" (([regex]::Matches($r4.Html, 'everything it did</summary>')).Count -eq 16)
+Check "task9 s4: no pointer line (today's behavior for small dossiers)" (-not $r4.Html.Contains('instances - everything else'))
+Check "task9 s4: focus_instances_detail.json byte-identical after render" $r4.JsonUnchanged
+
+Remove-Item -LiteralPath (Join-Path $rcase 'focus\focus_instances_detail.json'), (Join-Path $rcase 'focus\focus_report.html') -Force -ErrorAction SilentlyContinue
+
+# ---- task 10: sparkline + evidence window clamp (display window = LogHours clamped [30d, 90d]) ----
+# Stray decade-old amcache/MFT stamps used to spend the sparkline's bars and stretch the banner's
+# evidence window into a 20-year span (real WIN11 case: 2006-11-01 -> 2026-10-16). Both now render
+# only the case's analysis window (LogHours days clamped to [30, 90], 90 when 0/unset); events
+# older than the cutoff collapse into one '+ N older event(s) before <cutoff> (stray timestamps)'
+# note. Display only - supertimeline.csv / -Mode Timeline / the newest-150 table keep every event.
+$now10 = Get-Date
+$cutKey30 = $now10.Date.AddDays(-30).ToString('yyyy-MM-dd')
+$cutKey90 = $now10.Date.AddDays(-90).ToString('yyyy-MM-dd')
+$dayA10 = $now10.AddDays(-5); $dayB10 = $now10.AddDays(-3)
+$dayM40 = $now10.AddDays(-40); $dayO100 = $now10.AddDays(-100)
+$d2006 = [datetime]'2006-11-01'; $d2020 = [datetime]'2020-06-15'
+$script:t10i = 0
+function New-T10Row([datetime]$day, [int]$n) {
+    $l = New-Object System.Collections.Generic.List[string]
+    1..$n | ForEach-Object { $script:t10i++; $null = $l.Add(('"{0:yyyy-MM-dd} {1:d2}:10:00","fixture","test","u","e","ev{2}"' -f $day, $_, $script:t10i)) }
+    return $l.ToArray()
+}
+function Invoke-T10Render {
+    param([string[]]$Rows)
+    @('"Timestamp","Source","Type","Actor","Entity","Detail"') + $Rows | Set-Content -LiteralPath (Join-Path $rcsv 'supertimeline.csv') -Encoding UTF8
+    $null = New-HtmlReport
+    $h10 = Get-Content -LiteralPath (Join-Path $CaseDir 'report.html') -Raw
+    return @{
+        Ev = [regex]::Match($h10, "(?s)<b>Evidence window:</b>.*?</p>").Value
+        Sp = [regex]::Match($h10, "(?s)<b>Activity per day</b>.*?</svg></div>").Value
+    }
+}
+
+# sA: strays (2006 x9 = the GLOBAL busiest day, 2020 x2) + a busy 2-day cluster inside 30 days
+$rA = Invoke-T10Render (@(New-T10Row $dayA10 4) + @(New-T10Row $dayB10 5) + @(New-T10Row $d2006 9) + @(New-T10Row $d2020 2))
+$kA10 = $dayA10.ToString('yyyy-MM-dd'); $kB10 = $dayB10.ToString('yyyy-MM-dd')
+Check "task10 sA: sparkline bars only for in-window days (2006/2020 titles gone)" ((-not $rA.Sp.Contains('<title>2006-11-01')) -and (-not $rA.Sp.Contains('<title>2020-06-15')) -and $rA.Sp.Contains("<title>$kA10 : 4 event(s)</title>") -and $rA.Sp.Contains("<title>$kB10 : 5 event(s)</title>"))
+Check "task10 sA: caption note = true count + cutoff date" ($rA.Sp.Contains("showing the last 2 day(s) with activity) + 11 older event(s) before $cutKey30 (stray timestamps)</span>"))
+Check "task10 sA: busiest pick = busiest INSIDE the window (not the 9-event 2006 day)" (($rA.Sp.Contains("(busiest: $kB10 with 5 events")) -and (-not $rA.Sp.Contains('busiest: 2006-11-01')))
+Check "task10 sA: evidence window shows the clamped range (2006 first stamp gone)" ($rA.Ev.Contains("<b>Evidence window:</b> $kA10 01:10 UTC to $kB10 05:10 UTC (20 events)"))
+Check "task10 sA: evidence window carries the same note after the busiest day" ($rA.Ev.Contains("busiest day $kB10 (5 events). + 11 older event(s) before $cutKey30 (stray timestamps). Full chronology:"))
+Check "task10 sA: no stray stamp anywhere in the evidence window line" ((-not $rA.Ev.Contains('2006-11-01')) -and (-not $rA.Ev.Contains('2020-06-15')))
+
+# sB: everything inside the window -> byte-identical to today (no note, no clamp artifacts)
+$rB = Invoke-T10Render (@(New-T10Row $dayA10 4) + @(New-T10Row $dayB10 5))
+Check "task10 sB: caption byte-identical when nothing predates the cutoff" ($rB.Sp.Contains("(busiest: $kB10 with 5 events - hover a bar for its count; showing the last 2 day(s) with activity)</span>"))
+Check "task10 sB: no clamp artifacts in the sparkline card" (($rB.Sp -notmatch 'stray timestamps') -and ($rB.Sp -notmatch 'older event'))
+Check "task10 sB: evidence window line byte-identical to today" ($rB.Ev.Contains("<b>Evidence window:</b> $kA10 01:10 UTC to $kB10 05:10 UTC (9 events) - busiest day $kB10 (5 events). Full chronology: <a href='#timeline'>master timeline</a>"))
+
+# sC: the clamp follows LogHours (168 -> 30d floor; 4320/0 -> the 90d ceiling)
+$rC90 = Invoke-T10Render (@(New-T10Row $dayA10 1) + @(New-T10Row $dayM40 1) + @(New-T10Row $dayO100 1))
+$kM40 = $dayM40.ToString('yyyy-MM-dd'); $kO100 = $dayO100.ToString('yyyy-MM-dd')
+Check "task10 sC: LogHours 168 -> 30d window clamps the 40d + 100d events" (($rC90.Ev.Contains("+ 2 older event(s) before $cutKey30 (stray timestamps)")) -and ($rC90.Ev.Contains("<b>Evidence window:</b> $kA10 01:10 UTC to $kA10 01:10 UTC (3 events)")))
+$LogHours = 4320
+$rC4320 = Invoke-T10Render (@(New-T10Row $dayA10 1) + @(New-T10Row $dayM40 1) + @(New-T10Row $dayO100 1))
+$LogHours = 0
+$rC0 = Invoke-T10Render (@(New-T10Row $dayA10 1) + @(New-T10Row $dayM40 1) + @(New-T10Row $dayO100 1))
+$LogHours = 168
+Check "task10 sC: LogHours 4320 -> 90d window keeps the 40d event, clamps the 100d one" (($rC4320.Sp.Contains("+ 1 older event(s) before $cutKey90 (stray timestamps)")) -and (-not $rC4320.Sp.Contains("<title>$kO100")) -and $rC4320.Sp.Contains("<title>$kM40"))
+Check "task10 sC: LogHours 0 -> 90d window (same cutoff as 4320)" ($rC0.Ev.Contains("+ 1 older event(s) before $cutKey90 (stray timestamps)"))
+
+# sD: degenerate - every event predates the window -> full unclamped range, no bogus note
+$rD = Invoke-T10Render (@(New-T10Row $d2006 2) + @(New-T10Row $d2020 1))
+Check "task10 sD: all events older than the window -> full range, no clamp artifacts" (($rD.Ev.Contains("<b>Evidence window:</b> 2006-11-01 01:10 UTC to 2020-06-15 01:10 UTC (3 events)")) -and ($rD.Ev -notmatch 'older event'))
+Check "task10 sD: sparkline skips cleanly (zero in-window days)" ($rD.Sp -eq '')
+
+# ---- task 11: newest-150 collector self-noise suppression ----
+# The collector runs last before export, so the plain newest-150 pick led with Ophira's own
+# wevtutil evtx-export commands (real WIN11 case). The render now skips rows whose Detail/Entity
+# carry the case's raw\evtx\*.evtx export path / the case folder name, or a kit path (the
+# Test-SigmaSelfNoise vocabulary, no PID logic), backfilling with the next newest events; the
+# caption states the true post-suppression numbers. Display only - supertimeline.csv, the
+# sparkline, the evidence window and -Mode Timeline keep every event. On by default, no toggle.
+$script:t11i = 0
+function New-T11Row([string]$detail, [int]$agoMin) {
+    $ts = (Get-Date).AddMinutes(-$agoMin).ToString('yyyy-MM-dd HH:mm')
+    return ('"{0}:00","fixture","test","u","e","{1}"' -f $ts, $detail)
+}
+function Invoke-T11Render {
+    param([string[]]$Rows)
+    @('"Timestamp","Source","Type","Actor","Entity","Detail"') + $Rows | Set-Content -LiteralPath (Join-Path $rcsv 'supertimeline.csv') -Encoding UTF8
+    $before11 = Get-Content -LiteralPath (Join-Path $rcsv 'supertimeline.csv') -Raw
+    $null = New-HtmlReport
+    $h11 = Get-Content -LiteralPath (Join-Path $CaseDir 'report.html') -Raw
+    return @{
+        Html = $h11
+        Cap = [regex]::Match($h11, "<div class='meta'>Newest [^<]*</div>").Value
+        Tl = [regex]::Match($h11, "(?s)<table id='tlt'>.*?</table>").Value
+        CsvUnchanged = ("$before11" -ceq (Get-Content -LiteralPath (Join-Path $rcsv 'supertimeline.csv') -Raw))
+    }
+}
+
+# s1: 2 wevtutil-epl-case-evtx rows + 150 normal -> 150 rows shown, both noise rows gone,
+# honest note (the 150 shown includes the 2 backfilled replacements)
+$s1rows = New-Object System.Collections.Generic.List[string]
+$null = $s1rows.Add((New-T11Row "wevtutil.exe epl Microsoft-Windows-PowerShell/Operational $rcase\raw\evtx\PowerShell_Operational.evtx" 1))
+$null = $s1rows.Add((New-T11Row "wevtutil.exe epl Security $rcase\raw\evtx\Security.evtx" 2))
+1..150 | ForEach-Object { $null = $s1rows.Add((New-T11Row "normal $_" ($_ + 2))) }
+$r11a = Invoke-T11Render $s1rows.ToArray()
+Check "task11 s1: 150 rows rendered (2 suppressed, backfilled from the older events)" (([regex]::Matches($r11a.Tl, '<tr><td>')).Count -eq 150)
+Check "task11 s1: neither wevtutil case row present" ((-not $r11a.Tl.Contains('PowerShell_Operational.evtx')) -and (-not $r11a.Tl.Contains('wevtutil')))
+Check "task11 s1: caption = true post-suppression numbers + note" ($r11a.Cap -eq "<div class='meta'>Newest 150 of 152 events (collector self-noise suppressed: 2 rows)</div>")
+Check "task11 s1: the backfilled tail (normal 1/normal 150) is in the table" (($r11a.Tl.Contains('normal 1<')) -and ($r11a.Tl.Contains('normal 150<')))
+Check "task11 s1: supertimeline.csv byte-identical through the render" $r11a.CsvUnchanged
+
+# s2: a wevtutil row targeting a DIFFERENT (non-case) path stays in the table
+$r11b = Invoke-T11Render @(
+    (New-T11Row "wevtutil.exe epl Microsoft-Windows-PowerShell/Operational $rcase\raw\evtx\PowerShell_Operational.evtx" 1)
+    (New-T11Row "wevtutil.exe epl Security E:\corp-logs\Security.evtx" 2)
+    (New-T11Row 'normal row' 3)
+)
+Check "task11 s2: case-evtx wevtutil row suppressed" (-not $r11b.Tl.Contains('PowerShell_Operational.evtx'))
+Check "task11 s2: foreign-path wevtutil row STAYS" ($r11b.Tl.Contains('E:\corp-logs\Security.evtx'))
+Check "task11 s2: caption counts only the case row" ($r11b.Cap -eq "<div class='meta'>Newest 2 of 3 events (collector self-noise suppressed: 1 rows)</div>")
+
+# s3: suppression leaves fewer than 150 candidates -> show what exists, honest caption (no padding)
+$s3rows = New-Object System.Collections.Generic.List[string]
+1..5 | ForEach-Object { $null = $s3rows.Add((New-T11Row "wevtutil.exe epl System $rcase\raw\evtx\System.evtx" $_)) }
+1..3 | ForEach-Object { $null = $s3rows.Add((New-T11Row "keep $_" ($_ + 5))) }
+$r11c = Invoke-T11Render $s3rows.ToArray()
+Check "task11 s3: only the 3 unsuppressed rows render (no padding)" (([regex]::Matches($r11c.Tl, '<tr><td>')).Count -eq 3)
+Check "task11 s3: caption shows the honest 3-of-8 numbers" ($r11c.Cap -eq "<div class='meta'>Newest 3 of 8 events (collector self-noise suppressed: 5 rows)</div>")
+Check "task11 s3: no wevtutil row leaked" (-not $r11c.Tl.Contains('wevtutil'))
+
+# s4: no self-noise rows -> caption byte-identical to today, no note anywhere
+$s4rows = New-Object System.Collections.Generic.List[string]
+1..150 | ForEach-Object { $null = $s4rows.Add((New-T11Row "plain $_" $_)) }
+$r11d = Invoke-T11Render $s4rows.ToArray()
+Check "task11 s4: caption byte-identical to today (no note)" ($r11d.Cap -eq "<div class='meta'>Newest 150 of 150 events, newest first:</div>")
+Check "task11 s4: no self-noise note anywhere in the report" (-not $r11d.Html.Contains('collector self-noise'))
+Check "task11 s4: all 150 rows render" (([regex]::Matches($r11d.Tl, '<tr><td>')).Count -eq 150)
+
+# s5: kit-path rows (Test-SigmaSelfNoise vocabulary) suppress only while $script:KitPaths is set -
+# the analyst-side render (Mode Parse, KitPaths unset) keeps them and relies on the case matchers
+$kitRow11 = New-T11Row 'powershell.exe -File C:\OphiraKit\tools\collector.ps1 -Case x' 1
+$base11 = @((New-T11Row 'old row' 2), (New-T11Row 'older row' 3))
+$script:KitPaths = @('C:\OphiraKit')
+$r11e = Invoke-T11Render (@($kitRow11) + $base11)
+Check "task11 s5: kit-path row suppressed while KitPaths is set" (([regex]::Matches($r11e.Tl, '<tr><td>')).Count -eq 2 -and -not $r11e.Tl.Contains('OphiraKit'))
+$script:KitPaths = $null
+$r11f = Invoke-T11Render (@($kitRow11) + $base11)
+Check "task11 s5: KitPaths unset (analyst side) -> kit row stays, no note" (([regex]::Matches($r11f.Tl, '<tr><td>')).Count -eq 3 -and $r11f.Tl.Contains('OphiraKit') -and (-not $r11f.Html.Contains('collector self-noise')))
+
+# restore the empty fixture for anything that reads this case afterwards
+"# no entries" | Set-Content -LiteralPath (Join-Path $rcsv 'supertimeline.csv') -Encoding UTF8
+
 Remove-Item -LiteralPath $rcase -Recurse -Force -ErrorAction SilentlyContinue
 
 # ---- v2.70 rider (Release 1 task 3): Defender stale-history detail honesty ----
