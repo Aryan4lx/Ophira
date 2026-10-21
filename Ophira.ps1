@@ -1,5 +1,5 @@
 ﻿<#
-Ophira v2.72  -  Windows Incident Response Triage Toolkit
+Ophira v2.73  -  Windows Incident Response Triage Toolkit
 READ-ONLY by design: never modifies the system, only reads and copies data
 into its own output folder. Intended to be handed to a system owner or run
 by a responder during early triage / threat hunting.
@@ -135,6 +135,16 @@ by a responder during early triage / threat hunting.
     IP, ip:port or port. The engine expands it across the case's CSVs into
     an activity-chain dossier (focus\focus_report.html).
 
+.PARAMETER After
+    Focus/Process mode: optional evidence-row window start ("yyyy-MM-dd
+    [HH:mm]", date-only = midnight). Rows outside [After..Before] are
+    dropped; undated rows are dropped and counted when any window is set.
+    When omitted interactively, the wizard prompts From/To (blank = all).
+
+.PARAMETER Before
+    Focus/Process mode: optional evidence-row window end (same format as
+    -After).
+
 .PARAMETER TimelineStart
     Timeline mode: window start in UTC ("yyyy-MM-dd HH:mm"). The case's
     supertimeline.csv is filtered to the Start..End window.
@@ -240,8 +250,10 @@ by a responder during early triage / threat hunting.
     .\Ophira.ps1 -Mode Focus -ParsePath .\OPHIRA_HOST_20260926_120000.zip -ProcessName evil.exe
     Build the activity-chain dossier of one entity (name, PID, path, hash,
     IP, ip:port or port) into focus\focus_report.html. -Mode Process is an
-    alias. -Mode Timeline -TimelineStart/-TimelineEnd cuts the case's master
-    timeline to a UTC window the same way.
+    alias. -After/-Before (yyyy-MM-dd [HH:mm]) optionally cut the dossier's
+    evidence rows to a time window (date-only = midnight; undated rows are
+    dropped and counted). -Mode Timeline -TimelineStart/-TimelineEnd cuts
+    the case's master timeline to a UTC window the same way.
 
 .EXAMPLE
     .\Ophira.ps1 -Mode Parse -ParsePath .\OPHIRA_HOST_20260926_120000.zip -ExitVerdict
@@ -295,6 +307,8 @@ param(
     [string]$AnalyzePath = '.',
     [string]$ParsePath = '',
     [string]$ProcessName = '',
+    [string]$After = '',
+    [string]$Before = '',
     [string]$TimelineStart = '',
     [string]$TimelineEnd = '',
     [string]$HayabusaPath = '',
@@ -309,7 +323,7 @@ param(
     [switch]$ExitVerdict
 )
 
-$ScriptVersion = "2.72"
+$ScriptVersion = "2.73"
 $ErrorActionPreference = 'Continue'
 $ProgressPreference = 'SilentlyContinue'
 
@@ -6664,7 +6678,17 @@ tr.techrow{cursor:pointer}
             try { $fInst = @(Import-Csv -LiteralPath (Join-Path $focusDirP 'focus_instances.csv') -ErrorAction Stop) } catch { }
             $null = $sb.AppendLine("<a name='focus'></a><h2>Focus dossier - $(ConvertTo-HtmlEsc $ft.Indicator)</h2>")
             $degr = if ($ft.Degraded) { " <span class='med'>instance attribution degraded - no ProcessGuid captured in this case</span>" } else { '' }
-            $null = $sb.AppendLine("<div class='meta'>Focused on '<b>$(ConvertTo-HtmlEsc $ft.Indicator)</b>' ($($ft.Rounds) expansion round(s), $($ft.HitCount) evidence row(s), $($ft.InstanceCount) instance(s))$degr. Full dossier: $(ConvertTo-CaseFileLink (Join-Path $focusDirP 'focus_report.html') 'focus\focus_report.html') - activity chain: $(ConvertTo-CaseFileLink (Join-Path $focusDirP 'focus_chain.csv') 'focus\focus_chain.csv')</div>")
+            # v2.73: a windowed dossier says so in the embed too (old focus_terms.json without
+            # TimeWindow renders exactly as before)
+            $fWin = ''
+            if ($ft.TimeWindow) {
+                $fFrom = "$($ft.TimeWindow.From)"; $fTo = "$($ft.TimeWindow.To)"
+                if ($fFrom -or $fTo) {
+                    $fRow = 0; try { $fRow = [int]$ft.RowsOutsideWindow } catch { }
+                    $fWin = " - time window: $(ConvertTo-HtmlEsc $fFrom) to $(ConvertTo-HtmlEsc $fTo) - $fRow row(s) outside window suppressed"
+                }
+            }
+            $null = $sb.AppendLine("<div class='meta'>Focused on '<b>$(ConvertTo-HtmlEsc $ft.Indicator)</b>' ($($ft.Rounds) expansion round(s), $($ft.HitCount) evidence row(s), $($ft.InstanceCount) instance(s))$degr. Full dossier: $(ConvertTo-CaseFileLink (Join-Path $focusDirP 'focus_report.html') 'focus\focus_report.html') - activity chain: $(ConvertTo-CaseFileLink (Join-Path $focusDirP 'focus_chain.csv') 'focus\focus_chain.csv')$fWin</div>")
             # v2.56: the dossier's detection-surface banner travels in focus_terms.json - same verdict here as there
             if ("$($ft.VerdictHint)") {
                 $fvCls = switch ("$($ft.VerdictHintCls)") { 'crit' { 'lead lead-crit' } 'med' { 'lead lead-med' } default { 'lead' } }
@@ -10247,15 +10271,106 @@ function Invoke-FocusEngine {
     # different path (masquerade) splits into its own group. Instances are listed per
     # PID/ProcessGuid where the collectors captured them; name-level artifacts
     # (prefetch/amcache/autoruns/yara) stay in the shared view.
-    param([string]$Path, [string]$Indicator)
+    param([string]$Path, [string]$Indicator, [string]$After, [string]$Before)
     Write-Host ""
     Write-Host "=== Focus engine (build one entity's activity chain) ===" -ForegroundColor Cyan
-    if (-not $Path) { $Path = (Read-Host "  Case folder or OPHIRA_*.zip path").Trim(' "') }
-    $meta = Open-CaseSession -Path $Path
-    if (-not $meta) { return $false }
+    # v2.73 wizard: no typed path demanded any more - the case that is already on this PC
+    # (kit root) is picked up automatically; with none, a Quick collection is offered right
+    # here so menu [9] just works on the box the responder is sitting on. -Path keeps CLI
+    # parity (-Mode Focus/-Process -ParsePath ...) and skips the wizard entirely.
+    $meta = $null
+    if (-not $Path) {
+        $retrying = $false
+        while (-not $meta) {
+            $kit = Get-KitRoot
+            $cands = @(Get-ChildItem -Path $kit -Filter 'OPHIRA_*' -ErrorAction SilentlyContinue |
+                Where-Object { $_.PSIsContainer -or ("$($_.Name)" -match '\.zip$') } |
+                Sort-Object Name -Descending)
+            if ($cands.Count -eq 0) {
+                Write-Host "  scanned for cases in: $kit" -ForegroundColor Gray
+                if ($script:NoMenu) {
+                    # unattended runs never prompt for a collection - name the CLI way out instead
+                    Write-Host "  No case found on this PC. Point at one with: .\Ophira.ps1 -Mode Focus -ParsePath <case folder or OPHIRA_*.zip> -ProcessName <indicator>" -ForegroundColor Yellow
+                    return $false
+                }
+                $yn = (Read-Host "  No case found on this PC. Run a Quick collection now (~1-2 min), then focus? [Y/n]").Trim()
+                if ($yn.StartsWith('n', [StringComparison]::OrdinalIgnoreCase)) {
+                    Write-Host "  ok - point at a case yourself with: .\Ophira.ps1 -Mode Focus -ParsePath <case folder or OPHIRA_*.zip> -ProcessName <indicator>" -ForegroundColor Gray
+                    return $false
+                }
+                # the menu [1] collect arm relaunches a child powershell with -Mode Collect +
+                # preset args; this wizard uses the same relaunch shape as -Mode Canary phase 3
+                # (Start-Process -Wait + before/after OPHIRA_* dir diff) because it RETURNS the
+                # fresh case folder path so the wizard can open it and continue focusing
+                Write-Host "  collecting (Quick preset, ~1-2 min)..." -ForegroundColor Cyan
+                $before0 = @(Get-ChildItem -Path $kit -Directory -Filter 'OPHIRA_*' -ErrorAction SilentlyContinue)
+                $cmd0 = "powershell.exe -NoProfile -ExecutionPolicy Bypass -File `"$PSCommandPath`" -Mode Collect -NoMenu -NoElevate -Preset Quick -OutputPath `"$kit`""
+                try {
+                    if (Test-IsAdmin) { $null = Start-Process -FilePath 'powershell.exe' -ArgumentList $cmd0 -Wait -WindowStyle Hidden }
+                    else { $null = Start-Process -FilePath 'powershell.exe' -ArgumentList $cmd0 -Wait -Verb RunAs }
+                } catch {
+                    Write-Host "  collection did not start ($($_.Exception.Message))" -ForegroundColor Red
+                    return $false
+                }
+                $fresh = @(Get-ChildItem -Path $kit -Directory -Filter 'OPHIRA_*' -ErrorAction SilentlyContinue |
+                    Where-Object { $before0 -notcontains $_ } | Sort-Object Name -Descending | Select-Object -First 1)
+                if (-not $fresh) { Write-Host "  collection produced no case folder under $kit - see its collection.log" -ForegroundColor Red; return $false }
+                Write-Host "  collection done" -ForegroundColor Gray
+                continue  # auto-detect again: the fresh case is the only/newest candidate
+            }
+            if ($cands.Count -eq 1 -and -not $retrying) {
+                $Path = $cands[0].FullName
+                Write-Host "  using case: $($cands[0].Name)" -ForegroundColor Gray
+            } else {
+                Write-Host "  candidate cases (newest first):" -ForegroundColor Gray
+                for ($ci = 0; $ci -lt $cands.Count; $ci++) { Write-Host ("   [{0}] {1}" -f ($ci + 1), $cands[$ci].Name) }
+                while ($true) {
+                    $pick = (Read-Host "  case number (Enter = 1, the newest)").Trim()
+                    if (-not $pick) { $pick = '1' }
+                    $pickN = 0
+                    if ([int]::TryParse($pick, [ref]$pickN) -and $pickN -ge 1 -and $pickN -le $cands.Count) { $Path = $cands[$pickN - 1].FullName; break }
+                    Write-Host "  pick 1-$($cands.Count)" -ForegroundColor Yellow
+                }
+            }
+            $meta = Open-CaseSession -Path $Path
+            if (-not $meta) {
+                # not a crash: say so and re-prompt the numbered list (Enter then re-picks the newest)
+                $failedName = $Path
+                try { $lf0 = (Split-Path $Path -Leaf); if ($lf0) { $failedName = $lf0 } } catch { }
+                Write-Host "  could not open '$failedName' - pick again" -ForegroundColor Red
+                $retrying = $true
+            }
+        }
+    } else {
+        $meta = Open-CaseSession -Path $Path
+        if (-not $meta) { return $false }
+    }
     if (-not $Indicator) { $Indicator = (Read-Host "  Name, PID, path, hash, IP, ip:port or port").Trim() }
     if (-not $Indicator) { Write-Host "  no indicator given" -ForegroundColor Red; return $false }
-    return (Invoke-FocusCore -Indicator $Indicator -Meta ([pscustomobject]@{ Computer = "$($meta.Computer)"; CaseID = "$($meta.CaseID)" }))
+    # v2.73 optional time window: prompted only in the interactive flow (both bounds blank =
+    # everything); -After/-Before on the CLI skip the prompts entirely
+    if (-not $After -and -not $Before) {
+        $After = (Read-Host "  From (yyyy-MM-dd [HH:mm], blank = all)").Trim()
+        $d0 = [datetime]::MinValue
+        if ($After -and -not [datetime]::TryParse($After, [ref]$d0)) {
+            Write-Host "  not a date: '$After'" -ForegroundColor Yellow
+            $After = (Read-Host "  From (yyyy-MM-dd [HH:mm], blank = all)").Trim()
+            if ($After -and -not [datetime]::TryParse($After, [ref]$d0)) {
+                Write-Host "  still not a date - proceeding without the from-bound" -ForegroundColor Yellow
+                $After = ''
+            }
+        }
+        $Before = (Read-Host "  To (blank = all)").Trim()
+        if ($Before -and -not [datetime]::TryParse($Before, [ref]$d0)) {
+            Write-Host "  not a date: '$Before'" -ForegroundColor Yellow
+            $Before = (Read-Host "  To (blank = all)").Trim()
+            if ($Before -and -not [datetime]::TryParse($Before, [ref]$d0)) {
+                Write-Host "  still not a date - proceeding without the to-bound" -ForegroundColor Yellow
+                $Before = ''
+            }
+        }
+    }
+    return (Invoke-FocusCore -Indicator $Indicator -Meta ([pscustomobject]@{ Computer = "$($meta.Computer)"; CaseID = "$($meta.CaseID)" }) -After $After -Before $Before)
 }
 
 function Invoke-FocusCore {
@@ -10266,11 +10381,19 @@ function Invoke-FocusCore {
     # ships with the "everything it did" story pre-assembled. Also persists
     # focus\focus_instances_detail.json (per-instance joins + activity graph SVG) for the
     # main report's Focus section embed.
-    param([string]$Indicator, [pscustomobject]$Meta)
+    param([string]$Indicator, [pscustomobject]$Meta, [string]$After, [string]$Before)
     $meta = $Meta
     if (-not $meta) { $meta = [pscustomobject]@{ Computer = "$($script:Computer)"; CaseID = "$($script:CurrentCaseID)" } }
     $focusDir = Join-Path $script:CaseDir 'focus'
     New-Item -ItemType Directory -Path $focusDir -Force | Out-Null
+    # v2.73 optional time window on the EVIDENCE rows (focus_hits + focus_chain): a row inside
+    # [after, before] stays, out-of-window rows are dropped, and rows with NO parseable time
+    # are KEPT when no window is set (today's behavior, byte-identical) but DROPPED AND
+    # COUNTED when one is - the analyst asked for a window, undated rows cannot prove
+    # membership. The expansion term graph is NOT windowed (names/paths/hashes stay whole).
+    $afterDT = $null; $beforeDT = $null; $winDropped = 0
+    if ("$After") { try { $afterDT = [datetime]$After } catch { Write-Host "  ignoring -After '$After' (not a date)" -ForegroundColor Yellow } }
+    if ("$Before") { try { $beforeDT = [datetime]$Before } catch { Write-Host "  ignoring -Before '$Before' (not a date)" -ForegroundColor Yellow } }
     Write-Host "  Case: $($meta.Computer)  indicator: $Indicator" -ForegroundColor Gray
 
     # OS-infra process names: matched as evidence, but never seeded as new expansion terms
@@ -10394,6 +10517,9 @@ function Invoke-FocusCore {
     $cache = @{}
     $hits = New-Object System.Collections.Generic.List[object]
     $hitKeys = New-Object 'System.Collections.Generic.HashSet[string]'
+    # v2.73: dropped (out-of-window/undated) rows are re-visited every scan round - dedupe
+    # the suppressed count by the same key the hits use
+    $dropKeys = New-Object 'System.Collections.Generic.HashSet[string]'
     $instances = New-Object System.Collections.Generic.List[object]
     $instKeys = New-Object 'System.Collections.Generic.HashSet[string]'
     $sourcesHit = @{}
@@ -10523,6 +10649,16 @@ function Invoke-FocusCore {
                 $t = ''
                 foreach ($tc in @('Time', 'TimeCreated', 'Timestamp', 'Started', 'LastWrite')) {
                     if ($r.PSObject.Properties[$tc] -and "$($r.$tc)") { $t = "$($r.$tc)"; break }
+                }
+                # v2.73: the window filters the hit record only - expansion terms and the
+                # instance record above were already taken from this row (term graph stays whole)
+                if ($afterDT -or $beforeDT) {
+                    $rt = $null
+                    if ($t) { try { $rt = [datetime]$t } catch { } }
+                    if (-not $rt -or ($afterDT -and $rt -lt $afterDT) -or ($beforeDT -and $rt -gt $beforeDT)) {
+                        if ($dropKeys.Add("$src|$detail".ToLower())) { $winDropped++ }
+                        continue
+                    }
                 }
                 $hk = "$src|$detail"
                 if ($hitKeys.Add($hk.ToLower())) {
@@ -10799,7 +10935,15 @@ function Invoke-FocusCore {
             if (-not $hit) { foreach ($pt in $paths) { if ($blob.Contains($pt)) { $hit = $true; break } } }
             if (-not $hit) { foreach ($h in $hashes) { if ($blob.Contains($h)) { $hit = $true; break } } }
             if (-not $hit) { foreach ($ip in $ips) { if ($blob.Contains($ip)) { $hit = $true; break } } }
-            if ($hit) { $chain.Add($r) }
+            if ($hit) {
+                # v2.73: the chain is evidence too - same window rule as the hit records
+                if ($afterDT -or $beforeDT) {
+                    $rt2 = $null
+                    if ("$($r.Timestamp)") { try { $rt2 = [datetime]"$($r.Timestamp)" } catch { } }
+                    if (-not $rt2 -or ($afterDT -and $rt2 -lt $afterDT) -or ($beforeDT -and $rt2 -gt $beforeDT)) { $winDropped++; continue }
+                }
+                $chain.Add($r)
+            }
         }
     }
     $chain = [System.Collections.Generic.List[object]]@($chain | Sort-Object { "$($_.Timestamp)" } | Select-Object -First 500)
@@ -10921,6 +11065,12 @@ function Invoke-FocusCore {
         HitCount = $hits.Count
         InstanceCount = $instances.Count
         CorrNotes = $corrNotes.ToArray()
+        # v2.73: the window travels with the dossier - the main-report embed shows it too
+        TimeWindow = @{
+            From = $(if ($afterDT) { $afterDT.ToString('yyyy-MM-dd HH:mm') } else { '' })
+            To = $(if ($beforeDT) { $beforeDT.ToString('yyyy-MM-dd HH:mm') } else { '' })
+        }
+        RowsOutsideWindow = $winDropped
         Degraded = (-not ($guids.Count -gt 0))
         VerdictHint = $hint
         VerdictHintCls = $hintCls
@@ -11067,6 +11217,14 @@ function Invoke-FocusCore {
         [void]$h.AppendLine("<!DOCTYPE html><html><head><meta charset='utf-8'><title>Ophira focus - $Indicator</title><style>body{background:#141821;color:#cdd3dc;font:13px/1.45 'Segoe UI',sans-serif;margin:20px}h1{color:#eee;font-size:20px}h2{color:#7ab;font-size:15px;border-bottom:1px solid #2a3040;padding-bottom:4px;margin-top:26px}h3{color:#9bd;font-size:13px;margin-top:18px}table{border-collapse:collapse;margin:8px 0;width:100%}th,td{border:1px solid #2a3040;padding:4px 8px;text-align:left;vertical-align:top}th{background:#1d2330;color:#9ab}.path{font-family:Consolas,monospace;font-size:12px;word-break:break-all}td{word-break:break-word}.banner{padding:12px 16px;border-radius:6px;margin:12px 0;font-weight:bold}.crit{background:#3a1518;color:#f88;border:1px solid #722}.med{background:#33290f;color:#fc6;border:1px solid #663}.info{background:#1d2330;color:#8ac;border:1px solid #345}.meta{color:#788;font-size:12px;margin:6px 0}.warn{color:#fc6}</style></head><body>")
         [void]$h.AppendLine("<h1>FOCUS DOSSIER - $(& $esc $Indicator)</h1>")
         [void]$h.AppendLine("<div class='meta'>Host: $(& $esc $meta.Computer) | Case: $(& $esc $meta.CaseID) | Generated: $((Get-Date).ToUniversalTime().ToString('u')) | Ophira v$ScriptVersion | $($hits.Count) evidence row(s) in $($round) round(s) | entity terms: $($names.Count) name / $($paths.Count) path / $($hashes.Count) hash</div>")
+        if ($afterDT -or $beforeDT) {
+            # v2.73: surface the window honestly - the suppressed count covers out-of-window
+            # AND undated rows (undated cannot prove membership once a window is set)
+            $wFrom = ''; $wTo = ''
+            if ($afterDT) { $wFrom = $afterDT.ToString('yyyy-MM-dd HH:mm') }
+            if ($beforeDT) { $wTo = $beforeDT.ToString('yyyy-MM-dd HH:mm') }
+            [void]$h.AppendLine("<div class='meta'>time window: $(& $esc $wFrom) to $(& $esc $wTo) - $winDropped row(s) outside window suppressed</div>")
+        }
         if (-not ($guids.Count -gt 0)) { [void]$h.AppendLine("<div class='banner info'><span class='warn'>Instance attribution degraded</span> - no ProcessGuid captured in this case (legacy collect or no Sysmon). Per-instance chains below are best-effort.</div>") }
         [void]$h.AppendLine("<div class='banner $hintCls'>$hint - $hintTxt</div>")
         if ($masq.Count -gt 0) { [void]$h.AppendLine("<div class='banner med'><span class='warn'>MASQUERADE WARNING:</span> the name appears at multiple paths - $($(& $esc ($masq -join ', '))). Compare the groups below; only one of them is probably the real OS binary.</div>") }
@@ -12060,8 +12218,8 @@ if ($Mode -ne 'Collect') {
         'UpdateRules' { Invoke-UpdateRulesMode }
         'Tune' { Invoke-TuneMode | Out-Null }
         'Parse' { Invoke-ParseMode -Path $ParsePath | Out-Null }
-        'Process' { Invoke-FocusEngine -Path $ParsePath -Indicator $ProcessName | Out-Null }
-        'Focus' { Invoke-FocusEngine -Path $ParsePath -Indicator $ProcessName | Out-Null }
+        'Process' { Invoke-FocusEngine -Path $ParsePath -Indicator $ProcessName -After $After -Before $Before | Out-Null }
+        'Focus' { Invoke-FocusEngine -Path $ParsePath -Indicator $ProcessName -After $After -Before $Before | Out-Null }
         'Timeline' { Invoke-TimelineMode -Path $ParsePath -Start $TimelineStart -End $TimelineEnd | Out-Null }
         'Watch' { Invoke-WatchMode -Interval $WatchInterval | Out-Null }
         'SeedIocs' { Invoke-SeedIocsMode -Value $SeedValue | Out-Null }

@@ -102,6 +102,9 @@ Check "rule lookup: unknown GUID returns null" ($null -eq (Find-SigmaRuleFile -R
 # PART 4 - Invoke-FocusEngine (v2.40, replaces the flat pivot): name + hash
 # (with auto-resolve) on a case
 # ============================================================================
+# v2.73: blank-answer the engine's interactive From/To window prompts (these runs pass
+# neither -After nor -Before) - identical to the pre-v2.73 no-window behavior pinned here
+function Read-Host { param([string]$Prompt) return '' }
 $defs = ''
 foreach ($n in @('Open-CaseSession', 'Invoke-FocusEngine', 'Invoke-FocusCore')) {
     $m2 = [regex]::Match($src, "(?s)function $n\b.*?\r?\n\}")

@@ -11,6 +11,10 @@ function Check([string]$label, [bool]$ok) {
     else { $script:fail++; Write-Host "  [FAIL] $label" -ForegroundColor Red }
 }
 $stamp = Get-Date -Format 'HHmmss'
+# v2.73: the engine's interactive From/To window prompts are skipped only when -After/-Before
+# are passed; these harness runs pass neither, so blank-answer the prompts (= no window, the
+# exact pre-v2.73 behavior this suite pins)
+function Read-Host { param([string]$Prompt) return '' }
 function New-Csv { param($Path, [string[]]$Header, [string[]]$Lines) ($Header + $Lines) | Set-Content -LiteralPath $Path -Encoding UTF8 }
 
 # ============================================================================

@@ -795,6 +795,189 @@ Check "task7 s3: bare-name entity seeds directly (Indicator == name)" ($null -ne
 Check "task7 s3: no fallback re-seed for bare names" (@($s3.Log | Where-Object { $_ -match 'fallback re-seed' }).Count -eq 0)
 Check "task7 s3: the name seed matched evidence" ($null -ne $s3.Terms -and [int]"$($s3.Terms.HitCount)" -ge 1)
 
+# ---- v2.73 task 13: focus time window (real core, real CSVs on disk) ----
+# Window filters EVIDENCE rows only (focus_hits + focus_chain): out-of-window rows dropped,
+# undated rows dropped AND counted when a window is set, kept when none is. The expansion
+# term graph (names/paths/hashes) and the instance records are NOT windowed. With no window
+# the outputs must stay byte-identical to v2.72 (baseline captured at HEAD 83ce19c).
+function Invoke-FcWinScenario {
+    param([string]$Tag, [string]$After = '', [string]$Before = '')
+    $caseW = Join-Path $env:TEMP ("ophira_v270win$Tag")
+    $csvW = Join-Path $caseW 'csv'
+    New-Item -ItemType Directory -Path $csvW -Force | Out-Null
+    @"
+"Time","ProcessGuid","ProcessId","Image","User","ParentImage"
+"2026-10-10 08:00:00","G1","101","C:\evil\evil.exe","user","C:\Windows\explorer.exe"
+"2026-10-12 08:00:00","G2","102","C:\evil\evil.exe","user","C:\Windows\explorer.exe"
+"2026-10-14 08:00:00","G3","103","C:\evil\evil.exe","user","C:\Windows\explorer.exe"
+"","G4","104","C:\evil\evil.exe","user","C:\Windows\explorer.exe"
+"@ | Set-Content -LiteralPath (Join-Path $csvW 'sysmon_proc_create.csv') -Encoding UTF8
+    @"
+"Timestamp","Source","Type","Actor","Entity","Detail"
+"2026-10-11 09:00:00","sysmon","ProcessCreate","user","C:\evil\evil.exe","chain in-window"
+"2026-10-15 09:00:00","sysmon","ProcessCreate","user","C:\evil\evil.exe","chain out-window"
+"","sysmon","ProcessCreate","user","C:\evil\evil.exe","chain undated"
+"@ | Set-Content -LiteralPath (Join-Path $csvW 'supertimeline.csv') -Encoding UTF8
+    $script:CaseDir = $caseW; $script:CsvDir = $csvW
+    $script:RawDir = Join-Path $caseW 'raw'; $script:MemDir = Join-Path $caseW 'mem'
+    $coreArgs = @{ Indicator = 'C:\evil\evil.exe'; Meta = ([pscustomobject]@{ Computer = 'WINHOST'; CaseID = 'WIN-1' }) }
+    if ($After) { $coreArgs.After = $After }
+    if ($Before) { $coreArgs.Before = $Before }
+    $null = Invoke-FocusCore @coreArgs
+    $fDir = Join-Path $caseW 'focus'
+    $res = @{
+        HitsB64 = [Convert]::ToBase64String([IO.File]::ReadAllBytes((Join-Path $fDir 'focus_hits.csv')))
+        ChainB64 = [Convert]::ToBase64String([IO.File]::ReadAllBytes((Join-Path $fDir 'focus_chain.csv')))
+        Hits = @(Import-Csv -LiteralPath (Join-Path $fDir 'focus_hits.csv'))
+        Chain = @(Import-Csv -LiteralPath (Join-Path $fDir 'focus_chain.csv'))
+        Inst = @(Import-Csv -LiteralPath (Join-Path $fDir 'focus_instances.csv'))
+        Terms = (Get-Content -LiteralPath (Join-Path $fDir 'focus_terms.json') -Raw | ConvertFrom-Json)
+        Report = (Get-Content -LiteralPath (Join-Path $fDir 'focus_report.html') -Raw)
+    }
+    Remove-Item -LiteralPath $caseW -Recurse -Force -ErrorAction SilentlyContinue
+    return $res
+}
+$t13BaseHits = '77u/IkluZGljYXRvciIsIlNvdXJjZSIsIlRpbWUiLCJNYXRjaGVkT24iLCJEZXRhaWwiDQoiQzpcZXZpbFxldmlsLmV4ZSIsInN5c21vbl9wcm9jX2NyZWF0ZSIsIjIwMjYtMTAtMTAgMDg6MDA6MDAiLCJwYXRoIGM6XGV2aWxcZXZpbC5leGUiLCJUaW1lPTIwMjYtMTAtMTAgMDg6MDA6MDAgfCBQcm9jZXNzR3VpZD1HMSB8IFByb2Nlc3NJZD0xMDEgfCBJbWFnZT1DOlxldmlsXGV2aWwuZXhlIHwgVXNlcj11c2VyIHwgUGFyZW50SW1hZ2U9QzpcV2luZG93c1xleHBsb3Jlci5leGUgfCAiDQoiQzpcZXZpbFxldmlsLmV4ZSIsInN5c21vbl9wcm9jX2NyZWF0ZSIsIjIwMjYtMTAtMTIgMDg6MDA6MDAiLCJuYW1lIGM6XGV2aWxcZXZpbC5leGUiLCJUaW1lPTIwMjYtMTAtMTIgMDg6MDA6MDAgfCBQcm9jZXNzR3VpZD1HMiB8IFByb2Nlc3NJZD0xMDIgfCBJbWFnZT1DOlxldmlsXGV2aWwuZXhlIHwgVXNlcj11c2VyIHwgUGFyZW50SW1hZ2U9QzpcV2luZG93c1xleHBsb3Jlci5leGUgfCAiDQoiQzpcZXZpbFxldmlsLmV4ZSIsInN5c21vbl9wcm9jX2NyZWF0ZSIsIjIwMjYtMTAtMTQgMDg6MDA6MDAiLCJuYW1lIGM6XGV2aWxcZXZpbC5leGUiLCJUaW1lPTIwMjYtMTAtMTQgMDg6MDA6MDAgfCBQcm9jZXNzR3VpZD1HMyB8IFByb2Nlc3NJZD0xMDMgfCBJbWFnZT1DOlxldmlsXGV2aWwuZXhlIHwgVXNlcj11c2VyIHwgUGFyZW50SW1hZ2U9QzpcV2luZG93c1xleHBsb3Jlci5leGUgfCAiDQoiQzpcZXZpbFxldmlsLmV4ZSIsInN5c21vbl9wcm9jX2NyZWF0ZSIsIiIsIm5hbWUgYzpcZXZpbFxldmlsLmV4ZSIsIlByb2Nlc3NHdWlkPUc0IHwgUHJvY2Vzc0lkPTEwNCB8IEltYWdlPUM6XGV2aWxcZXZpbC5leGUgfCBVc2VyPXVzZXIgfCBQYXJlbnRJbWFnZT1DOlxXaW5kb3dzXGV4cGxvcmVyLmV4ZSB8ICINCg=='
+$t13BaseChain = '77u/IlRpbWVzdGFtcCIsIlNvdXJjZSIsIlR5cGUiLCJBY3RvciIsIkVudGl0eSIsIkRldGFpbCINCiIiLCJzeXNtb24iLCJQcm9jZXNzQ3JlYXRlIiwidXNlciIsIkM6XGV2aWxcZXZpbC5leGUiLCJjaGFpbiB1bmRhdGVkIg0KIjIwMjYtMTAtMTEgMDk6MDA6MDAiLCJzeXNtb24iLCJQcm9jZXNzQ3JlYXRlIiwidXNlciIsIkM6XGV2aWxcZXZpbC5leGUiLCJjaGFpbiBpbi13aW5kb3ciDQoiMjAyNi0xMC0xNSAwOTowMDowMCIsInN5c21vbiIsIlByb2Nlc3NDcmVhdGUiLCJ1c2VyIiwiQzpcZXZpbFxldmlsLmV4ZSIsImNoYWluIG91dC13aW5kb3ciDQo='
+$wNo = Invoke-FcWinScenario -Tag 'a'
+Check "t13 no-window: focus_hits.csv byte-identical to v2.72" ($wNo.HitsB64 -eq $t13BaseHits)
+Check "t13 no-window: focus_chain.csv byte-identical to v2.72" ($wNo.ChainB64 -eq $t13BaseChain)
+Check "t13 no-window: undated rows kept (4 hits incl. G4, 3 chain rows)" ($wNo.Hits.Count -eq 4 -and $wNo.Chain.Count -eq 3)
+Check "t13 no-window: focus_terms TimeWindow empty + RowsOutsideWindow 0" ("$($wNo.Terms.TimeWindow.From)" -eq '' -and "$($wNo.Terms.TimeWindow.To)" -eq '' -and [int]$wNo.Terms.RowsOutsideWindow -eq 0)
+Check "t13 no-window: no 'time window' line in the dossier" (-not $wNo.Report.Contains('time window:'))
+$wWin = Invoke-FcWinScenario -Tag 'b' -After '2026-10-11' -Before '2026-10-13'
+Check "t13 window: only the in-window hit stays (1 row, G2 2026-10-12)" ($wWin.Hits.Count -eq 1 -and "$($wWin.Hits[0].Time)" -eq '2026-10-12 08:00:00')
+Check "t13 window: undated hit row dropped" (@($wWin.Hits | Where-Object { "$($_.Detail)" -match 'ProcessGuid=G4\b' }).Count -eq 0)
+Check "t13 window: focus_terms TimeWindow from/to (date-only = midnight)" ("$($wWin.Terms.TimeWindow.From)" -eq '2026-10-11 00:00' -and "$($wWin.Terms.TimeWindow.To)" -eq '2026-10-13 00:00')
+Check "t13 window: RowsOutsideWindow = 3 hits + 2 chain rows = 5" ([int]$wWin.Terms.RowsOutsideWindow -eq 5)
+Check "t13 window: instance/term graph NOT windowed (4 instances)" ($wWin.Inst.Count -eq 4)
+Check "t13 window: focus_chain keeps only the in-window row" ($wWin.Chain.Count -eq 1 -and "$($wWin.Chain[0].Detail)" -eq 'chain in-window')
+Check "t13 window: report header prints window + honest suppressed count" ($wWin.Report.Contains('time window: 2026-10-11 00:00 to 2026-10-13 00:00 - 5 row(s) outside window suppressed'))
+
+# t13 statics: regen seeds untouched, CLI parity, verbatim prompts
+$t13SeedLines = @($src -split "\r?\n" | Where-Object { $_ -match 'Invoke-FocusCore -Indicator \$seed' })
+Check "t13 static: regen auto-focus seed calls exist and carry no -After/-Before" ($t13SeedLines.Count -ge 2 -and @($t13SeedLines | Where-Object { $_ -match '-After|-Before' }).Count -eq 0)
+Check "t13 static: -Mode Focus arm passes -After/-Before" ($src.Contains("'Focus' { Invoke-FocusEngine -Path `$ParsePath -Indicator `$ProcessName -After `$After -Before `$Before | Out-Null }"))
+Check "t13 static: -Mode Process alias arm passes -After/-Before" ($src.Contains("'Process' { Invoke-FocusEngine -Path `$ParsePath -Indicator `$ProcessName -After `$After -Before `$Before | Out-Null }"))
+Check "t13 static: -After/-Before exist as script + engine + core params" ($src.Contains("[string]`$After = '',") -and $src.Contains("[string]`$Before = '',") -and $src.Contains('param([string]$Path, [string]$Indicator, [string]$After, [string]$Before)') -and $src.Contains('param([string]$Indicator, [pscustomobject]$Meta, [string]$After, [string]$Before)'))
+Check "t13 static: menu [9] Focus arm routes through the wizard" ($src.Contains("'Focus' { Invoke-FocusEngine | Out-Null }"))
+Check "t13 static: menu [P] Process arm routes through the wizard" ($src.Contains("Invoke-FocusEngine -Path `$ParsePath -Indicator `$pn | Out-Null"))
+Check "t13 static: From/To prompts verbatim" ($src.Contains('  From (yyyy-MM-dd [HH:mm], blank = all)') -and $src.Contains('  To (blank = all)'))
+Check "t13 static: engine passes -After/-Before into the core" ($src.Contains('-After $After -Before $Before') -and $src.Contains('Invoke-FocusCore -Indicator $Indicator -Meta'))
+
+# t13: the main-report Focus embed meta shows the window when the dossier carries one
+$mNr = [regex]::Match($src, "(?s)function New-HtmlReport \{.*?\r?\n\}")
+if (-not $mNr.Success) { throw 'extract failed: New-HtmlReport (re-extract)' }
+Invoke-Expression $mNr.Value
+$t13case = Join-Path $env:TEMP ("ophira_v270t13_" + (Get-Date -Format 'HHmmss'))
+$t13csv = Join-Path $t13case 'csv'
+New-Item -ItemType Directory -Path $t13csv, (Join-Path $t13case 'raw\evtx'), (Join-Path $t13case 'focus') -Force | Out-Null
+$script:CaseDir = $t13case; $script:CsvDir = $t13csv
+$script:RawDir = Join-Path $t13case 'raw'; $script:MemDir = Join-Path $t13case 'mem'
+$script:fixtureRows = @{}
+'{"Indicator":"x.exe","Rounds":1,"HitCount":2,"InstanceCount":1,"Degraded":false,"VerdictHint":"","Masquerade":[],"Paths":[],"TimeWindow":{"From":"2026-10-01 00:00","To":"2026-10-02 00:00"},"RowsOutsideWindow":3}' | Set-Content -LiteralPath (Join-Path $t13case 'focus\focus_terms.json') -Encoding UTF8
+$null = New-HtmlReport
+$htmlT13w = Get-Content -LiteralPath (Join-Path $CaseDir 'report.html') -Raw
+Check "t13 embed: meta line shows the window + suppressed count" ($htmlT13w.Contains('time window: 2026-10-01 00:00 to 2026-10-02 00:00 - 3 row(s) outside window suppressed'))
+'{"Indicator":"x.exe","Rounds":1,"HitCount":0,"InstanceCount":0,"Degraded":false,"VerdictHint":"","Masquerade":[],"Paths":[]}' | Set-Content -LiteralPath (Join-Path $t13case 'focus\focus_terms.json') -Encoding UTF8
+$null = New-HtmlReport
+$htmlT13o = Get-Content -LiteralPath (Join-Path $CaseDir 'report.html') -Raw
+Check "t13 embed: old dossier JSON (no TimeWindow) renders with no window line" (-not $htmlT13o.Contains('time window:'))
+'{"Indicator":"x.exe","Rounds":1,"HitCount":0,"InstanceCount":0,"Degraded":false,"VerdictHint":"","Masquerade":[],"Paths":[],"TimeWindow":{"From":"","To":""}}' | Set-Content -LiteralPath (Join-Path $t13case 'focus\focus_terms.json') -Encoding UTF8
+$null = New-HtmlReport
+$htmlT13e = Get-Content -LiteralPath (Join-Path $CaseDir 'report.html') -Raw
+Check "t13 embed: empty window strings render no line" (-not $htmlT13e.Contains('time window:'))
+Remove-Item -LiteralPath $t13case -Recurse -Force -ErrorAction SilentlyContinue
+
+# ---- v2.73 task 12: focus wizard - case auto-detect + declined Quick-collect offer ----
+# Invoke-FocusEngine extracted; the candidate scan rides a stubbed Get-KitRoot (temp dirs with
+# real OPHIRA_* names), Open-CaseSession/Invoke-FocusCore are spies, Read-Host is scripted.
+$mFe = [regex]::Match($src, "(?s)function Invoke-FocusEngine \{.*?\r?\n\}")
+if (-not $mFe.Success) { throw 'extract failed: Invoke-FocusEngine' }
+Invoke-Expression $mFe.Value
+$script:feOpens = New-Object System.Collections.Generic.List[string]
+$script:feCores = New-Object System.Collections.Generic.List[object]
+$script:fePrompts = New-Object System.Collections.Generic.List[string]
+$script:feAnswers = New-Object System.Collections.Generic.List[string]
+$script:feFailNext = $false
+$script:feKit = ''
+function Get-KitRoot { return $script:feKit }
+function Open-CaseSession {
+    param([string]$Path)
+    $script:feOpens.Add("$Path")
+    if ($script:feFailNext) { $script:feFailNext = $false; Write-Host "  case.json not found - not an Ophira case folder?" -ForegroundColor Red; return $null }
+    return [pscustomobject]@{ Computer = 'FEHOST'; CaseID = 'FE-1' }
+}
+function Invoke-FocusCore {
+    param([string]$Indicator, [pscustomobject]$Meta, [string]$After, [string]$Before)
+    $script:feCores.Add([pscustomobject]@{ Indicator = "$Indicator"; After = "$After"; Before = "$Before" })
+    return $true
+}
+function Read-Host {
+    param([string]$Prompt)
+    $script:fePrompts.Add("$Prompt")
+    if ($script:feAnswers.Count -eq 0) { return '' }
+    $a = "$($script:feAnswers[0])"
+    $script:feAnswers.RemoveAt(0)
+    return $a
+}
+function Invoke-FeScenario {
+    param([string]$Tag, [string[]]$Dirs = @(), [string[]]$Zips = @(), [string[]]$Answers = @(), [switch]$NoMenu, [switch]$FailFirst)
+    $script:feKit = Join-Path $env:TEMP ("ophira_v270fe$Tag")
+    if (Test-Path -LiteralPath $script:feKit) { Remove-Item -LiteralPath $script:feKit -Recurse -Force }
+    New-Item -ItemType Directory -Path $script:feKit | Out-Null
+    foreach ($d in $Dirs) { New-Item -ItemType Directory -Path (Join-Path $script:feKit $d) | Out-Null }
+    foreach ($z in $Zips) { Set-Content -LiteralPath (Join-Path $script:feKit $z) -Value 'zip placeholder' -Encoding ASCII }
+    $script:feOpens.Clear(); $script:feCores.Clear(); $script:fePrompts.Clear(); $script:feAnswers.Clear()
+    foreach ($a in $Answers) { $script:feAnswers.Add("$a") }
+    $script:feFailNext = [bool]$FailFirst
+    $savedNoMenu = $script:NoMenu
+    $script:NoMenu = [bool]$NoMenu
+    $r = Invoke-FocusEngine
+    $script:NoMenu = $savedNoMenu
+    return @{ Result = $r; Opens = $script:feOpens.ToArray(); Cores = $script:feCores.ToArray(); Prompts = $script:fePrompts.ToArray(); AnswersLeft = $script:feAnswers.Count }
+}
+# fixture names share a host prefix so name-desc order == newest-first (real OPHIRA_<host>_<ts> names)
+$t12D3 = @('OPHIRA_HOST_20261019_090000', 'OPHIRA_HOST_20261020_120000', 'OPHIRA_HOST_20261021_100000')
+# 0 candidates, offer declined -> returns without ever calling Open-CaseSession (spy assert)
+$feD = Invoke-FeScenario -Tag 'dec' -Answers @('n')
+Check "t12 decline: returns \$false with no Open-CaseSession call" ($feD.Result -eq $false -and $feD.Opens.Count -eq 0 -and $feD.Cores.Count -eq 0)
+Check "t12 decline: exactly the collect-offer prompt was asked" ($feD.Prompts.Count -eq 1 -and "$($feD.Prompts[0])" -match 'Quick collection now')
+Check "t12 static: collect offer prompt verbatim" ($src.Contains('  No case found on this PC. Run a Quick collection now (~1-2 min), then focus? [Y/n]'))
+Check "t12 static: declined/NoMenu hint names the CLI alternative" ($src.Contains('-Mode Focus -ParsePath <case folder or OPHIRA_*.zip> -ProcessName <indicator>'))
+Check "t12 static: collect relaunch is the menu-[1] shape (Quick, NoMenu, kit-root OutputPath)" ($src.Contains('-Mode Collect -NoMenu -NoElevate -Preset Quick -OutputPath'))
+# 0 candidates + -NoMenu -> hint only, no prompt at all (unattended never offers collection)
+$feN = Invoke-FeScenario -Tag 'nm' -NoMenu
+Check "t12 no-menu: hint and return, zero prompts, zero opens" ($feN.Result -eq $false -and $feN.Opens.Count -eq 0 -and $feN.Prompts.Count -eq 0 -and $feN.AnswersLeft -eq 0)
+# 1 candidate -> used automatically, no case-number prompt (indicator + From + To only)
+$fe1 = Invoke-FeScenario -Tag 'one' -Dirs @('OPHIRA_HOST_20261019_090000') -Answers @('evil.exe')
+Check "t12 one: the single candidate opened" ($fe1.Result -eq $true -and $fe1.Opens.Count -eq 1 -and ("$($fe1.Opens[0])".EndsWith('OPHIRA_HOST_20261019_090000')))
+Check "t12 one: no pick prompt (indicator + window prompts only), core got the indicator" ($fe1.Cores.Count -eq 1 -and "$($fe1.Cores[0].Indicator)" -eq 'evil.exe' -and $fe1.Prompts.Count -eq 3 -and @($fe1.Prompts | Where-Object { "$_" -match 'case number' }).Count -eq 0)
+# N candidates -> numbered list newest-first; Enter = newest
+$feE = Invoke-FeScenario -Tag 'ent' -Dirs $t12D3 -Answers @('', 'ind')
+Check "t12 many: Enter picks the newest (name-desc)" ($feE.Result -eq $true -and ("$($feE.Opens[0])".EndsWith('OPHIRA_HOST_20261021_100000')) -and "$($feE.Cores[0].Indicator)" -eq 'ind')
+# N candidates -> explicit number picks that entry
+$fe2 = Invoke-FeScenario -Tag 'p2' -Dirs $t12D3 -Answers @('2', 'ind')
+Check "t12 many: '2' picks the second newest" (("$($fe2.Opens[0])".EndsWith('OPHIRA_HOST_20261020_120000')))
+# zips are candidates too (newest-named zip wins on Enter)
+$feZ = Invoke-FeScenario -Tag 'zip' -Dirs @('OPHIRA_HOST_20261019_090000') -Zips @('OPHIRA_HOST_20261023_000000.zip') -Answers @('', 'ind')
+Check "t12 many: OPHIRA_*.zip candidates scan + newest zip auto-picked" (("$($feZ.Opens[0])".EndsWith('OPHIRA_HOST_20261023_000000.zip')))
+# failed open -> re-prompt (the numbered list), not a crash
+$feF = Invoke-FeScenario -Tag 'fail' -Dirs @('OPHIRA_HOST_20261021_100000', 'OPHIRA_HOST_20261020_120000') -Answers @('1', '2', 'ind') -FailFirst
+Check "t12 fail: first open failed, re-prompt succeeded on the 2nd pick" ($feF.Result -eq $true -and $feF.Opens.Count -eq 2 -and ("$($feF.Opens[0])".EndsWith('OPHIRA_HOST_20261021_100000')) -and ("$($feF.Opens[1])".EndsWith('OPHIRA_HOST_20261020_120000')) -and $feF.Cores.Count -eq 1)
+Check "t12 fail: the case-number prompt appeared twice" (@($feF.Prompts | Where-Object { "$_" -match 'case number' }).Count -eq 2)
+# window prompts: valid answers ride to the core
+$feW = Invoke-FeScenario -Tag 'win' -Dirs @('OPHIRA_HOST_20261019_090000') -Answers @('ind', '2026-10-01', '2026-10-02 03:00')
+Check "t13 wizard: From/To answers reach the core" ("$($feW.Cores[0].After)" -eq '2026-10-01' -and "$($feW.Cores[0].Before)" -eq '2026-10-02 03:00')
+# -After passed -> prompts skipped entirely (CLI parity)
+$theDir = Join-Path $script:feKit 'OPHIRA_HOST_20261019_090000'
+$script:feOpens.Clear(); $script:feCores.Clear(); $script:fePrompts.Clear(); $script:feAnswers.Clear()
+$rCli = Invoke-FocusEngine -Path $theDir -Indicator 'x' -After '2026-10-01'
+Check "t13 wizard: -After on the CLI skips every prompt, Before stays blank" ($rCli -eq $true -and $script:fePrompts.Count -eq 0 -and "$($script:feCores[0].After)" -eq '2026-10-01' -and "$($script:feCores[0].Before)" -eq '')
+# invalid window input: re-prompt once, then proceed without the bound (warning)
+$feI = Invoke-FeScenario -Tag 'inv' -Dirs @('OPHIRA_HOST_20261019_090000') -Answers @('ind', 'garbage1', 'garbage2', 'garbage3', '2026-10-05')
+Check "t13 wizard: From invalid twice -> dropped with warning, To valid on retry" ("$($feI.Cores[0].After)" -eq '' -and "$($feI.Cores[0].Before)" -eq '2026-10-05' -and $feI.Prompts.Count -eq 5)
+
 if ($fail -gt 0) { Write-Host "`ntest_v270: $pass passed, $fail FAILED" -ForegroundColor Red; exit 1 }
 Write-Host "`ntest_v270: $pass passed, 0 failed" -ForegroundColor Green
 exit 0
