@@ -85,7 +85,7 @@ Check "R10: benign parent/child NOT flagged" (@($hf | Where-Object { $_.Rule -ma
 Check "R11: ms-settings hijack = medium" (@($hf | Where-Object { $_.Rule -match 'UAC bypass pattern' -and $_.Severity -eq 'medium' }).Count -ge 1)
 Check "R12: admin-share payload.dll WriteData = high" (@($hf | Where-Object { $_.Rule -match 'Admin-share executable staging' -and $_.Evidence -match 'payload\.dll' }).Count -eq 1)
 Check "R12: ReadData-only / txt / non-admin-share NOT flagged" (@($hf | Where-Object { $_.Rule -match 'Admin-share' -and $_.Evidence -match 'readme|tool\.exe' }).Count -eq 0)
-Check "R13: discovery storm for recon = medium" (@($hf | Where-Object { $_.Rule -match 'Discovery command storm' -and $_.Entity -eq 'recon' }).Count -eq 1)
+Check "R13: discovery storm for recon = low (v2.76: inherently low-specificity)" (@($hf | Where-Object { $_.Rule -match 'Discovery command storm' -and $_.Entity -eq 'recon' -and $_.Severity -eq 'low' }).Count -eq 1)
 Check "R13: single whoami for svc NOT flagged" (@($hf | Where-Object { $_.Rule -match 'Discovery command storm' -and $_.Entity -eq 'svc' }).Count -eq 0)
 Check "R14: RT protection disabled = high" (@($hf | Where-Object { $_.Rule -match 'real-time protection DISABLED' }).Count -eq 1)
 Check "R14: exclusion change = high" (@($hf | Where-Object { $_.Rule -match 'exclusion configuration changed' }).Count -eq 1)

@@ -20,7 +20,7 @@ function Check([string]$label, [bool]$ok) {
 Check "verdict: sigma-high storm gated to >=3 events from >=2 distinct rules" ($src -match [regex]::Escape('if ($hayHigh.Count -ge 3 -and $hayHighRules -ge 2) { 2 } else { 0 }'))
 Check "verdict: high signal uses highFloor variable (not hardcoded 2)" ($src -match [regex]::Escape("Add-Signal 'Sigma detection - high' `$highFloor"))
 Check "hunt R22: servicing/Store/updater skip list present" ($src -match 'WinSxS\\Temp\\InFlight' -and $src -match 'WindowsApps' -and $src -match 'updated\|Application')
-Check "hunt R22: birth-attribute checks gated on PE files only" (($src -match [regex]::Escape('$attrOk = ("$($m.Path)" -notmatch $tfSkipRe)')) -and ($src -match [regex]::Escape('if ($attrOk -and "$($m.CreatedFN)")')))
+Check "hunt R22: birth-attribute checks gated on PE files only" (($src -match [regex]::Escape('$attrOk = ($tfPath -notmatch $tfSkipRe) -and ($tfPath -match $tfPeRe)')) -and ($src -match [regex]::Escape('if ($attrOk -and "$($kv.Value.CreatedFN)")')))
 $pack = Get-Content -LiteralPath (Join-Path (Split-Path -Parent $PSScriptRoot) 'tools\endpoint\yara\rules\ophira-pack.yar') -Raw
 Check "yara pack: keylogger rule proximity-gated (API pair within 8KB)" ($pack -match '(?s)OPHIRA_Suspicious_Keylogger_Strings.*?@a1 - @a2 < 8192.*?@a2 - @a1 < 8192')
 Check "yara pack: keylog keyword bounded to the cluster (32KB)" ($pack -match '(?s)OPHIRA_Suspicious_Keylogger_Strings.*?@a3 - @a1 < 32768')

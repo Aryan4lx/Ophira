@@ -73,19 +73,29 @@ New-Csv (Join-Path $CsvDir 'sysmon_file_time.csv') '"Time","EventId","Image","Ta
 New-HuntFindings
 
 $hf = @($saved['hunt_findings'])
-$r22 = @($hf | Where-Object { $_.Rule -match 'Timestamp forgery indicators' })
-Check "R22: evil.exe flagged (future + skew + ran-before)" (@($r22 | Where-Object { "$($_.Entity)" -match 'evil\.exe' }).Count -eq 1)
-Check "R22: all three checks + EID 2 corroboration in evidence" (@($r22 | Where-Object { "$($_.Entity)" -match 'evil\.exe' -and "$($_.Evidence)" -match 'is in the future' -and "$($_.Evidence)" -match 'birth attributes disagree' -and "$($_.Evidence)" -match 'predates claimed birth' -and "$($_.Evidence)" -match 'EID 2' }).Count -eq 1)
-Check "R22: backd.exe flagged (skew only)" (@($r22 | Where-Object { "$($_.Entity)" -match 'backd\.exe' -and "$($_.Evidence)" -match 'day skew' }).Count -eq 1)
+# v2.76: single "Timestamp forgery indicators" medium split into three keyed-by-full-path rules:
+#   'Timestamp anomaly - future file birth' (medium) / 'Timestamp anomaly - execution predates
+#   birth' (medium) / 'Timestamp anomaly - birth attribute skew' (low, the archive-extract skew)
+$r22 = @($hf | Where-Object { "$($_.Rule)" -like 'Timestamp anomaly*' })
+Check "R22: evil.exe future-birth medium" (@($r22 | Where-Object { "$($_.Entity)" -match 'evil\.exe' -and $_.Rule -eq 'Timestamp anomaly - future file birth' -and $_.Severity -eq 'medium' -and "$($_.Evidence)" -match 'is in the future' }).Count -eq 1)
+Check "R22: evil.exe ran-before-born medium (full-path amcache match)" (@($r22 | Where-Object { "$($_.Entity)" -match 'evil\.exe' -and $_.Rule -eq 'Timestamp anomaly - execution predates birth' -and $_.Severity -eq 'medium' -and "$($_.Evidence)" -match 'predates claimed birth' }).Count -eq 1)
+Check "R22: evil.exe skew low + EID 2 corroboration" (@($r22 | Where-Object { "$($_.Entity)" -match 'evil\.exe' -and $_.Rule -eq 'Timestamp anomaly - birth attribute skew' -and $_.Severity -eq 'low' -and "$($_.Evidence)" -match 'birth attributes disagree' -and "$($_.Evidence)" -match 'EID 2' }).Count -eq 1)
+$idxMedLast = -1; $idxLowFirst = -1
+for ($i = 0; $i -lt $hf.Count; $i++) {
+    if ("$($hf[$i].Rule)" -notlike 'Timestamp anomaly*') { continue }
+    if ($hf[$i].Severity -eq 'medium') { $idxMedLast = $i } elseif ($idxLowFirst -lt 0) { $idxLowFirst = $i }
+}
+Check "R22: medium anomalies emitted before the low-skew rows" ($idxLowFirst -lt 0 -or $idxMedLast -lt $idxLowFirst)
+Check "R22: backd.exe skew only (low rule)" (@($r22 | Where-Object { "$($_.Entity)" -match 'backd\.exe' -and $_.Rule -eq 'Timestamp anomaly - birth attribute skew' -and "$($_.Evidence)" -match 'day skew' }).Count -eq 1)
 Check "R22: backd.exe has NO ran-before-born (amcache consistent)" (@($r22 | Where-Object { "$($_.Entity)" -match 'backd\.exe' -and "$($_.Evidence)" -match 'predates' }).Count -eq 0)
 Check "R22: clean.exe NOT flagged" (@($r22 | Where-Object { "$($_.Entity)" -match 'clean\.exe' }).Count -eq 0)
-Check "R22: severity medium (report-only)" (@($r22 | Where-Object { $_.Severity -eq 'medium' }).Count -eq 3)
+Check "R22: severity counts (3 medium / 3 low)" (@($r22 | Where-Object { $_.Severity -eq 'medium' }).Count -eq 3 -and @($r22 | Where-Object { $_.Severity -eq 'low' }).Count -eq 3)
 # v2.44 FP exclusions: servicing staging, browser updaters, Store VFS and non-PE copies are legitimate
 Check "R22 v2.44: WinSxS InFlight staging skew NOT flagged" (@($r22 | Where-Object { "$($_.Entity)" -match 'inflight\.dll' }).Count -eq 0)
 Check "R22 v2.44: browser-updater re-created binary NOT flagged" (@($r22 | Where-Object { "$($_.Entity)" -match 'launcher\.exe' }).Count -eq 0)
 Check "R22 v2.44: Edge versioned-dir replacement NOT flagged (live-case shape)" (@($r22 | Where-Object { "$($_.Entity)" -match 'cookie_exporter\.exe' }).Count -eq 0)
 Check "R22 v2.44: non-PE (.lnk) $Si skew NOT flagged" (@($r22 | Where-Object { "$($_.Entity)" -match 'shortcut\.lnk' }).Count -eq 0)
-Check "R22 v2.44: same skew on a user-path PE still flags" (@($r22 | Where-Object { "$($_.Entity)" -match 'tampd\.exe' -and "$($_.Evidence)" -match 'day skew' -and "$($_.Evidence)" -match 'predates' }).Count -eq 1)
+Check "R22 v2.44: same skew on a user-path PE still flags (ran-before medium + skew low)" (@($r22 | Where-Object { "$($_.Entity)" -match 'tampd\.exe' -and $_.Rule -eq 'Timestamp anomaly - execution predates birth' }).Count -eq 1 -and @($r22 | Where-Object { "$($_.Entity)" -match 'tampd\.exe' -and $_.Rule -eq 'Timestamp anomaly - birth attribute skew' }).Count -eq 1)
 
 # ============================================================================
 # PART 2 - structural wiring (the v2.22 bundled config was removed in v2.49 -
@@ -95,7 +105,7 @@ Check "config: no bundled Sysmon config shipped (removed v2.49)" (-not (Test-Pat
 Check "report: Sysmon config-gap hint wired (names the gap, no kit file pointer)" ($src -match 'Sysmon config gap' -and $src -match "endpoint's own Sysmon config" -and $src -notmatch 'ophira-sysmon\.xml')
 Check "setup: kit inventory no longer mentions the config" ($src -notmatch "recommended Sysmon config")
 Check "5.5: mft_recent carries CreatedFN (FILE_NAME birth)" ($src -match 'CreatedFN = \$\(if \(\$cCreated30\)')
-Check "hunt: R22 rule emitted" ($src -match "'Timestamp forgery indicators'")
+Check "hunt: R22 three-way split rules emitted" ($src -match "'Timestamp anomaly - future file birth'" -and $src -match "'Timestamp anomaly - birth attribute skew'" -and $src -match "'Timestamp anomaly - execution predates birth'")
 
 Write-Host ""
 Write-Host "RESULT: $pass passed, $fail failed" -ForegroundColor $(if ($fail -eq 0) { 'Green' } else { 'Red' })

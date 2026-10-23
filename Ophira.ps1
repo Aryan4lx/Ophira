@@ -1,5 +1,5 @@
 ﻿<#
-Ophira v2.75  -  Windows Incident Response Triage Toolkit
+Ophira v2.76  -  Windows Incident Response Triage Toolkit
 READ-ONLY by design: never modifies the system, only reads and copies data
 into its own output folder. Intended to be handed to a system owner or run
 by a responder during early triage / threat hunting.
@@ -323,7 +323,7 @@ param(
     [switch]$ExitVerdict
 )
 
-$ScriptVersion = "2.75"
+$ScriptVersion = "2.76"
 $ErrorActionPreference = 'Continue'
 $ProgressPreference = 'SilentlyContinue'
 
@@ -6374,14 +6374,31 @@ tr.techrow{cursor:pointer}
     }
 
     # ---------- hunt findings ----------
-    $null = $sb.AppendLine("<a name='hunt'></a><h2>Hunt findings (technique-based detections)</h2>")
+    # v2.76: honest default view - high/medium stay in the main table, low/info collapse into
+    # a details block (nothing deleted; the case draft + verdict keep counting ALL findings)
+    $mainRows = @($huntRows | Where-Object { "$($_.Severity)" -eq 'high' -or "$($_.Severity)" -eq 'medium' })
+    $lowRows = @($huntRows | Where-Object { "$($_.Severity)" -ne 'high' -and "$($_.Severity)" -ne 'medium' })
+    $hiN = @($mainRows | Where-Object { "$($_.Severity)" -eq 'high' }).Count
+    $medN = @($mainRows | Where-Object { "$($_.Severity)" -eq 'medium' }).Count
+    $null = $sb.AppendLine("<a name='hunt'></a><h2>Hunt technique findings - $hiN high / $medN medium / $($lowRows.Count) informational</h2>")
     if ($huntRows.Count -gt 0) {
-        $null = $sb.AppendLine("<table><tr><th>Severity</th><th>Rule</th><th>ATT&amp;CK</th><th>Entity</th><th>Evidence</th></tr>")
-        foreach ($h2 in ($huntRows | Sort-Object { switch -Regex ("$($_.Severity)") { 'high' { 0 } 'medium' { 1 } default { 2 } } })) {
+        $huntRowHtml = {
+            param($h2)
             $sevCls = switch -Regex ("$($h2.Severity)") { 'high' { 'crit'; break } 'medium' { 'med'; break } default { 'info' } }
-            $null = $sb.AppendLine("<tr><td class='$sevCls'><b>$(ConvertTo-HtmlEsc $h2.Severity)</b></td><td>$(ConvertTo-HtmlEsc $h2.Rule)</td><td>$(ConvertTo-HtmlEsc $h2.Attck)</td><td class='path'>$(ConvertTo-HtmlEsc $h2.Entity)</td><td class='path'>$(ConvertTo-HtmlEsc $h2.Evidence)</td></tr>")
+            "<tr><td class='$sevCls'><b>$(ConvertTo-HtmlEsc $h2.Severity)</b></td><td>$(ConvertTo-HtmlEsc $h2.Rule)</td><td>$(ConvertTo-HtmlEsc $h2.Attck)</td><td class='path'>$(ConvertTo-HtmlEsc $h2.Entity)</td><td class='path'>$(ConvertTo-HtmlEsc $h2.Evidence)</td></tr>"
         }
-        $null = $sb.AppendLine("</table><div class='meta'>High-severity hunt rules are high-precision (version-info renames, side-loaded system DLLs, downloaded-then-executed, LSASS access, Office-to-interpreter chains, proxy-execution LOLBin command lines, admin-share staging, Defender tamper, DCSync, password spray, webshell chains, cross-process injection, C2-style named pipes) and contribute to the verdict. Medium rules (UAC bypass pattern, discovery storms, timestomping, Kerberoasting/AS-REP patterns, web anomalies, USB/account/RDP anomalies) are report-only leads. Verify against the cited raw evidence. Source: csv\hunt_findings.csv</div>")
+        $null = $sb.AppendLine("<table><tr><th>Severity</th><th>Rule</th><th>ATT&amp;CK</th><th>Entity</th><th>Evidence</th></tr>")
+        foreach ($h2 in ($mainRows | Sort-Object { switch -Regex ("$($_.Severity)") { 'high' { 0 } 'medium' { 1 } default { 2 } } })) {
+            $null = $sb.AppendLine((& $huntRowHtml $h2))
+        }
+        $null = $sb.AppendLine("</table><div class='meta'>High-severity rules are high-precision (version-info renames, side-loaded system DLLs, downloads staged outside Downloads, LSASS access, Office-to-interpreter chains, proxy-execution LOLBin command lines, admin-share staging, Defender tamper, DCSync, password spray, injection into LSASS or from user-writable paths, C2-style named pipes) and contribute to the verdict. Medium rules are report-only leads (download-exec with missing/uncheckable signature, UAC bypass pattern, future-birth / execution-predates-birth timestamps, Kerberoasting/AS-REP patterns, web anomalies, privilege-boundary injection without a privilege tell). Low rows (extracted-archive birth-attribute skew, discovery command storms, protected-pair injection) are collapsed below as context. Verify against the cited raw evidence. Source: csv\hunt_findings.csv</div>")
+        if ($lowRows.Count -gt 0) {
+            $null = $sb.AppendLine("<details><summary>Low / informational findings ($($lowRows.Count))</summary><table><tr><th>Severity</th><th>Rule</th><th>ATT&amp;CK</th><th>Entity</th><th>Evidence</th></tr>")
+            foreach ($h2 in $lowRows) {
+                $null = $sb.AppendLine((& $huntRowHtml $h2))
+            }
+            $null = $sb.AppendLine("</table></details>")
+        }
         if ($Sysmon -and @(Import-CaseCsv 'sysmon_process_access').Count -eq 0 -and @(Import-CaseCsv 'sysmon_remote_thread').Count -eq 0 -and @(Import-CaseCsv 'sysmon_pipes').Count -eq 0) {
             $null = $sb.AppendLine("<div class='meta'><b>Sysmon config gap:</b> Sysmon is running but no ProcessAccess (EID 10) / remote-thread (EID 8) / named-pipe (EID 17/18) telemetry arrived - the endpoint's own Sysmon config does not capture it, so the LSASS/injection/pipe rules above run blind. Ophira never touches the endpoint; if widening the coverage matters, the Sysmon owner can extend their config (or stock Sysmon defaults capture all of these) and you collect again.</div>")
         }
@@ -8078,21 +8095,34 @@ function New-HuntFindings {
         }
     }
 
-    # ---------- R4: downloaded then executed ----------
-    $execNames = @{}
+    # ---------- R4: downloaded then executed (v2.76 precision rework) ----------
+    # v2.76: match execution evidence by normalized FULL path (parent+leaf); the leaf-only key
+    # remains solely for the fallback that fires when the download row carries no directory
+    # (bare filename or URL). Leaf matching a full-path download produced false leads whenever
+    # an unrelated binary elsewhere shared the leaf name (the 7-Zip case). Findings dedupe per
+    # target path (Chromium can carry the same download twice).
+    $execPaths = @{}
+    $execLeaves = @{}
     foreach ($src in @('amcache', 'prefetch_parsed', 'execution_timeline', 'processes')) {
         foreach ($r in (Import-CaseCsv $src)) {
-            foreach ($pn in @('Path', 'Executable', 'Name', 'App')) {
+                    foreach ($pn in @('Path', 'Executable', 'FullPath', 'Name', 'App')) {
                 $p2 = $r.PSObject.Properties[$pn]
                 if ($p2 -and "$($p2.Value)") {
+                    $ev = "$($p2.Value)".ToLower().Trim()
                     $n = ''
-                    try { $n = (Split-Path "$($p2.Value)" -Leaf).ToLower() } catch { $n = "$($p2.Value)".ToLower() }
-                    if ($n -match '\.(exe|dll|ps1|bat|js|hta|scr|msi|lnk|vbs)$') { $execNames[$n] = $true }
+                    try { $n = (Split-Path $ev -Leaf) } catch { $n = $ev }
+                    if ($n -match '\.(exe|dll|ps1|bat|js|hta|scr|msi|lnk|vbs)$') {
+                        $execLeaves[$n] = $true
+                        $ed = ''
+                        try { $ed = (Split-Path $ev -Parent) } catch { $ed = '' }
+                        if ($ed) { $execPaths[($ev -replace '/', '\')] = $true }
+                    }
                     break
                 }
             }
         }
     }
+    $r4Seen = @{}
     foreach ($r in (Import-CaseCsv 'browser_downloads')) {
         $tp = ''
         foreach ($pn in @('TargetFilePath', 'TargetPath', 'DownloadPath', 'FullPath', 'Path', 'URL')) {
@@ -8102,9 +8132,31 @@ function New-HuntFindings {
         if (-not $tp) { continue }
         $n = ''
         try { $n = (Split-Path $tp -Leaf).ToLower() } catch { $n = $tp.ToLower() }
-        if ($n -and $n -match '\.(exe|dll|ps1|bat|js|hta|scr|msi|lnk|vbs)$' -and $execNames.ContainsKey($n)) {
-            & $find 'Downloaded then executed' 'high' $tp "'$n' downloaded via browser and later appears in execution evidence" 'T1105/T1204.002'
+        if (-not $n -or $n -notmatch '\.(exe|dll|ps1|bat|js|hta|scr|msi|lnk|vbs)$') { continue }
+        $r4Key = $tp.ToLower().Trim() -replace '/', '\'
+        if ($r4Seen.ContainsKey($r4Key)) { continue }
+        # leaf fallback only when the download row has no directory (drive/UNC prefix absent)
+        $r4Dir = ($tp -match '^[A-Za-z]:\\|^\\\\')
+        $r4Hit = if ($r4Dir) { $execPaths.ContainsKey($r4Key) } else { $execLeaves.ContainsKey($n) }
+        if (-not $r4Hit) { continue }
+        $r4Seen[$r4Key] = $true
+        # severity: outside a Downloads folder = high (staged/renamed); in Downloads unsigned =
+        # high; in Downloads signed OR signature not checkable (file gone on parse mode) = medium;
+        # no-directory download row = medium (leaf match only - Test-Path would probe the
+        # analyst's CWD, so there is nothing honest to signature-check on disk)
+        $r4Sev = 'high'; $r4Why = ''
+        if ($r4Dir -and $tp -notmatch '(?i)\\downloads\\') {
+            $r4Why = 'staged outside a Downloads folder (renamed or relayed payload)'
+        } elseif (-not $r4Dir) {
+            $r4Why = 'signature not checkable (download row carries no directory)'; $r4Sev = 'medium'
+        } else {
+            $r4Sig = $null
+            try { if (Test-Path -LiteralPath $tp) { $r4Sig = Get-AuthenticodeSignature -LiteralPath $tp } } catch { $r4Sig = $null }
+            if (-not $r4Sig) { $r4Why = 'signature not checkable (file no longer present)'; $r4Sev = 'medium' }
+            elseif ("$($r4Sig.Status)" -eq 'NotSigned') { $r4Why = 'unsigned binary in Downloads' }
+            else { $r4Why = "signed ($("$($r4Sig.Status)"))"; $r4Sev = 'medium' }
         }
+        & $find 'Downloaded then executed' $r4Sev $tp "'$n' downloaded via browser and later appears in execution evidence ($r4Why)" 'T1105/T1204.002'
     }
 
     # ---------- R5: USB execution trail (report-only) ----------
@@ -8242,7 +8294,14 @@ function New-HuntFindings {
         $distinct = @($kv.Value | Sort-Object -Unique).Count
         if ($kv.Value.Count -lt 15 -and $distinct -lt 6) { continue }
         $tools = ($kv.Value | Sort-Object -Unique | Select-Object -First 8) -join ', '
-        & $find 'Discovery command storm' 'medium' $kv.Key "$($kv.Value.Count) recon commands ($distinct distinct): $tools" 'T1087/T1082'
+        # v2.76: the storm is inherently low-specificity (Ophira's own collection runs the same
+        # binaries); machine/system accounts are almost certainly the collector itself.
+        $discAcct = $kv.Key
+        if ($discAcct -match '\$$' -or $discAcct -match '(?i)(^|\\)(SYSTEM|LOCAL SERVICE|NETWORK SERVICE)$') {
+            & $find 'Discovery command storm' 'low' $discAcct "$($kv.Value.Count) recon commands ($distinct distinct): $tools - machine/system context - likely its own collection tooling" 'T1087/T1082'
+        } else {
+            & $find 'Discovery command storm' 'low' $discAcct "$($kv.Value.Count) recon commands ($distinct distinct): $tools" 'T1087/T1082'
+        }
     }
 
     # ---------- R14: Defender tamper - real-time protection off / exclusion change (5001/5007) ----------
@@ -8256,7 +8315,18 @@ function New-HuntFindings {
     }
 
     # ---------- R15: timestomping - creation time changed (Sysmon EID 2) ----------
-    foreach ($r in ((Import-CaseCsv 'sysmon_file_time') | Select-Object -First 10)) {
+    # v2.76: archive copy/extract tools legitimately preserve packed timestamps on copy/extract
+    # (the WIN11 case's whole EID2 log was explorer.exe preserving archive times) - skip them.
+    # Dedupe per target path BEFORE the 10-row cap; remaining images stay medium.
+    $r15Seen = @{}
+    foreach ($r in (Import-CaseCsv 'sysmon_file_time')) {
+        $r15Img = ''
+        try { $r15Img = (Split-Path "$($r.Image)" -Leaf).ToLower() } catch { $r15Img = "$($r.Image)".ToLower() }
+        if ($r15Img -eq 'explorer.exe' -or $r15Img -eq 'rar.exe' -or $r15Img -eq 'robocopy.exe' -or $r15Img -eq 'xcopy.exe' -or $r15Img -like '7z*.exe' -or $r15Img -like 'winrar*.exe' -or $r15Img -eq 'msiexec.exe') { continue }
+        $r15Key = "$($r.TargetFilename)".ToLower().Trim()
+        if (-not $r15Key -or $r15Seen.ContainsKey($r15Key)) { continue }
+        $r15Seen[$r15Key] = $true
+        if ($r15Seen.Count -gt 10) { break }
         & $find 'File creation time changed (timestomping candidate)' 'medium' "$($r.TargetFilename)" "by $($r.Image): $($r.PreviousCreationUtcTime) -> $($r.CreationUtcTime)" 'T1070.006'
     }
 
@@ -8321,75 +8391,99 @@ function New-HuntFindings {
         & $find 'Web traffic anomaly' 'medium' "$($r.Kind)" "$($r.Detail) - $($r.Sample)" 'T1190'
     }
 
-    # ---------- R22: timestamp forgery indicators (MFT birth attributes x execution evidence) ----------
-    # Scans every executable in mft_recent (checks are O(1) per row):
-    #   future-birth    - $MFT $Si birth after collection time (+1d margin)
-    #   ran-before-born - amcache evidence predates the claimed birth by >24h
-    #   0x10-vs-0x30    - $Si and FILE_NAME birth attributes disagree by >90 days
-    # Sysmon EID 2 events for the same file are cited as corroboration. Medium, report-only.
-    $mftByLeaf = @{}
+    # ---------- R22: timestamp anomalies (MFT birth attributes x execution evidence) ----------
+    # v2.76: lookups keyed by FULL path (FullPath column when present, Path fallback) - the old
+    # leaf-name key matched an OS MpCmdRun.exe against a same-leaf execution row from elsewhere.
+    # Three-way split (was one medium "Timestamp forgery indicators"):
+    #   future file birth        - $MFT $Si birth after collection time (+1d margin) - medium
+    #   execution predates birth - amcache evidence predates the claimed birth by >24h - medium
+    #   birth attribute skew     - $Si vs FILE_NAME birth disagree by >90 days - low (normal for
+    #                              extracted archives: Wireshark/Sysinternals keep packed times)
+    # Sysmon EID 2 events for the same full path corroborate the skew check. Medium rules emit
+    # before the low rows so a downstream cap cannot crowd them out.
+    $mftByPath = @{}
     foreach ($r in (Import-CaseCsv 'mft_recent')) {
-        $lf = ''
-        try { $lf = (Split-Path "$($r.Path)" -Leaf).ToLower() } catch { }
-        if ($lf -and -not $mftByLeaf.ContainsKey($lf)) { $mftByLeaf[$lf] = $r }
-    }
-    $amcByLeaf = @{}
-    foreach ($r in (Import-CaseCsv 'amcache')) {
-        $lf = ''
-        foreach ($pn in @('Name', 'ApplicationName', 'SourceSimpleName')) {
+        $fp = ''
+        foreach ($pn in @('FullPath', 'Path')) {
             $p2 = $r.PSObject.Properties[$pn]
-            if ($p2 -and "$($p2.Value)") { $lf = "$($p2.Value)".ToLower(); break }
+            if ($p2 -and "$($p2.Value)") { $fp = ("$($p2.Value)".ToLower().Trim() -replace '/', '\'); break }
         }
-        if (-not $lf) { continue }
+        if ($fp -and -not $mftByPath.ContainsKey($fp)) { $mftByPath[$fp] = $r }
+    }
+    $amcByPath = @{}
+    foreach ($r in (Import-CaseCsv 'amcache')) {
+        $fp = ''
+        foreach ($pn in @('FullPath', 'Path')) {
+            $p2 = $r.PSObject.Properties[$pn]
+            if ($p2 -and "$($p2.Value)") { $fp = ("$($p2.Value)".ToLower().Trim() -replace '/', '\'); break }
+        }
+        if (-not $fp) { continue }
         $t = $null
         foreach ($pn in (@($r.PSObject.Properties.Name) | Where-Object { $_ -match '(?i)timestamp|time$' })) {
             try { $t2 = [datetime]"$($r.$pn)"; if ($t2 -and (-not $t -or $t2 -lt $t)) { $t = $t2 } } catch { }
         }
-        if (-not $amcByLeaf.ContainsKey($lf) -or ($t -and $amcByLeaf[$lf].T -and $t -lt $amcByLeaf[$lf].T)) { $amcByLeaf[$lf] = @{ T = $t; Src = 'amcache' } }
+        if (-not $amcByPath.ContainsKey($fp) -or ($t -and $amcByPath[$fp].T -and $t -lt $amcByPath[$fp].T)) { $amcByPath[$fp] = @{ T = $t; Src = 'amcache' } }
     }
-    $eid2ByLeaf = @{}
+    $eid2ByPath = @{}
     foreach ($r in (Import-CaseCsv 'sysmon_file_time')) {
-        $lf = ''
-        try { $lf = (Split-Path "$($r.TargetFilename)" -Leaf).ToLower() } catch { }
-        if ($lf) { $eid2ByLeaf[$lf] = $true }
+        $fp = ''
+        foreach ($pn in @('FullPath', 'TargetFilename')) {
+            $p2 = $r.PSObject.Properties[$pn]
+            if ($p2 -and "$($p2.Value)") { $fp = ("$($p2.Value)".ToLower().Trim() -replace '/', '\'); break }
+        }
+        if ($fp) { $eid2ByPath[$fp] = $true }
     }
     $now = (Get-Date).ToUniversalTime()
-    $tfSeen = @{}
     # v2.44 FP exclusions (verified on a clean dev box): Windows servicing stages binaries in
     # WinSxS\Temp\InFlight (FILE_NAME birth = staging time, $Si = original catalog time - the
     # skew is legitimate), browser updaters re-create binaries under \updated\ / versioned
     # \Application\<ver>\ dirs (amcache remembers the OLD file - "ran before it existed" is the
     # updater, not timestomping), Store VFS lives under WindowsApps, and .lnk copies keep their
-    # original $Si (870-day "skews" on Start-Menu shortcuts are normal). The two birth-attribute
-    # checks therefore run on PE files outside those paths only; future-birth stays unconditional.
+    # original $Si (870-day "skews" on Start-Menu shortcuts are normal). The skew and
+    # ran-before-born checks therefore run on PE files outside those paths only; future-birth
+    # stays unconditional.
     $tfSkipRe = '(?i)\\WinSxS\\Temp\\InFlight\\|\\WinSxS\\Backup\\|\\WindowsApps\\|\\(Mozilla Firefox|Mozilla Thunderbird|Google\\Chrome|Microsoft\\Edge|BraveSoftware\\Brave-Browser)\\(updated|Application\\[0-9][0-9.]*\\)'
     $tfPeRe = '(?i)\.(exe|dll|sys|ocx|scr|cpl)$'
-    foreach ($m in (@($mftByLeaf.Values) | Select-Object -First 200)) {
-        $lf = ''
-        try { $lf = (Split-Path "$($m.Path)" -Leaf).ToLower() } catch { }
-        if (-not $lf -or $tfSeen.ContainsKey($lf)) { continue }
-        $birth = $null; try { $birth = [datetime]"$($m.Created)" } catch { }
+    $tfAnoms = New-Object System.Collections.Generic.List[object]
+    foreach ($kv in (@($mftByPath.GetEnumerator()) | Select-Object -First 200)) {
+        $tfPath = "$($kv.Key)"; $tfShow = ''
+        foreach ($pn in @('Path', 'FullPath')) {
+            $p2 = $kv.Value.PSObject.Properties[$pn]
+            if ($p2 -and "$($p2.Value)") { $tfShow = "$($p2.Value)"; break }
+        }
+        if (-not $tfShow) { $tfShow = $tfPath }
+        $birth = $null; try { $birth = [datetime]"$($kv.Value.Created)" } catch { }
         if (-not $birth) { continue }
-        $attrOk = ("$($m.Path)" -notmatch $tfSkipRe) -and ("$($m.Path)" -match $tfPeRe)
-        $checks = New-Object System.Collections.Generic.List[string]
-        if (($birth - $now).TotalDays -gt 1) {
-            $null = $checks.Add("birth '$($m.Created)' is in the future (backdated or clock-skewed)")
+        $attrOk = ($tfPath -notmatch $tfSkipRe) -and ($tfPath -match $tfPeRe)
+        $bfn = $null
+        if ($attrOk -and "$($kv.Value.CreatedFN)") { try { $bfn = [datetime]"$($kv.Value.CreatedFN)" } catch { } }
+        $am = $amcByPath[$tfPath]
+        $future = (($birth - $now).TotalDays -gt 1)
+        $ran = ($attrOk -and $am -and $am.T -and (($birth - $am.T).TotalDays -gt 1))
+        $skew = ($attrOk -and $bfn -and ([math]::Abs(($birth - $bfn).TotalDays) -gt 90))
+        if (-not ($future -or $ran -or $skew)) { continue }
+        $null = $tfAnoms.Add([pscustomobject]@{ Key = $tfPath; Show = $tfShow; Row = $kv.Value; Birth = $birth; Bfn = $bfn; Am = $am; Future = $future; Ran = $ran; Skew = $skew })
+    }
+    $tfMed = 0
+    foreach ($an in $tfAnoms.ToArray()) {
+        $hit = $false
+        if ($an.Future) {
+            $hit = $true
+            & $find 'Timestamp anomaly - future file birth' 'medium' "$($an.Show)" "birth '$($an.Row.Created)' is in the future (backdated or clock-skewed)" 'T1070.006'
         }
-        if ($attrOk -and "$($m.CreatedFN)") {
-            $bfn = $null; try { $bfn = [datetime]"$($m.CreatedFN)" } catch { }
-            if ($bfn -and ([math]::Abs(($birth - $bfn).TotalDays) -gt 90)) {
-                $null = $checks.Add("birth attributes disagree: `$Si $($m.Created) vs FILE_NAME $($m.CreatedFN) ($([math]::Abs([math]::Round(($birth - $bfn).TotalDays))) day skew - classic backdated `$Si)")
-            }
+        if ($an.Ran) {
+            $hit = $true
+            & $find 'Timestamp anomaly - execution predates birth' 'medium' "$($an.Show)" "execution evidence ($($an.Am.Src)) at $($an.Am.T.ToString('s')) predates claimed birth $($an.Row.Created) (ran before it existed)" 'T1070.006'
         }
-        $am = $amcByLeaf[$lf]
-        if ($attrOk -and $am -and $am.T -and (($birth - $am.T).TotalDays -gt 1)) {
-            $null = $checks.Add("execution evidence ($($am.Src)) at $($am.T.ToString('s')) predates claimed birth $($m.Created) (ran before it existed)")
-        }
-        if ($checks.Count -eq 0) { continue }
-        $tfSeen[$lf] = $true
-        if ($tfSeen.Count -gt 40) { break }
-        if ($eid2ByLeaf.ContainsKey($lf)) { $null = $checks.Add('Sysmon EID 2 file-creation-time changes observed for this file') }
-        & $find 'Timestamp forgery indicators' 'medium' "$($m.Path)" (($checks | Select-Object -First 4) -join ' | ') 'T1070.006'
+        if ($hit) { $tfMed++; if ($tfMed -ge 40) { break } }
+    }
+    $tfLow = 0
+    foreach ($an in ($tfAnoms.ToArray() | Where-Object { $_.Skew })) {
+        $ev = "birth attributes disagree: `$Si $($an.Row.Created) vs FILE_NAME $($an.Row.CreatedFN) ($([math]::Abs([math]::Round(($an.Birth - $an.Bfn).TotalDays))) day skew - classic backdated `$Si)"
+        if ($eid2ByPath.ContainsKey($an.Key)) { $ev += ' | Sysmon EID 2 file-creation-time changes observed for this file' }
+        & $find 'Timestamp anomaly - birth attribute skew' 'low' "$($an.Show)" $ev 'T1070.006'
+        $tfLow++
+        if ($tfLow -ge 40) { break }
     }
 
     # ---------- R23-R26: tunnel & remote-access pack (csv\remote_access.csv + collected sources) ----------
@@ -8481,7 +8575,10 @@ function New-HuntFindings {
     }
 
     # ---------- R28: cross-process injection (Sysmon EID 8 CreateRemoteThread) ----------
-    # One finding per source->target pair; lsass target = the credential-dump tell.
+    # v2.76 severity ladder (first match wins): target '<unknown process>' -> low;
+    # source AND target both under \Windows\ and target not lsass -> low (protected pair,
+    # e.g. dwm -> csrss); target lsass OR source/target in a user-writable path -> high;
+    # any other cross-boundary pair -> medium. One finding per source->target pair.
     $r28Seen = @{}
     foreach ($r in (Import-CaseCsv 'sysmon_remote_thread')) {
         $src = "$($r.SourceImage)"; $tgt = "$($r.TargetImage)"
@@ -8494,8 +8591,22 @@ function New-HuntFindings {
         $fn = "$($r.StartFunction)"; $mod = "$($r.StartModule)"
         $ev = "$($r.Time): $src -> $tgt"
         if ($fn -and $fn -ne '-') { $ev += " ($fn$(if ($mod -and $mod -ne '-') { " @ $mod" }))" }
-        if ($tgt -match '(?i)\\lsass\.exe$') { $ev += ' - lsass target: credential-dump tell' }
-        & $find 'Cross-process injection (remote thread)' 'high' "$src -> $tgt" $ev 'T1055'
+        if ($tgt -eq '<unknown process>') {
+            $sev = 'low'
+            $ev += " - target '<unknown process>' (unattributed, low signal)"
+        } elseif (($src -match '(?i)\\windows\\') -and ($tgt -match '(?i)\\windows\\') -and ($tgt -notmatch '(?i)\\lsass\.exe$')) {
+            $sev = 'low'
+            $ev += ' - both processes under \Windows\ (protected Windows pair)'
+        } elseif (($tgt -match '(?i)\\lsass\.exe$') -or (Test-IsUserWritablePath $src) -or (Test-IsUserWritablePath $tgt)) {
+            $sev = 'high'
+            if ($tgt -match '(?i)\\lsass\.exe$') { $ev += ' - lsass target: credential-dump tell' }
+            elseif (Test-IsUserWritablePath $src) { $ev += ' - source in user-writable path' }
+            else { $ev += ' - target in user-writable path' }
+        } else {
+            $sev = 'medium'
+            $ev += ' - cross-boundary remote thread (no privilege context, review)'
+        }
+        & $find 'Cross-process injection (remote thread)' $sev "$src -> $tgt" $ev 'T1055'
     }
 
     # ---------- R29: C2-style named pipes (Sysmon EID 17/18) ----------

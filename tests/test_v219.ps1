@@ -71,6 +71,12 @@ New-Csv (Join-Path $CsvDir 'security_auth_events.csv') '"Time","EventId","Accoun
     '"2026-09-27 11:00:00","4624","user1","192.168.1.10","2"'
 )
 
+# R14: Defender real-time protection disabled (high) - v2.76 keeps PART 2's HuntHighPrecision
+# >= 4 honest after R4's Downloads+missing-file shape demoted from high to medium
+New-Csv (Join-Path $CsvDir 'defender_config_events.csv') '"Time","EventId","Detail"' @(
+    '"2026-09-27 09:30:00","5001","real-time protection disabled"'
+)
+
 New-HuntFindings
 
 $hf = @($saved['hunt_findings'])
@@ -78,7 +84,7 @@ Check "R1: renamed LOLBin detected (svcst.exe = cmd)" (@($hf | Where-Object { $_
 Check "R2: proxy DLL in user path = high" (@($hf | Where-Object { $_.Rule -match 'proxy DLL in user-writable' -and $_.Entity -match 'version\.dll' }).Count -eq 1)
 Check "R2: unsigned proxy DLL outside Windows = medium" (@($hf | Where-Object { $_.Rule -match 'unsigned proxy DLL' -and $_.Entity -match 'winmm\.dll' }).Count -eq 1)
 Check "R3: version.dll in system32 + user dir = high" (@($hf | Where-Object { $_.Rule -match 'DLL side-load - planted' }).Count -eq 1)
-Check "R4: downloaded then executed = high" (@($hf | Where-Object { $_.Rule -match 'Downloaded then executed' -and $_.Entity -match 'evil\.exe' }).Count -eq 1)
+Check "R4: downloaded then executed finding exists (v2.76: Downloads + missing file -> medium)" (@($hf | Where-Object { $_.Rule -match 'Downloaded then executed' -and $_.Entity -match 'evil\.exe' -and $_.Severity -eq 'medium' }).Count -eq 1)
 Write-Host ('  DBG findings: ' + ((@($hf) | ForEach-Object { $_.Rule + ' [' + $_.Severity + ']' }) -join ' | '))
 Check "R5: USB trail = info" (@($hf | Where-Object { $_.Rule -match 'USB execution trail' -and $_.Severity -eq 'info' }).Count -eq 1)
 Check "R6: account lifecycle = info" (@($hf | Where-Object { $_.Rule -match 'Account lifecycle' }).Count -eq 1)
