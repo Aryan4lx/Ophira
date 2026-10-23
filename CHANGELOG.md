@@ -1,5 +1,13 @@
 # Changelog
 
+## v2.78
+- **Navigation polish - the report tells you where the evidence is before you jump** (executed as one batched task with review + fix round; E2E on the real WIN11 case: verdict byte-stable SUSPICIOUS rank 2)
+  - **Case draft collapses**: the embedded auto-written draft renders inside `<details><summary>Case draft (auto-written - paste into your report)</summary>` - the wall of text stops competing with the banner; the standalone `case_draft.txt` still ships, and printing auto-expands it (v2.63 beforeprint)
+  - **Nav counts**: every jump-nav section shows its row count (`Logons (1644)`, `Hunt (23)`, `File system (5287)`) or `(none)` for empty sections - all counts come from reads hoisted to the report top (the section bodies now share them; net zero new IO); includes the review-found restoration of the `credential_sweep` hoist whose deletion would have silently dropped the Credential exposure sweep table from every report (pinned by a populated-fixture check)
+  - **Honest cap label**: the Processes heading states `showing 30 of N` only when truncation happened
+  - **Recommendations link**: the banner's "Do now" block links to the full Recommendations section (anchor renders unconditionally)
+- Tests: new `tests/test_v278.ps1` (36 checks - draft wrapper + txt persistence + print safety, link/anchor resolution, nav counts populated + `(none)` polarity incl. the credSweep restoration pin, cap-label polarity); retargets in test_v231/test_focus/test_v267 (exact-text nav pins, drift window); full suite green
+
 ## v2.77
 - **Truth and scanability - the banner stops rounding the corners** (executed as one batched task with review + fix round; E2E on the real WIN11 case: verdict byte-stable SUSPICIOUS rank 2, 23/29 sources)
   - **Coverage honesty**: the banner now shows BOTH numbers in one honest shape - `80% weighted (23/29 sources, 6 missing)` (the old bare `80%` was weighted coverage that read as a source fraction); the coverage table's `Weight` column is retitled `Importance` (it described source value, not verdict weight - the collision with signal weights confused the read); the confidence bar, banner text, and footer all share one rounded percent (the old banner printed `95.6%` beside a `96%` bar)

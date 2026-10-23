@@ -226,7 +226,9 @@ if ($lines4.Count -ge 6100) {
     # blocks added ~487 lines upstream of the yara Hits guard - same report region)
     # window shifted 6021..6601 -> 6041..6620 (v2.77 fix round 1: ISO-window coercion parse +
     # rounded banner percent added ~20 more upstream lines - same report region)
-    $region4 = ($lines4[6041..6620] -join "`n")
+    # window shifted 6041..6620 -> 6127..6706 (v2.78 nav row counts: the counted-nav build +
+    # hoisted reads added ~86 lines upstream of the processes top-30 sort - same report region)
+    $region4 = ($lines4[6127..6706] -join "`n")
     Check "B5: no bare [int]quoted casts left in the report region" (-not $region4.Contains('[int]"$('))
     Check "B5: no bare [double]quoted casts left in the report region" (-not $region4.Contains('[double]"$('))
     Check "B5: no bare [long]quoted casts left in the report region" (-not $region4.Contains('[long]"$('))

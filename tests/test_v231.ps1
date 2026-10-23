@@ -73,7 +73,7 @@ Check "draft: no verdict -> honest note, no crash" (($lines2 | Where-Object { $_
 # PART 3 - wiring: regen writes the file, report renders it, index mentions it
 # ============================================================================
 Check "regen: case_draft.txt written after verdict" ($src -match [regex]::Escape("Get-CaseNarrative | Set-Content -LiteralPath (Join-Path `$CaseDir 'case_draft.txt')"))
-Check "report: draft section rendered after verdict" ($src -match [regex]::Escape("<a name='draft'></a><h2>Case draft (auto-written - edit before use)</h2>"))
+Check "report: draft section rendered after verdict (v2.78: collapsed into a details block)" ($src -match [regex]::Escape("<a name='draft'></a><details><summary>Case draft (auto-written - paste into your report)</summary><div class='draft'>"))
 Check "report: draft guarded when engine failed" ($src -match '(?s)VERDICT UNAVAILABLE.*?Get-CaseNarrative')
 Check "evidence index: case_draft.txt mentioned" ($src -match [regex]::Escape("(Join-Path `$caseRoot 'case_draft.txt') 'case_draft.txt'"))
 

@@ -1,5 +1,5 @@
 ﻿<#
-Ophira v2.77  -  Windows Incident Response Triage Toolkit
+Ophira v2.78  -  Windows Incident Response Triage Toolkit
 READ-ONLY by design: never modifies the system, only reads and copies data
 into its own output folder. Intended to be handed to a system owner or run
 by a responder during early triage / threat hunting.
@@ -323,7 +323,7 @@ param(
     [switch]$ExitVerdict
 )
 
-$ScriptVersion = "2.77"
+$ScriptVersion = "2.78"
 $ErrorActionPreference = 'Continue'
 $ProgressPreference = 'SilentlyContinue'
 
@@ -5526,6 +5526,11 @@ function New-HtmlReport {
     $posture = @(Import-CaseCsv 'posture.csv')
     $memMfR = @(Import-CaseCsv 'memory_malfind.csv')
     $browserIocR = @(Import-CaseCsv 'ioc_hits_browser.csv')
+    # v2.78: reads hoisted here from mid-section bodies - their row counts feed the nav
+    $secAll = @(Import-CaseCsv 'security_events')
+    $chains = @(Import-CaseCsv 'process_chains')
+    $sessAct = @(Import-CaseCsv 'session_activity')
+    $credSweep = @(Import-CaseCsv 'credential_sweep')
     $postureBad = @($posture | Where-Object { $_.Status -eq 'BAD' })
 
     $css = @'
@@ -5643,7 +5648,89 @@ tr.techrow{cursor:pointer}
     $null = $sb.AppendLine("<div class='meta'>$($provSegs -join ' &nbsp;|&nbsp; ')</div>")
     # v2.66: nav order mirrors the actual rendered section order (B1) - it promised Leads before
     # Verdict and Timeline before Snapshot/Drivers/Hunt/Entities; the document is the truth standard.
-    $null = $sb.AppendLine("<div class='nav'><a href='#verdict'>Verdict</a><a href='#leads'>Leads</a><a href='#coverage'>Coverage</a><a href='#attack'>ATT&CK</a><a href='#ioc'>IOCs</a><a href='#tactics'>Findings by tactic</a><a href='#yara'>YARA</a><a href='#processes'>Processes</a><a href='#sigma'>Sigma</a><a href='#logons'>Logons</a><a href='#persistence'>Persistence</a><a href='#filesystem'>File system</a><a href='#beacons'>Beaconing</a><a href='#network'>Network</a><a href='#drivers'>Drivers</a><a href='#hunt'>Hunt</a><a href='#entities'>Connections</a><a href='#snapshot'>Snapshot</a><a href='#timeline'>Timeline</a><a href='#focus'>Focus</a><a href='#recommendations'>Recommendations</a><a href='#evidence'>Evidence index</a></div>")
+    # v2.78: nav row counts - computed ONLY from data already imported above plus a few reads
+    # HOISTED here from the section bodies (leads, $sigAlerts, the IOC indicator block,
+    # credential_sweep, focus_terms.json) so no CSV is read twice. (none) marks a section that
+    # will render zero rows - same empty-state honesty as the sections themselves. Accepted
+    # edge: an ATT&CK row carrying tactics but no T-tags counts as (none) while the tactic
+    # chips still render (hayabusa always emits both). verdict/recommendations/evidence
+    # always render - no count.
+    $certHot = @($certs | Where-Object { $_.Flags -match 'recently-added' -and $_.Flags -match 'self-signed' })
+    $sigAlerts = @($hayRows | Where-Object { (Get-LvlRank "$($_.Level)") -ge 3 })
+    $attkTech = New-Object 'System.Collections.Generic.HashSet[string]'
+    foreach ($r in $hayRows) { foreach ($tg in (Split-TagList "$($r.MitreTags)")) { if ($tg -match '^T\d{4}') { $null = $attkTech.Add($tg) } } }
+    $focusDirP = Join-Path (Split-Path -Parent $CsvDir) 'focus'
+    $ft = $null
+    if (Test-Path -LiteralPath (Join-Path $focusDirP 'focus_terms.json')) {
+        try { $ft = Get-Content -LiteralPath (Join-Path $focusDirP 'focus_terms.json') -Raw -ErrorAction Stop | ConvertFrom-Json } catch { }
+    }
+    try {
+        if (Test-CaseCsv 'leads') { $leads = @(Import-CaseCsv 'leads') } else { $leads = @(Get-TriageLeads) }
+    } catch { $leads = @() }
+    $iocBlock = New-Object System.Collections.Generic.List[string]
+    foreach ($h in $iocHits) { if ("$($h.Indicator)") { $iocBlock.Add("ioc-$("$($h.Type)".ToLower())  $($h.Indicator)") } }
+    foreach ($h in $amcHits) { if ("$($h.Indicator)") { $iocBlock.Add("sha1  $($h.Indicator)") } }
+    foreach ($b in $brute) { if ("$($b.SourceIp)") { $iocBlock.Add("ip  $($b.SourceIp)") } }
+    foreach ($b in ($beacons | Where-Object { "$($_.Severity)" -match '^(high|medium)$' -and "$($_.RemoteIp)" })) { $iocBlock.Add("ip  $($b.RemoteIp)") }
+    foreach ($b in ($dnsBeacons | Where-Object { "$($_.Severity)" -match '^(high|medium)$' -and "$($_.Domain)" })) {
+        $iocBlock.Add("domain  $($b.Domain)")
+        if ("$($b.ResolvedIp)") { $iocBlock.Add("ip  $($b.ResolvedIp)") }
+    }
+    $yaraScanned = @(Import-CaseCsv 'yara_scanned.csv')
+    foreach ($y in ($yaraScanned | Where-Object { "$($_.Hits)" -match '^\d+$' -and [int]$_.Hits -gt 0 -and "$($_.SHA256)" })) { $iocBlock.Add("sha256  $($y.SHA256)") }
+    foreach ($h in (Import-CaseCsv 'ioc_hits_dns')) { $iocBlock.Add("domain  $($h.Query)"); if ("$($h.Resolved)") { $iocBlock.Add("ip  $(("$($h.Resolved)" -split '[,;]')[0].Trim())") } }
+    foreach ($h in (Import-CaseCsv 'ioc_hits_network')) { $iocBlock.Add("ip  $($h.RemoteIp)") }
+    foreach ($h in (Import-CaseCsv 'ioc_hits_hash')) { $iocBlock.Add("sha256  $($h.Hash)") }
+    $iocUnique = @($iocBlock.ToArray() | Sort-Object -Unique)
+    $covNav = 0
+    if ($script:Verdict -and $script:Verdict.Coverage) { $covNav = @($script:Verdict.Coverage).Count }
+    # logons: 4648/4672 rows render from $secAll - count them too (one pass, in-memory)
+    $secNav = @($secAll | Where-Object { "$($_.Id)" -eq '4648' -or "$($_.EventId)" -eq '4648' -or "$($_.Id)" -eq '4672' -or "$($_.EventId)" -eq '4672' }).Count
+    # entities: only rows the section actually lists (multi-source binaries, active accounts/
+    # remotes); SRUM renders whenever rows exist (column probe never fails on real rows)
+    $entNav = @($entB | Where-Object { (ConvertTo-SafeInt $_.CatCount) -ge 2 }).Count +
+        @($entA | Where-Object { (ConvertTo-SafeInt $_.Logons) -gt 0 -or (ConvertTo-SafeInt $_.Failed) -gt 0 -or "$($_.RdpOutTargets)" -or (ConvertTo-SafeDbl $_.ConsoleHistoryKB) -gt 0 }).Count +
+        @($entR | Where-Object { (ConvertTo-SafeInt $_.Connections) -gt 0 -or "$($_.Beacon)" -or (ConvertTo-SafeInt $_.FailedLogons) -gt 0 -or (ConvertTo-SafeInt $_.RdpOutCount) -gt 0 }).Count +
+        $srumRows.Count + $chains.Count + $sessAct.Count
+    $nCount = @{
+        leads = $leads.Count
+        coverage = $covNav + $gapRows.Count
+        attack = $attkTech.Count
+        tactics = $sigAlerts.Count
+        ioc = $iocUnique.Count
+        yara = $yaraHits.Count
+        processes = $scored.Count
+        sigma = $hayRows.Count
+        logons = $authEv.Count + $authSum.Count + $brute.Count + $secNav
+        persistence = $tasksFlag.Count + $svcFlag.Count + $wmiBind.Count + $runKeys.Count + $asepHot.Count + $certHot.Count
+        filesystem = $usnBursts.Count + $pfParsed.Count + $mftRecent.Count
+        beacons = $beacons.Count + $dnsBeacons.Count
+        network = $pubConns.Count
+        drivers = $lolHits.Count
+        hunt = $huntRows.Count + $liveScan.Count
+        entities = $entNav
+        snapshot = $defStatus.Count + $defThreats.Count + $credSweep.Count + $savedCreds.Count + $rdpTgt.Count + $bitsJobs.Count + $memMfR.Count + $browserIocR.Count + $posture.Count
+        timeline = $tlRows.Count
+        focus = if ($ft) { ConvertTo-SafeInt "$($ft.HitCount)" } else { 0 }
+    }
+    $nLabel = [ordered]@{
+        verdict = 'Verdict'; leads = 'Leads'; coverage = 'Coverage'; attack = 'ATT&CK'; ioc = 'IOCs'
+        tactics = 'Findings by tactic'; yara = 'YARA'; processes = 'Processes'; sigma = 'Sigma'
+        logons = 'Logons'; persistence = 'Persistence'; filesystem = 'File system'; beacons = 'Beaconing'
+        network = 'Network'; drivers = 'Drivers'; hunt = 'Hunt'; entities = 'Connections'
+        snapshot = 'Snapshot'; timeline = 'Timeline'; focus = 'Focus'; recommendations = 'Recommendations'
+        evidence = 'Evidence index'
+    }
+    $navParts = New-Object System.Collections.Generic.List[string]
+    foreach ($nk in $nLabel.Keys) {
+        $nl2 = ConvertTo-HtmlEsc $nLabel[$nk]
+        if ($nCount.ContainsKey($nk)) {
+            $nc2 = [int]$nCount[$nk]
+            $nl2 = "$nl2 $(if ($nc2 -gt 0) { "($nc2)" } else { '(none)' })"
+        }
+        $navParts.Add("<a href='#$nk'>$nl2</a>")
+    }
+    $null = $sb.AppendLine("<div class='nav'>$($navParts -join '')</div>")
 
     # ---------- assessment at a glance (v2.61: the banner answers "infected or not?") ----------
     $null = $sb.AppendLine("<a name='verdict'></a><h2>Assessment at a glance</h2>")
@@ -5679,7 +5766,8 @@ tr.techrow{cursor:pointer}
             3 = 'Isolate or network-restrict this host and preserve volatile evidence (RAM) before any reboot. Work the leads below top-down; verify each against the cited evidence.'
             2 = 'Enough suspicious evidence exists to justify a closer look before this host returns to service - work the leads below (or review the Sigma findings and process scores if no lead met the threshold).'
         }
-        if ($donow[[int]$v.LevelRank]) { $null = $sb.AppendLine("<div class='donow'><b>Do now:</b> $(ConvertTo-HtmlEsc $donow[[int]$v.LevelRank])</div>") }
+        # v2.78: the do-now block jumps straight to the Recommendations section (anchor exists)
+        if ($donow[[int]$v.LevelRank]) { $null = $sb.AppendLine("<div class='donow'><b>Do now:</b> $(ConvertTo-HtmlEsc $donow[[int]$v.LevelRank]) <a href='#recommendations'>-&gt; full Recommendations</a></div>") }
         # report-accuracy task 2: weight-0 signals carry no verdict weight - they leave the
         # contributing list and render in a separate 'Noted' group below it, so a [w0] row can
         # no longer read as evidence sitting between real [w1]+ rows. Both groups share one row
@@ -5811,8 +5899,7 @@ tr.techrow{cursor:pointer}
     # without the file fall back to the same builder inline. The draft's BEST LEADS projects
     # the same list - one builder, one order, no second truth.
     try {
-        if (Test-CaseCsv 'leads') { $leads = @(Import-CaseCsv 'leads') }
-        else { $leads = @(Get-TriageLeads) }
+        # v2.78: $leads is imported up at the nav build (one read, its count feeds the nav)
         $null = $sb.AppendLine("<a name='leads'></a><h2>Triage leads - decide these first</h2>")
         if ($leads.Count -eq 0) {
             $null = $sb.AppendLine("<div class='meta'>No signal rose to lead level - nothing here demands a decision before the reference sections.</div>")
@@ -5886,14 +5973,16 @@ tr.techrow{cursor:pointer}
     try {
         $draft = @(Get-CaseNarrative)
         if ($draft.Count -gt 0) {
-            $null = $sb.AppendLine("<a name='draft'></a><h2>Case draft (auto-written - edit before use)</h2><div class='draft'>")
+            # v2.78: the draft collapses into a details block - it duplicated the banner near the
+            # top of the page; case_draft.txt keeps shipping for the plain-text workflow
+            $null = $sb.AppendLine("<a name='draft'></a><details><summary>Case draft (auto-written - paste into your report)</summary><div class='draft'>")
             foreach ($line in $draft) {
                 $esc = ConvertTo-HtmlEsc $line
                 if ($line -match '^[A-Z][A-Z ]+$') { $null = $sb.AppendLine("<p><b>$esc</b></p>") }
                 elseif ($line -match '^ - ') { $null = $sb.AppendLine("<p style='margin:2px 0 2px 18px'>$esc</p>") }
                 elseif ($line) { $null = $sb.AppendLine("<p>$esc</p>") }
             }
-            $null = $sb.AppendLine("</div><div class='meta'>Plain-text copy: <b>case_draft.txt</b> in the case folder - starting point for your report, not a conclusion.</div>")
+            $null = $sb.AppendLine("</div><div class='meta'>Plain-text copy: <b>case_draft.txt</b> in the case folder - starting point for your report, not a conclusion.</div></details>")
         }
     } catch { }
 
@@ -6034,21 +6123,8 @@ tr.techrow{cursor:pointer}
         }
         $null = $sb.AppendLine("</table>")
     }
-    $iocBlock = New-Object System.Collections.Generic.List[string]
-    foreach ($h in $iocHits) { if ("$($h.Indicator)") { $iocBlock.Add("ioc-$("$($h.Type)".ToLower())  $($h.Indicator)") } }
-    foreach ($h in $amcHits) { if ("$($h.Indicator)") { $iocBlock.Add("sha1  $($h.Indicator)") } }
-    foreach ($b in $brute) { if ("$($b.SourceIp)") { $iocBlock.Add("ip  $($b.SourceIp)") } }
-    foreach ($b in ($beacons | Where-Object { "$($_.Severity)" -match '^(high|medium)$' -and "$($_.RemoteIp)" })) { $iocBlock.Add("ip  $($b.RemoteIp)") }
-    foreach ($b in ($dnsBeacons | Where-Object { "$($_.Severity)" -match '^(high|medium)$' -and "$($_.Domain)" })) {
-        $iocBlock.Add("domain  $($b.Domain)")
-        if ("$($b.ResolvedIp)") { $iocBlock.Add("ip  $($b.ResolvedIp)") }
-    }
-    $yaraScanned = @(Import-CaseCsv 'yara_scanned.csv')
-    foreach ($y in ($yaraScanned | Where-Object { "$($_.Hits)" -match '^\d+$' -and [int]$_.Hits -gt 0 -and "$($_.SHA256)" })) { $iocBlock.Add("sha256  $($y.SHA256)") }
-    foreach ($h in (Import-CaseCsv 'ioc_hits_dns')) { $iocBlock.Add("domain  $($h.Query)"); if ("$($h.Resolved)") { $iocBlock.Add("ip  $(("$($h.Resolved)" -split '[,;]')[0].Trim())") } }
-    foreach ($h in (Import-CaseCsv 'ioc_hits_network')) { $iocBlock.Add("ip  $($h.RemoteIp)") }
-    foreach ($h in (Import-CaseCsv 'ioc_hits_hash')) { $iocBlock.Add("sha256  $($h.Hash)") }
-    $iocUnique = @($iocBlock.ToArray() | Sort-Object -Unique)
+    # v2.78: the indicator block ($iocBlock/$iocUnique) builds up at the nav - its count feeds
+    # the nav; only the rendering stays here
     if ($iocUnique.Count -gt 0) {
         $null = $sb.AppendLine("<h3>Copy-ready indicator list (defanged) <button onclick='copyIocAll(this)' style='background:#243447;color:#9ec1f0;border:1px solid #3a5a83;border-radius:10px;padding:2px 12px;font-size:12px;cursor:pointer;margin-left:8px'>copy all</button></h3><pre class='ioc' id='iocblock'>")
         foreach ($l in $iocUnique) {
@@ -6066,7 +6142,7 @@ tr.techrow{cursor:pointer}
 
     # ---------- findings by tactic (med+ alerts) ----------
     $null = $sb.AppendLine("<a name='tactics'></a><h2>Findings by tactic (med+ Sigma alerts)</h2>")
-    $sigAlerts = @($hayRows | Where-Object { (Get-LvlRank "$($_.Level)") -ge 3 })
+    # v2.78: $sigAlerts computed up at the nav build (one pass, its count feeds the nav)
     if ($sigAlerts.Count -gt 0) {
         $byTactic = @{}
         foreach ($r in $sigAlerts) {
@@ -6110,9 +6186,12 @@ tr.techrow{cursor:pointer}
     }
 
     # ---------- process verdicts ----------
-    $null = $sb.AppendLine("<a name='processes'></a><h2>Process verdicts (correlation scored)</h2>")
-    # v2.66 (B12): shared text filter (one generic JS function, bound per section via data-attrs)
+    # v2.78: the top-30 cap is stated in the heading when truncation happened (an empty
+    # section keeps the plain heading - the v2.66 empty-state meta below explains absence)
     $procTop = @($scored | Sort-Object { ConvertTo-SafeInt $_.Score } -Descending | Select-Object -First 30)
+    $procCap = if ($scored.Count -gt $procTop.Count) { " - showing $($procTop.Count) of $($scored.Count)" } else { '' }
+    $null = $sb.AppendLine("<a name='processes'></a><h2>Process verdicts (correlation scored)$(ConvertTo-HtmlEsc $procCap)</h2>")
+    # v2.66 (B12): shared text filter (one generic JS function, bound per section via data-attrs)
     if ($procTop.Count -gt 0) {
         $null = $sb.AppendLine("<div class='sbar'><input id='procf' data-secfilter='1' data-wrap='procwrap' data-sel='div.card' data-cnt='cnt_proc' placeholder='filter processes (name / path / evidence)...' style='width:340px'> <span class='meta' id='cnt_proc'></span></div>")
         $null = $sb.AppendLine("<div id='procwrap'>")
@@ -6233,7 +6312,7 @@ tr.techrow{cursor:pointer}
     }
     # v2.55: explicit-credential logons (4648) - the strongest lateral-movement tell on a
     # workstation. Previously invisible: the section hard-filtered to 4624 only.
-    $secAll = @(Import-CaseCsv 'security_events')
+    # ($secAll imported up at the top - its 4648/4672 rows feed the nav logons count)
     $e4648 = @($secAll | Where-Object { "$($_.Id)" -eq '4648' -or "$($_.EventId)" -eq '4648' })
     if ($e4648.Count -gt 0) {
         $e4648g = @($e4648 | ForEach-Object {
@@ -6311,16 +6390,14 @@ tr.techrow{cursor:pointer}
         }
         $null = $sb.AppendLine("</table><div class='meta'>These autostart extensibility points are rarely used by legitimate software (exception: OEM Winlogon Shell entries). Full inventory incl. per-user COM: csv\asep_sweep.csv</div>")
     }
-    if ($certs.Count -gt 0) {
-        $certHot = @($certs | Where-Object { $_.Flags -match 'recently-added' -and $_.Flags -match 'self-signed' })
-        if ($certHot.Count -gt 0) {
-            $persAny = $true
-            $null = $sb.AppendLine("<h3>Recently added self-signed certificates (root trust)</h3><table><tr><th>Store</th><th>Subject</th><th>NotBefore</th><th>Flags</th></tr>")
-            foreach ($c in ($certHot | Select-Object -First 25)) {
-                $null = $sb.AppendLine("<tr><td>$(ConvertTo-HtmlEsc $c.Store)</td><td>$(ConvertTo-HtmlEsc $c.Subject)</td><td>$(ConvertTo-HtmlEsc $c.NotBefore)</td><td>$(ConvertTo-HtmlEsc $c.Flags)</td></tr>")
-            }
-            $null = $sb.AppendLine("</table><div class='meta'>Enterprise root CAs are self-signed by design - verify against the org's PKI. Malware adds root CAs to enable HTTPS interception. Full inventory: csv\certificates.csv</div>")
+    # v2.78: $certHot computed up at the nav build (its count feeds the nav)
+    if ($certHot.Count -gt 0) {
+        $persAny = $true
+        $null = $sb.AppendLine("<h3>Recently added self-signed certificates (root trust)</h3><table><tr><th>Store</th><th>Subject</th><th>NotBefore</th><th>Flags</th></tr>")
+        foreach ($c in ($certHot | Select-Object -First 25)) {
+            $null = $sb.AppendLine("<tr><td>$(ConvertTo-HtmlEsc $c.Store)</td><td>$(ConvertTo-HtmlEsc $c.Subject)</td><td>$(ConvertTo-HtmlEsc $c.NotBefore)</td><td>$(ConvertTo-HtmlEsc $c.Flags)</td></tr>")
         }
+        $null = $sb.AppendLine("</table><div class='meta'>Enterprise root CAs are self-signed by design - verify against the org's PKI. Malware adds root CAs to enable HTTPS interception. Full inventory: csv\certificates.csv</div>")
     }
     if (-not $persAny) { $null = $sb.AppendLine("<div class='meta'>No persistence entries captured (modules not run or nothing found).</div>") }
 
@@ -6604,8 +6681,7 @@ tr.techrow{cursor:pointer}
             $null = $sb.AppendLine("</table><div class='meta'>SRUM records ~30 days of per-application network/resource usage. High sustained upload from a user-path binary = exfiltration candidate. Source: csv\$(Get-CaseCsvPath 'srum_usage')</div>")
         }
     }
-    # v2.21: process lineage + session-attributed activity
-    $chains = @(Import-CaseCsv 'process_chains')
+    # v2.21: process lineage + session-attributed activity ($chains/$sessAct imported at the top)
     if ($chains.Count -gt 0) {
         $null = $sb.AppendLine("<h3>Process lineage (how flagged binaries got there)</h3><table><tr><th>Flagged binary</th><th>Hops</th><th>Ancestry chain</th></tr>")
         foreach ($c in ($chains | Sort-Object { ConvertTo-SafeInt $_.Steps } -Descending | Select-Object -First 15)) {
@@ -6613,7 +6689,6 @@ tr.techrow{cursor:pointer}
         }
         $null = $sb.AppendLine("</table><div class='meta'>Rebuilt from 4688 parent-child + live PPID map. A user-path binary whose ancestry runs through office/browser/interpreter processes is a phishing/exploit story; ancestry from services.exe with no matching install event is suspicious. Source: csv\$(Get-CaseCsvPath 'process_chains')</div>")
     }
-    $sessAct = @(Import-CaseCsv 'session_activity')
     if ($sessAct.Count -gt 0) {
         $null = $sb.AppendLine("<h3>Attributed activity (which session did what)</h3><table><tr><th>Time</th><th>Session account</th><th>Source IP</th><th>Type</th><th>Logon</th><th>Activity</th></tr>")
         foreach ($s2 in ($sessAct | Select-Object -First 30)) {
@@ -6638,7 +6713,7 @@ tr.techrow{cursor:pointer}
         }
         $null = $sb.AppendLine("</table>")
     }
-    $credSweep = @(Import-CaseCsv 'credential_sweep.csv')
+    # v2.78: $credSweep imported up at the nav build (its count feeds the nav)
     if ($credSweep.Count -gt 0) {
         $snapAny = $true
         $null = $sb.AppendLine("<h3>Credential exposure sweep</h3><table><tr><th>Risk</th><th>Item</th><th>Detail</th></tr>")
@@ -6785,11 +6860,8 @@ tr.techrow{cursor:pointer}
     }
 
     # ---------- focus dossier (v2.40: built by -Mode Focus / menu option 9) ----------
-    $focusDirP = Join-Path (Split-Path -Parent $CsvDir) 'focus'
-    if (Test-Path -LiteralPath (Join-Path $focusDirP 'focus_terms.json')) {
-        $ft = $null
-        try { $ft = Get-Content -LiteralPath (Join-Path $focusDirP 'focus_terms.json') -Raw -ErrorAction Stop | ConvertFrom-Json } catch { }
-        if ($ft) {
+    # v2.78: $focusDirP/$ft resolved up at the nav build (its count feeds the nav)
+    if ($ft) {
             $fHits = @()
             try { $fHits = @(Import-Csv -LiteralPath (Join-Path $focusDirP 'focus_hits.csv') -ErrorAction Stop) } catch { }
             $fInst = @()
@@ -6936,7 +7008,6 @@ tr.techrow{cursor:pointer}
             if ($fAllInst.Count -gt $fEmbed.Count) {
                 $null = $sb.AppendLine("<div class='meta'>showing $($fEmbed.Count) of $($fAllInst.Count) instances - everything else: $(ConvertTo-CaseFileLink (Join-Path $focusDirP 'focus_report.html') 'focus\focus_report.html')</div>")
             }
-        }
     }
 
     # ---------- recommendations ----------

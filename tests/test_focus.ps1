@@ -27,7 +27,7 @@ Check "A0: Sysmon EID1 captures ProcessId/ProcessGuid/ParentImage" (($src -match
 Check "A0: 4688 captures NewProcessId + creator ProcessId" ($src -match [regex]::Escape("NewProcessId = 'NewProcessId'; CreatorPid = 'ProcessId'"))
 Check "A0: Sysmon EID3 network rows carry ProcessGuid" ($src -match [regex]::Escape("ProcessGuid = `$d['ProcessGuid']; ProcessId = `$d['ProcessId']"))
 Check "A0: Sysmon EID7 image loads carry ProcessGuid" ($src -match [regex]::Escape("ProcessId = `$d['ProcessId']; ProcessGuid = `$d['ProcessGuid']"))
-Check "report: focus section + nav anchor present" (($src -match [regex]::Escape("name='focus'")) -and ($src -match [regex]::Escape('<a href=''#focus''>Focus</a>')))
+Check "report: focus section + nav anchor present (v2.78: nav entry built from the counted label map)" (($src -match [regex]::Escape("name='focus'")) -and ($src -match [regex]::Escape("focus = 'Focus'")))
 Check "auto-parse: analyze wizard routes single cases to the parse flow" ($src -match [regex]::Escape('Single case detected -> finishing it'))
 # v2.45: auto-focus + decision-first report wiring
 Check "auto-focus: trigger fires on HIGH process / YARA high / live IOC" (($src -match [regex]::Escape("`$hiProc = @(Import-CaseCsv 'flash_process_scored' | Where-Object { `"`$(`$_.Verdict)`" -eq 'HIGH'")) -and ($src -match [regex]::Escape("`$seedWhy = `"YARA `$(`$yh[0].Severity) hit`"")) -and ($src -match [regex]::Escape("'live IOC hit'")))
@@ -35,7 +35,7 @@ Check "auto-focus: manual dossier wins (trigger skips when terms.json exists)" (
 Check "auto-focus: Invoke-RegenerateOutputs calls the core in-session" ($src -match [regex]::Escape('Invoke-FocusCore -Indicator $seed -Meta'))
 Check "engine: core split exists as its own function" (($src -match '(?m)^function Invoke-FocusCore \{') -and ($src -match '(?m)^function Invoke-FocusEngine \{'))
 Check "engine: core persists focus_instances_detail.json" ($src -match 'focus_instances_detail\.json')
-Check "report: leads nav + section present" (($src -match [regex]::Escape("<a href='#leads'>Leads</a>")) -and ($src -match 'Triage leads - decide these first'))
+Check "report: leads nav + section present (v2.78: nav entry built from the counted label map)" (($src -match [regex]::Escape("leads = 'Leads'")) -and ($src -match 'Triage leads - decide these first'))
 Check "report: verdict banner do-now + clickable signals" (($src -match [regex]::Escape('<b>Do now:</b>')) -and ($src -match 'click a signal to jump'))
 Check "report: focus embed reads the detail json" ($src -match [regex]::Escape('focus_instances_detail.json') -and $src -match 'Activity graph \(parents')
 Check "hunt R5: USB trail skips the kit's own raw copies" ($src -match [regex]::Escape('OPHIRA_[^\\]*\\raw\\'))
