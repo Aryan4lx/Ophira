@@ -232,9 +232,9 @@ $null = New-HtmlReport
 $htmlT2 = Get-Content -LiteralPath (Join-Path $CaseDir 'report.html') -Raw
 
 # ---- B11: confidence bar width and label agree ----
-Check "B11: fractional 95.6 renders width:96 AND label 96 from one rounded value" (($htmlT2.Contains("width:96%;background:#b93")) -and ($htmlT2.Contains("<div class='conftext'>96% of weighted evidence sources collected")))
+Check "B11: fractional 95.6 renders width:96 AND label 96 from one rounded value" (($htmlT2.Contains("width:96%;background:#b93")) -and ($htmlT2.Contains("<div class='conftext'>96% weighted (3/4 sources, 1 missing)")))
 Check "B11: no [int] truncation left on the confbar width" (-not $src.Contains('[int]$v.ConfidencePercent'))
-Check "B11: conftext reads the shared `$confPct" ($src.Contains("<div class='conftext'>`$confPct% of weighted"))
+Check "B11: conftext reads the shared `$confPct (v2.77: weighted percent + raw fraction, no collision)" ($src.Contains('<div class=''conftext''>$confPct% weighted ($($v.CoverageSourcesCollected)/'))
 
 # ---- B12: ATT&CK tactic chips + technique Tactic cell cover every tagged tactic ----
 Check "B12: two-tactic rule counts under BOTH chips (Discovery AND Credential Access)" (($htmlT2.Contains("<span class='tac hi'>Discovery : 2</span>")) -and ($htmlT2.Contains("<span class='tac hi'>Credential Access : 2</span>")))

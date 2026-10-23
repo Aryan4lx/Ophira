@@ -265,8 +265,10 @@ $tacBlocks = @([regex]::Matches($html, "<div class='tacblk'><h3>([^<]+) \(\d+ ev
 Check "B16: 2+ distinct tactic headings, Execution + Discovery both present (was one collapsed bucket)" (($tacBlocks.Count -ge 2) -and ($tacBlocks -contains 'Execution') -and ($tacBlocks -contains 'Discovery'))
 
 # ---- B13: one timestamp dialect for Ophira's own generated stamps (evidence cells NEVER rewritten) ----
-$collectedVal = ([regex]::Match($html, "Collected: (.*?) &nbsp;").Groups[1].Value)
-Check "B13: banner 'Collected' stamp matches ^yyyy-MM-dd HH:mm UTC$ exactly" ($collectedVal -match '^\d{4}-\d{2}-\d{2} \d{2}:\d{2} UTC$')
+# v2.77: the banner's Collected stamp became the provenance line (Collected by <tool> from
+# case.json / Rendered by Ophira vN); the dialect checks live on the footer + evidence-window
+# stamps below.
+Check "B13: provenance line separates the collector tool from the renderer version (no case.json -> collector segment omitted)" ($html.Contains('Rendered by Ophira v9.99') -and (-not $html.Contains('Collected by')))
 Check "B13: footer 'Generated' stamp in the same dialect (was Get-Date -Format u: seconds + Z)" ($html -match 'Generated \d{4}-\d{2}-\d{2} \d{2}:\d{2} UTC by Ophira v9\.99')
 Check "B13: no seconds+Z dialect left on the banner stamp" (-not ($html -match 'Collected: \d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}Z'))
 Check "B13: no seconds+Z dialect left on the footer stamp" (-not ($html -match 'Generated \d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}Z'))
@@ -281,7 +283,7 @@ Check "B14: banner carries the real CaseID/Analyst when present" ($html.Contains
 $script:CurrentCaseID = ''; $script:CurrentAnalyst = ''
 $null = New-HtmlReport
 $htmlNoId = Get-Content -LiteralPath (Join-Path $CaseDir 'report.html') -Raw
-Check "B14: missing CaseID renders 'unknown'" ($htmlNoId.Contains("Case: unknown &nbsp;|&nbsp; Analyst: not recorded"))
+Check "B14: missing CaseID falls back to the case FOLDER name (v2.77, was bare 'unknown')" ($htmlNoId -match "Case: ophira_v266_\d+ &nbsp;\|&nbsp; Analyst: not recorded")
 Check "B14: missing Analyst renders 'not recorded'" ($htmlNoId.Contains("Analyst: not recorded &nbsp;|&nbsp;"))
 Check "B14: no blank identity slots left (no 'Case:  |')" (-not ($htmlNoId.Contains("Case:  &nbsp;")))
 $script:CurrentCaseID = 'CASE-1'; $script:CurrentAnalyst = 'fixture'

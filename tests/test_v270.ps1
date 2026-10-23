@@ -293,8 +293,8 @@ $notedRow = if ($rowStart -ge 0 -and $rowEnd -gt $rowStart) { $htmlV270.Substrin
 Check "render: Noted group renders after the contributing list" (($contribV270 -ne '') -and ($notedIdx -gt $htmlV270.IndexOf('<b>Contributing signals</b>')))
 Check "render: Noted label wording matches the banner label pattern" ($htmlV270.Contains("<b>Noted</b> (no verdict weight - context, not evidence of compromise)"))
 Check "render: w0 storm signal leaves the contributing list" (-not $contribV270.Contains('Sigma detection - high'))
-Check "render: contributing list keeps the w2 row unchanged" ($contribV270.Contains("<span class='med'>[w2]</span> <a href='#drivers' style='color:inherit'>Known-malicious driver on disk (LOLDrivers) x1"))
-Check "render: w0 row under Noted keeps info badge + evidence link intact" ($notedRow.Contains("<span class='info'>[w0]</span> <a href='#sigma' style='color:inherit'>Sigma detection - high x5"))
+Check "render: contributing list keeps the w2 row unchanged (v2.77: plain-language rank label)" ($contribV270.Contains("<span class='med'>corroborating</span> <a href='#drivers' style='color:inherit'>Known-malicious driver on disk (LOLDrivers) x1"))
+Check "render: w0 row under Noted keeps info badge + evidence link intact (v2.77: 'noted' label)" ($notedRow.Contains("<span class='info'>noted</span> <a href='#sigma' style='color:inherit'>Sigma detection - high x5"))
 
 # zero w0 signals -> the whole Noted group stays off; contributing list still renders w3 + w1
 $script:Verdict = & $mkV @(
@@ -304,7 +304,7 @@ $script:Verdict = & $mkV @(
 $null = New-HtmlReport
 $htmlV270b = Get-Content -LiteralPath (Join-Path $CaseDir 'report.html') -Raw
 Check "render: zero w0 signals -> no Noted group at all" (-not $htmlV270b.Contains('<b>Noted</b>'))
-Check "render: zero w0 -> contributing list still renders its w3 + w1 rows" (($htmlV270b.Contains("<span class='high'>[w3]</span>")) -and ($htmlV270b.Contains("<span class='info'>[w1]</span>")))
+Check "render: zero w0 -> contributing list still renders its w3 + w1 rows (v2.77: rank labels)" (($htmlV270b.Contains("<span class='high'>strong</span>")) -and ($htmlV270b.Contains("<span class='info'>context</span>")))
 
 # ---- task4 render: hunt lead cards collapse per ENTITY (same grouping as the draft) ----
 # same entity via two rules -> ONE card with rules joined; report evidence stays verbatim

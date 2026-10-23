@@ -222,7 +222,11 @@ if ($lines4.Count -ge 6100) {
     # process-chain sort past the old slice - same report region, no behavioral change)
     # window shifted 5199..6199 -> 5534..6534 (v2.69 F2 help block added ~291 lines above
     # [CmdletBinding()] + ~44 elsewhere upstream - same report region, no behavioral change)
-    $region4 = ($lines4[5534..6534] -join "`n")
+    # window shifted 5534..6534 -> 6021..6601 (v2.77 provenance line / signal sort / hunt-stamp
+    # blocks added ~487 lines upstream of the yara Hits guard - same report region)
+    # window shifted 6021..6601 -> 6041..6620 (v2.77 fix round 1: ISO-window coercion parse +
+    # rounded banner percent added ~20 more upstream lines - same report region)
+    $region4 = ($lines4[6041..6620] -join "`n")
     Check "B5: no bare [int]quoted casts left in the report region" (-not $region4.Contains('[int]"$('))
     Check "B5: no bare [double]quoted casts left in the report region" (-not $region4.Contains('[double]"$('))
     Check "B5: no bare [long]quoted casts left in the report region" (-not $region4.Contains('[long]"$('))

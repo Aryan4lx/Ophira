@@ -1,5 +1,5 @@
 ﻿<#
-Ophira v2.76  -  Windows Incident Response Triage Toolkit
+Ophira v2.77  -  Windows Incident Response Triage Toolkit
 READ-ONLY by design: never modifies the system, only reads and copies data
 into its own output folder. Intended to be handed to a system owner or run
 by a responder during early triage / threat hunting.
@@ -323,7 +323,7 @@ param(
     [switch]$ExitVerdict
 )
 
-$ScriptVersion = "2.76"
+$ScriptVersion = "2.77"
 $ErrorActionPreference = 'Continue'
 $ProgressPreference = 'SilentlyContinue'
 
@@ -5584,18 +5584,63 @@ tr.techrow{cursor:pointer}
     $sb = New-Object System.Text.StringBuilder
     $null = $sb.AppendLine("<!DOCTYPE html><html><head><meta charset='utf-8'><title>Ophira - $(ConvertTo-HtmlEsc $Computer)</title>$css</head><body>")
     $null = $sb.AppendLine("<h1>OPHIRA COMPROMISE ASSESSMENT REPORT</h1>")
+    # v2.77: ONE case.json read drives the elevation label AND the provenance line (collector
+    # tool, preset, log window). Per-field fallback: an old case without case.json (or without
+    # a given field) just omits that segment - the header never lies about what it knows.
+    $caseMeta = $null
+    try { $caseMeta = Get-Content -LiteralPath (Join-Path $CaseDir 'case.json') -Raw -ErrorAction Stop | ConvertFrom-Json } catch { }
     $caseAdmin = $null
-    try { $caseAdmin = (Get-Content -LiteralPath (Join-Path $CaseDir 'case.json') -Raw -ErrorAction Stop | ConvertFrom-Json).AdminElevated } catch { }
+    if ($caseMeta) { $caseAdmin = $caseMeta.AdminElevated }
     # v2.63: no AdminElevated in case.json -> 'unknown'; NEVER live-probe at render time
     # (the analyst box's elevation is not the endpoint's - the v2.55 bug class)
     $elevLabel = if ($null -ne $caseAdmin) { if ($caseAdmin) { 'yes' } else { 'NO' } } else { 'unknown' }
     # v2.66 (B14): blank identity slots rendered as "Case:  |" - same fallback pattern as the
     # elevation fix above (never live-probe, never leave an empty slot)
-    $caseLbl = if ("$($script:CurrentCaseID)") { "$($script:CurrentCaseID)" } else { 'unknown' }
+    # v2.77: an empty CaseID falls back to the case FOLDER name - the collected folder is the
+    # de-facto case identity when no operator CaseID was ever entered (was a bare 'unknown')
+    $caseLbl = if ("$($script:CurrentCaseID)") { "$($script:CurrentCaseID)" }
+               elseif ($caseMeta -and "$($caseMeta.CaseID)") { "$($caseMeta.CaseID)" }
+               else { Split-Path -Path $CaseDir -Leaf }
     $analystLbl = if ("$($script:CurrentAnalyst)") { "$($script:CurrentAnalyst)" } else { 'not recorded' }
     # v2.66 (B13): ONE dialect for Ophira's own generated stamps - yyyy-MM-dd HH:mm + ' UTC'.
     # Raw evidence strings (event timestamps copied from CSVs into table cells) stay as-is.
-    $null = $sb.AppendLine("<div class='meta'>Host: $(ConvertTo-HtmlEsc $Computer) &nbsp;|&nbsp; Case: $(ConvertTo-HtmlEsc $caseLbl) &nbsp;|&nbsp; Analyst: $(ConvertTo-HtmlEsc $analystLbl) &nbsp;|&nbsp; Collected: $($StartTime.ToUniversalTime().ToString('yyyy-MM-dd HH:mm')) UTC &nbsp;|&nbsp; Ophira v$ScriptVersion &nbsp;|&nbsp; Sysmon: $(if ($Sysmon) { 'yes' } else { 'no' }) &nbsp;|&nbsp; Elevated: $elevLabel</div>")
+    # v2.77 (provenance): the header separates WHO collected from WHO rendered (case.json Tool
+    # is the collector's version, not the renderer's) and shows the Preset + log window.
+    $provSegs = New-Object System.Collections.Generic.List[string]
+    $provSegs.Add("Host: $(ConvertTo-HtmlEsc $Computer)")
+    $provSegs.Add("Case: $(ConvertTo-HtmlEsc $caseLbl)")
+    $provSegs.Add("Analyst: $(ConvertTo-HtmlEsc $analystLbl)")
+    if ($caseMeta -and "$($caseMeta.Tool)") { $provSegs.Add("Collected by $(ConvertTo-HtmlEsc $caseMeta.Tool)") }
+    $provSegs.Add("Rendered by Ophira v$ScriptVersion")
+    if ($caseMeta -and "$($caseMeta.Preset)") { $provSegs.Add("Preset $(ConvertTo-HtmlEsc $caseMeta.Preset)") }
+    if ($caseMeta) {
+        if ("$($caseMeta.LogStart)" -and "$($caseMeta.LogEnd)") {
+            # v2.77 fix: the case.json writer stores ISO round-trip stamps ('2026-09-01T08:00:00.0000000Z'),
+            # which PS 5.1's ConvertFrom-Json auto-coerces into LOCAL-Kind DateTimes - stringifying
+            # them rendered the analyst box's locale dialect ('9/1/2026 10:00:00 AM') mislabeled UTC.
+            # Parse BOTH shapes (coerced DateTime or plain string) and render the one generated-stamp
+            # dialect as UTC; text that cannot be parsed stays verbatim (same rule as the hunt cells).
+            $provWin = @()
+            $provD = [datetime]::MinValue
+            foreach ($provPk in @('LogStart', 'LogEnd')) {
+                $provRaw = $caseMeta.$provPk
+                if ($provRaw -is [datetime]) {
+                    $provWin += $provRaw.ToUniversalTime().ToString('yyyy-MM-dd HH:mm')
+                } elseif ([datetime]::TryParse("$provRaw", [Globalization.CultureInfo]::InvariantCulture, [Globalization.DateTimeStyles]::AssumeUniversal, [ref]$provD)) {
+                    $provWin += $provD.ToUniversalTime().ToString('yyyy-MM-dd HH:mm')
+                } else {
+                    $provWin += "$provRaw"
+                }
+            }
+            $provSegs.Add("Window $(ConvertTo-HtmlEsc ($provWin -join ' - ')) UTC")
+        } else {
+            $provH = ConvertTo-SafeInt "$($caseMeta.LogHours)"
+            if ($provH -gt 0) { $provSegs.Add("Window last $provH h") }
+        }
+    }
+    $provSegs.Add("Sysmon: $(if ($Sysmon) { 'yes' } else { 'no' })")
+    $provSegs.Add("Elevated: $elevLabel")
+    $null = $sb.AppendLine("<div class='meta'>$($provSegs -join ' &nbsp;|&nbsp; ')</div>")
     # v2.66: nav order mirrors the actual rendered section order (B1) - it promised Leads before
     # Verdict and Timeline before Snapshot/Drivers/Hunt/Entities; the document is the truth standard.
     $null = $sb.AppendLine("<div class='nav'><a href='#verdict'>Verdict</a><a href='#leads'>Leads</a><a href='#coverage'>Coverage</a><a href='#attack'>ATT&CK</a><a href='#ioc'>IOCs</a><a href='#tactics'>Findings by tactic</a><a href='#yara'>YARA</a><a href='#processes'>Processes</a><a href='#sigma'>Sigma</a><a href='#logons'>Logons</a><a href='#persistence'>Persistence</a><a href='#filesystem'>File system</a><a href='#beacons'>Beaconing</a><a href='#network'>Network</a><a href='#drivers'>Drivers</a><a href='#hunt'>Hunt</a><a href='#entities'>Connections</a><a href='#snapshot'>Snapshot</a><a href='#timeline'>Timeline</a><a href='#focus'>Focus</a><a href='#recommendations'>Recommendations</a><a href='#evidence'>Evidence index</a></div>")
@@ -5604,14 +5649,21 @@ tr.techrow{cursor:pointer}
     $null = $sb.AppendLine("<a name='verdict'></a><h2>Assessment at a glance</h2>")
     if ($script:Verdict) {
         $v = $script:Verdict
-        $null = $sb.AppendLine("<div class='vbanner v$($v.LevelRank)'>")
-        $null = $sb.AppendLine("<p class='vtitle'>$(ConvertTo-HtmlEsc $v.Level)</p>")
-        $null = $sb.AppendLine("<p class='vowner'>$(ConvertTo-HtmlEsc $v.OwnerLine) &nbsp; Evidence coverage: $($v.ConfidencePercent)% ($($v.CoverageSourcesCollected)/$($v.CoverageSourcesTotal) sources - how much of the case was collected, not a probability of compromise)</p>")
+        # v2.77: the weighted percent and the raw source fraction stop colliding - the banner
+        # shows both (92% weighted AND 24/29 sources, 5 missing) instead of one number that
+        # reads as both. Weights stay verdict-weight semantics; the coverage table column is
+        # renamed Importance to keep the two vocabularies apart.
+        $covMiss = [Math]::Max(0, $v.CoverageSourcesTotal - $v.CoverageSourcesCollected)
         # v2.68 (B11): bar width and bar label read ONE rounded integer - the verdict math already
         # Round()s the percent, but deriving both from a single value keeps the bar and the text
         # agreeing even if the provenance ever turns fractional (old: [int] truncated the bar)
+        # v2.77 fix: the banner TEXT reads the same rounded value (one number on the banner, not
+        # '95.6% weighted' beside a bar labeled '96% weighted')
         $confPct = [math]::Min(100, [int][math]::Round($v.ConfidencePercent))
-        $null = $sb.AppendLine("<div class='confwrap'><div class='confbar' style='width:$confPct%;background:#b93'></div><div class='conftext'>$confPct% of weighted evidence sources collected ($($v.CoverageSourcesCollected)/$($v.CoverageSourcesTotal) sources)</div></div>")
+        $null = $sb.AppendLine("<div class='vbanner v$($v.LevelRank)'>")
+        $null = $sb.AppendLine("<p class='vtitle'>$(ConvertTo-HtmlEsc $v.Level)</p>")
+        $null = $sb.AppendLine("<p class='vowner'>$(ConvertTo-HtmlEsc $v.OwnerLine) &nbsp; Evidence coverage: $confPct% weighted ($($v.CoverageSourcesCollected)/$($v.CoverageSourcesTotal) sources, $covMiss missing) - how much of the case was collected, not a probability of compromise</p>")
+        $null = $sb.AppendLine("<div class='confwrap'><div class='confbar' style='width:$confPct%;background:#b93'></div><div class='conftext'>$confPct% weighted ($($v.CoverageSourcesCollected)/$($v.CoverageSourcesTotal) sources, $covMiss missing)</div></div>")
         # v2.61: what the level means - and what it does NOT mean
         $vmean = @{
             4 = 'Multiple independent high-confidence indicators agree - treat this host as compromised until proven otherwise.'
@@ -5632,11 +5684,18 @@ tr.techrow{cursor:pointer}
         # contributing list and render in a separate 'Noted' group below it, so a [w0] row can
         # no longer read as evidence sitting between real [w1]+ rows. Both groups share one row
         # renderer (badge class, anchor resolution, ConvertTo-HtmlEsc escaping unchanged).
-        $vContrib = @($v.Signals | Where-Object { $_.Weight -ge 1 })
-        $vNoted = @($v.Signals | Where-Object { $_.Weight -eq 0 })
+        # v2.77: one deterministic order for both groups - Weight desc, Count desc, Name asc
+        # (the Add-Signal insertion order no longer decides prominence); the weight-0 'Noted'
+        # group still renders last.
+        $vSigOrder = @($v.Signals | Sort-Object -Property @{ e = 'Weight'; Descending = $true }, @{ e = 'Count'; Descending = $true }, @{ e = 'Signal'; Descending = $false })
+        $vContrib = @($vSigOrder | Where-Object { $_.Weight -ge 1 })
+        $vNoted = @($vSigOrder | Where-Object { $_.Weight -eq 0 })
         $sigRow = {
             param($s)
             $wcol = if ($s.Weight -ge 4) { 'crit' } elseif ($s.Weight -ge 3) { 'high' } elseif ($s.Weight -ge 2) { 'med' } else { 'info' }
+            # v2.77: plain-language rank labels replace the [wN] chips (verdict.json keeps the
+            # integer weights; this is a render-side label only)
+            $wlab = if ($s.Weight -ge 4) { 'near-certain' } elseif ($s.Weight -ge 3) { 'strong' } elseif ($s.Weight -ge 2) { 'corroborating' } elseif ($s.Weight -ge 1) { 'context' } else { 'noted' }
             $anc = ''
             if ("$($s.Signal)" -match '^YARA') { $anc = 'yara' }
             elseif ("$($s.Signal)" -match '^Sigma') { $anc = 'sigma' }
@@ -5653,9 +5712,16 @@ tr.techrow{cursor:pointer}
             elseif ("$($s.Signal)" -match '^Brute') { $anc = 'logons' }
             elseif ("$($s.Signal)" -match '^Security posture gaps') { $anc = 'snapshot' } # v2.66: was a dead anchor - the posture table renders in the snapshot section
             elseif ("$($s.Signal)" -match '^Credential material exposure') { $anc = 'snapshot' } # v2.66: was a dead anchor - the credential sweep renders in the snapshot section
-            $sigTxt = "$(ConvertTo-HtmlEsc $s.Signal) x$($s.Count)$(if ("$($s.Detail)") { " - <span class='path'>$(ConvertTo-HtmlEsc $s.Detail)</span>" })"
-            if ($anc) { return "<div class='sig'><span class='$wcol'>[w$($s.Weight)]</span> <a href='#$anc' style='color:inherit'>$sigTxt</a></div>" }
-            return "<div class='sig'><span class='$wcol'>[w$($s.Weight)]</span> $sigTxt</div>"
+            # v2.77: the hunt signal counts RULES and FINDINGS - '(N fired) xM' read as two
+            # different counts of the same thing; 'N rules / M findings' says both units.
+            # verdict.json Signal/Count fields stay verbatim (render-side wording only).
+            if ("$($s.Signal)" -match '^Hunt techniques \((\d+) fired\)$') {
+                $sigTxt = "$(ConvertTo-HtmlEsc "Hunt techniques: $($Matches[1]) rules / $($s.Count) findings")$(if ("$($s.Detail)") { " - <span class='path'>$(ConvertTo-HtmlEsc $s.Detail)</span>" })"
+            } else {
+                $sigTxt = "$(ConvertTo-HtmlEsc $s.Signal) x$($s.Count)$(if ("$($s.Detail)") { " - <span class='path'>$(ConvertTo-HtmlEsc $s.Detail)</span>" })"
+            }
+            if ($anc) { return "<div class='sig'><span class='$wcol'>$wlab</span> <a href='#$anc' style='color:inherit'>$sigTxt</a></div>" }
+            return "<div class='sig'><span class='$wcol'>$wlab</span> $sigTxt</div>"
         }
         if ($vContrib.Count -gt 0) {
             $null = $sb.AppendLine("<p style='margin-top:12px'><b>Contributing signals</b> (click a signal to jump to its evidence)</p>")
@@ -5834,12 +5900,16 @@ tr.techrow{cursor:pointer}
     # ---------- evidence coverage ----------
     $null = $sb.AppendLine("<a name='coverage'></a><h2>Evidence coverage & data quality</h2>")
     if ($script:Verdict -and @($script:Verdict.Coverage).Count -gt 0) {
-        $null = $sb.AppendLine("<table><tr><th>Evidence source</th><th>Collected</th><th>Weight</th></tr>")
+        # v2.77: the column is 'Importance' - 'Weight' collided with verdict-weight vocabulary
+        $null = $sb.AppendLine("<table><tr><th>Evidence source</th><th>Collected</th><th>Importance</th></tr>")
         foreach ($c in @($script:Verdict.Coverage)) {
             $mark = if ($c.Collected) { "<span class='cov-ok'>yes</span>" } else { "<span class='cov-miss'>NO</span>" }
             $null = $sb.AppendLine("<tr><td>$(ConvertTo-HtmlEsc $c.Source)</td><td>$mark</td><td>$($c.Weight)</td></tr>")
         }
-        $null = $sb.AppendLine("</table><div class='meta'>Coverage confidence: $($script:Verdict.ConfidencePercent)% ($($script:Verdict.CoverageSourcesCollected)/$($script:Verdict.CoverageSourcesTotal) sources) - missing sources narrow what can be ruled out.</div>")
+        $covMissT = [Math]::Max(0, $script:Verdict.CoverageSourcesTotal - $script:Verdict.CoverageSourcesCollected)
+        # v2.77 fix: same rounded integer the banner reads - one number across the report
+        $covPctT = [math]::Min(100, [int][math]::Round($script:Verdict.ConfidencePercent))
+        $null = $sb.AppendLine("</table><div class='meta'>Coverage: $covPctT% weighted ($($script:Verdict.CoverageSourcesCollected)/$($script:Verdict.CoverageSourcesTotal) sources, $covMissT missing) - missing sources narrow what can be ruled out.</div>")
     } else {
         $null = $sb.AppendLine("<div class='meta'>Coverage data not available.</div>")
     }
@@ -6385,7 +6455,19 @@ tr.techrow{cursor:pointer}
         $huntRowHtml = {
             param($h2)
             $sevCls = switch -Regex ("$($h2.Severity)") { 'high' { 'crit'; break } 'medium' { 'med'; break } default { 'info' } }
-            "<tr><td class='$sevCls'><b>$(ConvertTo-HtmlEsc $h2.Severity)</b></td><td>$(ConvertTo-HtmlEsc $h2.Rule)</td><td>$(ConvertTo-HtmlEsc $h2.Attck)</td><td class='path'>$(ConvertTo-HtmlEsc $h2.Entity)</td><td class='path'>$(ConvertTo-HtmlEsc $h2.Evidence)</td></tr>"
+            # v2.77: leading-stamp normalization ONLY - a locale stamp that OPENS the evidence
+            # cell ('10/12/2026 7:43:01 AM: ...') renders in the one Ophira stamp dialect; a
+            # date anywhere after the leading stamp (quoted command lines, embedded evidence
+            # text) stays verbatim, and text the regex matches but cannot parse stays verbatim.
+            $ev2 = "$($h2.Evidence)"
+            $lm = [regex]::Match($ev2, '^(\d{1,2}/\d{1,2}/\d{4} \d{1,2}:\d{2}(?::\d{2})?(?: [AP]M)?)(\s*:)')
+            if ($lm.Success) {
+                $ld = [datetime]::MinValue
+                if ([datetime]::TryParse($lm.Groups[1].Value, [Globalization.CultureInfo]::InvariantCulture, [Globalization.DateTimeStyles]::None, [ref]$ld)) {
+                    $ev2 = $ld.ToString('yyyy-MM-dd HH:mm') + $ev2.Substring($lm.Groups[1].Length)
+                }
+            }
+            "<tr><td class='$sevCls'><b>$(ConvertTo-HtmlEsc $h2.Severity)</b></td><td>$(ConvertTo-HtmlEsc $h2.Rule)</td><td>$(ConvertTo-HtmlEsc $h2.Attck)</td><td class='path'>$(ConvertTo-HtmlEsc $h2.Entity)</td><td class='path'>$(ConvertTo-HtmlEsc $ev2)</td></tr>"
         }
         $null = $sb.AppendLine("<table><tr><th>Severity</th><th>Rule</th><th>ATT&amp;CK</th><th>Entity</th><th>Evidence</th></tr>")
         foreach ($h2 in ($mainRows | Sort-Object { switch -Regex ("$($_.Severity)") { 'high' { 0 } 'medium' { 1 } default { 2 } } })) {
