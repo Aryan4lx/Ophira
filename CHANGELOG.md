@@ -1,5 +1,12 @@
 # Changelog
 
+## v2.79
+- **Tool debuggability - every number can be traced to its source** (executed as one batched task with review; zero behavior change to findings/verdict/coverage outputs - logging/summary/docs only; E2E on the real WIN11 case: verdict byte-stable, `R4: 25 download rows x 1485 exec rows -> 1 finding (1 medium)` in one log line)
+  - **Rule + verdict traces** (T12): one `Write-CaseLog` line per hunt rule R1-R35 - input source + row count in, findings out with severity split, gate decisions on skips (a watermark on the findings delta means trace counts can never drift from actual emissions); one line per verdict signal add and per coverage miss with its weight; always in `collection.log`, console at Verbose (Quiet still suppresses console only); worker file-only override untouched
+  - **Regen step summary** (T13): `Invoke-RegenerateOutputs` ends with a 17-step `[regen]` block in the v2.69 RUN-detail shape - `<step> .. <producer> -> <output> N rows in X.Xs` (FAILED/0-row honesty flows through from Save-Rows' recorded outcomes; a stale file from a previous parse can never claim this run wrote it)
+  - **Debug cookbook** (T13): `-Mode Help` + README gain "DEBUGGING A SUSPICIOUS NUMBER" - claim -> CSV -> producer function -> log line for every report number, plus the 0-rows-is-blind rule
+- Tests: new `tests/test_v279.ps1` (33 checks - trace polarity incl. gate decisions, verdict signal + coverage-miss traces, output-INVARIANCE assertions proving zero behavior change, regen summary shapes incl. FAILED path, cookbook presence); 5 pins retargeted in test_v221/v226/v249/v270/v267; full suite green
+
 ## v2.78
 - **Navigation polish - the report tells you where the evidence is before you jump** (executed as one batched task with review + fix round; E2E on the real WIN11 case: verdict byte-stable SUSPICIOUS rank 2)
   - **Case draft collapses**: the embedded auto-written draft renders inside `<details><summary>Case draft (auto-written - paste into your report)</summary>` - the wall of text stops competing with the banner; the standalone `case_draft.txt` still ships, and printing auto-expands it (v2.63 beforeprint)

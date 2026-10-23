@@ -95,7 +95,7 @@ Check "8.15: LSASS dump hunt is shallow + recorded only" ($src -match "Filter '\
 Check "browser: Login Data + Local State added to raw copy" (($src -match "'Bookmarks', 'Login Data'") -and ($src -match 'foreach \(\$rootFile in @\(''Local State''\)\)'))
 Check "manifest: chain-of-custody header lines" (($src -match 'evidence manifest \+ chain of custody') -and ($src -match 'Packaged: ') -and ($src -match 'Custody: the case zip is the evidence unit'))
 Check "verdict: DNS/network + MFT filename IOC signals (floor 2)" (($src -match "Add-Signal 'IOC hit - known-bad DNS query / historical connection' 2") -and ($src -match 'known-bad filename on disk'))
-Check "regen: New-IocHits runs in the shared pipeline" ($src -match 'try \{ New-IocHits \}')
+Check "regen: New-IocHits runs in the shared pipeline" ($src -match '\{ New-IocHits \}') # v2.79: producers moved into $rgStep scriptblocks
 Check "report: credential sweep table + defanged IOC additions" (($src -match 'Credential exposure sweep') -and ($src -match "Import-CaseCsv 'ioc_hits_dns'"))
 Check "evidence index: new artifacts documented" (($src -match "'ioc_hits_dns'") -and ($src -match "'credential_sweep'"))
 $gi = Get-Content -LiteralPath (Join-Path (Split-Path -Parent $PSScriptRoot) '.gitignore') -Raw

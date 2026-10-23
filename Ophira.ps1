@@ -1,5 +1,5 @@
 ﻿<#
-Ophira v2.78  -  Windows Incident Response Triage Toolkit
+Ophira v2.79  -  Windows Incident Response Triage Toolkit
 READ-ONLY by design: never modifies the system, only reads and copies data
 into its own output folder. Intended to be handed to a system owner or run
 by a responder during early triage / threat hunting.
@@ -277,6 +277,39 @@ by a responder during early triage / threat hunting.
 .NOTES
     Read-only by design. PowerShell 5.0 or newer; older hosts get a clear
     fail-fast message (collect them remotely with -Mode Deploy instead).
+
+    DEBUGGING A SUSPICIOUS NUMBER (v2.79 cookbook)
+    Every number the report shows is backed by a CSV, a producer function and
+    a case-log line (collection.log). Traceback path, most common claims:
+
+    - Verdict rank / "LIKELY COMPROMISED": csv\verdict.json Signals[]. Each
+      contributing signal is one log line "verdict signal: <name> (floor W x
+      N) - <detail>" from Get-CompromiseVerdict/Add-Signal. A signal with
+      count 0 is never added - no line means no contribution.
+    - Coverage % (banner "evidence coverage N%"): the same verdict's
+      Coverage[] rows. Every missing source logs "verdict coverage miss:
+      <source> (weight W)". The percent is weighted-collected over total
+      possible, minus 15 when the run was not elevated.
+    - Hunt findings count (report Hunt section): csv\hunt_findings.csv, built
+      by New-HuntFindings. Each rule R1-R35 logs one line "Rxx <rule>: <inputs
+      in> -> <N> findings (<severities>)"; a skipped rule logs its gate (e.g.
+      "gate: usb_devices empty or missing - skipped"). 0 rows in = the source
+      CSV was empty or absent, not that the technique passed.
+    - Sigma detections: csv\hayabusa_timeline.csv (+ per-rule event CSVs in
+      csv\sigma_rules\, index.csv has per-rule hit counts). Producer
+      New-SigmaRuleLogs. Verdict inputs are the crit/high rows AFTER the
+      dedupe + self-noise filter (Remove-SigmaDuplicateEvents).
+    - Process verdicts (report Processes section): csv\flash_process_scored.csv
+      from the flash scoring module; the verdict's HIGH signal reads only
+      Verdict=HIGH rows and needs score >= 8 or corroboration.
+    - Leads (report lead cards): csv\derived\leads.csv, one ranked list built
+      by Get-TriageLeads during regeneration.
+    - What ran during a parse/finish: the end-of-run "regen summary:" block -
+      one "[regen] <step> ... <producer> -> <output> in <X.X>s" line per
+      derived artifact, plus each producer's own "    <thing>: N ..." lines.
+    - Where collection itself is logged: collection.log in the case folder
+      (worker_*.log files are merged into it). -LogLevel Quiet silences the
+      console only; the log file always carries the full detail.
 #>
 
 [CmdletBinding()]
@@ -323,7 +356,7 @@ param(
     [switch]$ExitVerdict
 )
 
-$ScriptVersion = "2.78"
+$ScriptVersion = "2.79"
 $ErrorActionPreference = 'Continue'
 $ProgressPreference = 'SilentlyContinue'
 
@@ -6550,7 +6583,7 @@ tr.techrow{cursor:pointer}
         foreach ($h2 in ($mainRows | Sort-Object { switch -Regex ("$($_.Severity)") { 'high' { 0 } 'medium' { 1 } default { 2 } } })) {
             $null = $sb.AppendLine((& $huntRowHtml $h2))
         }
-        $null = $sb.AppendLine("</table><div class='meta'>High-severity rules are high-precision (version-info renames, side-loaded system DLLs, downloads staged outside Downloads, LSASS access, Office-to-interpreter chains, proxy-execution LOLBin command lines, admin-share staging, Defender tamper, DCSync, password spray, injection into LSASS or from user-writable paths, C2-style named pipes) and contribute to the verdict. Medium rules are report-only leads (download-exec with missing/uncheckable signature, UAC bypass pattern, future-birth / execution-predates-birth timestamps, Kerberoasting/AS-REP patterns, web anomalies, privilege-boundary injection without a privilege tell). Low rows (extracted-archive birth-attribute skew, discovery command storms, protected-pair injection) are collapsed below as context. Verify against the cited raw evidence. Source: csv\hunt_findings.csv</div>")
+        $null = $sb.AppendLine("</table><div class='meta'>High-severity rules are high-precision (version-info renames, side-loaded system DLLs, downloads staged outside Downloads, LSASS access, Office-to-interpreter chains, proxy-execution LOLBin command lines, admin-share staging, Defender tamper, DCSync, password spray, injection into LSASS or from user-writable paths, C2-style named pipes) and contribute to the verdict - the exception is Sysmon configuration changes (report-only, no verdict weight). Medium rules are report-only leads (download-exec with missing/uncheckable signature, UAC bypass pattern, future-birth / execution-predates-birth timestamps, Kerberoasting/AS-REP patterns, web anomalies, privilege-boundary injection without a privilege tell). Low rows (extracted-archive birth-attribute skew, discovery command storms, protected-pair injection) are collapsed below as context. Verify against the cited raw evidence. Source: csv\hunt_findings.csv</div>")
         if ($lowRows.Count -gt 0) {
             $null = $sb.AppendLine("<details><summary>Low / informational findings ($($lowRows.Count))</summary><table><tr><th>Severity</th><th>Rule</th><th>ATT&amp;CK</th><th>Entity</th><th>Evidence</th></tr>")
             foreach ($h2 in $lowRows) {
@@ -8168,10 +8201,32 @@ function New-HuntFindings {
         $null = $out.Add([pscustomobject]@{ Found = (Get-Date).ToUniversalTime().ToString('o'); Rule = $rule; Severity = $sev; Entity = $entity; Attck = $attack; Evidence = $evidence })
     }
 
+    # v2.79 trace: one line per rule - inputs in / findings out - plus the gate decision on
+    # skipped rules. The case log ALWAYS carries these; the console shows them at -LogLevel
+    # Verbose only (33 lines per hunt run is too chatty for Normal). Written straight to the
+    # log on the quiet path instead of Write-CaseLog -NoConsole: harnesses stub Write-CaseLog
+    # without that switch. Controller-side only (Invoke-RegenerateOutputs), so $CaseLog exists.
+    # Placement hazard: call $trace LAST in each rule block - a $find placed after a rule's
+    # $trace rolls its findings into the NEXT rule's count (the 33-block test cannot catch it).
+    $trState = @{ Base = 0 }
+    $trace = {
+        param([string]$Id, [string]$Label, [string]$Inputs)
+        $tN = $out.Count - $trState.Base
+        $tSev = ''
+        if ($tN -gt 0) {
+            $tSev = ' (' + ((@($out.GetRange($trState.Base, $tN) | Group-Object Severity | Sort-Object Name) | ForEach-Object { "$($_.Count) $($_.Name)" }) -join ', ') + ')'
+        }
+        $trState.Base = $out.Count
+        $tMsg = "$Id $Label`: $Inputs -> $tN finding$(if ($tN -eq 1) { '' } else { 's' })$tSev"
+        if ($script:Verbosity -ge 2) { Write-CaseLog $tMsg 'DarkGray' }
+        else { try { Add-Content -LiteralPath $CaseLog -Value ("[{0}] {1}" -f (Get-Date -Format 'HH:mm:ss'), $tMsg) -Encoding UTF8 } catch { } }
+    }
+
     # ---------- R1: renamed LOLBin (version-info identity vs filename, BinaryRename port) ----------
     $lolBins = @('cmd.exe', 'powershell.exe', 'pwsh.exe', 'mshta.exe', 'regsvr32.exe', 'rundll32.exe', 'wmic.exe', 'wscript.exe', 'cscript.exe', 'certutil.exe', 'bitsadmin.exe', 'net.exe', 'net1.exe', 'netsh.exe', 'wevtutil.exe', 'psexec.exe', 'psexec64.exe', 'msiexec.exe', 'installutil.exe', 'schtasks.exe', 'curl.exe', 'wget.exe', '7z.exe', 'winrar.exe')
     $r1Seen = @{}
-    foreach ($r in ((Import-CaseCsv 'processes') | Select-Object -First 400)) {
+    $r1In = @((Import-CaseCsv 'processes') | Select-Object -First 400)
+    foreach ($r in $r1In) {
         $p = "$($r.Path)"
         if (-not $p -or -not (Test-Path -LiteralPath $p -PathType Leaf)) { continue }
         $leaf = $null
@@ -8187,11 +8242,13 @@ function New-HuntFindings {
             & $find 'Renamed LOLBin (version-info mismatch)' 'high' $p "file '$leaf' but embedded identity '$($idHit[0])' (internal=$internal; original=$original)" 'T1036.003'
         }
     }
+    & $trace 'R1' 'renamed LOLBin (live)' "processes (first 400): $($r1In.Count) rows"
 
     # ---------- R1b: renamed LOLBin at rest - Sysmon EID1 OriginalFileName vs executed Image name ----------
     # catches copies that already exited (live R1 only sees running processes); winupd.exe-class
     $r1bSeen = @{}
-    foreach ($r in (Import-CaseCsv 'sysmon_proc_create')) {
+    $r1bIn = @(Import-CaseCsv 'sysmon_proc_create')
+    foreach ($r in $r1bIn) {
         $orig = "$($r.OriginalFileName)".ToLower().Trim()
         if (-not $orig) { continue }
         $img = "$($r.Image)"
@@ -8208,10 +8265,12 @@ function New-HuntFindings {
         if ($cmd.Length -gt 120) { $cmd = $cmd.Substring(0, 120) + '...' }
         & $find 'Renamed LOLBin at rest (Sysmon identity mismatch)' 'high' $img "executed as '$leaf' but embedded identity '$origBase'$(if ($cmd) { " | cmd: $cmd" })" 'T1036.003'
     }
+    & $trace 'R1b' 'renamed LOLBin at rest' "sysmon_proc_create: $($r1bIn.Count) rows"
 
     # ---------- R2: DLL side-load live - proxy DLL loaded from user-writable path (Sysmon EID 7) ----------
     $proxyDlls = @('version.dll', 'winmm.dll', 'dbghelp.dll', 'd3d9.dll', 'd3d10.dll', 'd3d11.dll', 'dxgi.dll', 'cryptsp.dll', 'winhttp.dll', 'ualapi.dll', 'wlanapi.dll', 'wbemcomn.dll', 'actxprxy.dll', 'msdtcprx.dll', 'tspkg.dll', 'ntlmshared.dll', 'mfc42.dll', 'msvcp60.dll')
-    foreach ($r in (Import-CaseCsv 'sysmon_image_load')) {
+    $r2In = @(Import-CaseCsv 'sysmon_image_load')
+    foreach ($r in $r2In) {
         $dll = "$($r.Dll)"
         if (-not $dll) { continue }
         $leaf = ''
@@ -8223,11 +8282,14 @@ function New-HuntFindings {
             & $find 'DLL side-load - unsigned proxy DLL outside Windows' 'medium' $dll "loaded by $($r.Process) from $dll" 'T1574.002'
         }
     }
+    & $trace 'R2' 'DLL side-load (live)' "sysmon_image_load: $($r2In.Count) rows"
 
     # ---------- R3: same proxy-DLL/binary name in system dir AND user dir (static side-load) ----------
     $namePaths = @{}
+    $r3In = 0
     foreach ($src in @('amcache', 'mft_recent', 'sysmon_image_load')) {
-        foreach ($r in (Import-CaseCsv $src)) {
+        $r3Rows = @(Import-CaseCsv $src); $r3In += $r3Rows.Count
+        foreach ($r in $r3Rows) {
             $p = $null
             if ($src -eq 'sysmon_image_load') { $p = "$($r.Dll)" } else {
                 foreach ($pn in @('Path', 'Name')) { $p2 = $r.PSObject.Properties[$pn]; if ($p2 -and "$($p2.Value)" -match '\.(dll|exe)$') { $p = "$($p2.Value)"; break } }
@@ -8247,6 +8309,7 @@ function New-HuntFindings {
             & $find 'DLL side-load - planted system DLL name in user path' 'high' $kv.Key "system: $($inSys[0]) | user: $($inUser[0])$(if ($inUser.Count -gt 1) { ' (+' + ($inUser.Count - 1) + ' more)' })" 'T1574.002'
         }
     }
+    & $trace 'R3' 'DLL side-load (static, system+user dirs)' "amcache+mft_recent+sysmon_image_load: $r3In rows"
 
     # ---------- R4: downloaded then executed (v2.76 precision rework) ----------
     # v2.76: match execution evidence by normalized FULL path (parent+leaf); the leaf-only key
@@ -8256,8 +8319,10 @@ function New-HuntFindings {
     # target path (Chromium can carry the same download twice).
     $execPaths = @{}
     $execLeaves = @{}
+    $r4Exec = 0
     foreach ($src in @('amcache', 'prefetch_parsed', 'execution_timeline', 'processes')) {
-        foreach ($r in (Import-CaseCsv $src)) {
+        $r4Src = @(Import-CaseCsv $src); $r4Exec += $r4Src.Count
+        foreach ($r in $r4Src) {
                     foreach ($pn in @('Path', 'Executable', 'FullPath', 'Name', 'App')) {
                 $p2 = $r.PSObject.Properties[$pn]
                 if ($p2 -and "$($p2.Value)") {
@@ -8276,7 +8341,8 @@ function New-HuntFindings {
         }
     }
     $r4Seen = @{}
-    foreach ($r in (Import-CaseCsv 'browser_downloads')) {
+    $r4Dl = @(Import-CaseCsv 'browser_downloads')
+    foreach ($r in $r4Dl) {
         $tp = ''
         foreach ($pn in @('TargetFilePath', 'TargetPath', 'DownloadPath', 'FullPath', 'Path', 'URL')) {
             $p2 = $r.PSObject.Properties[$pn]
@@ -8311,6 +8377,7 @@ function New-HuntFindings {
         }
         & $find 'Downloaded then executed' $r4Sev $tp "'$n' downloaded via browser and later appears in execution evidence ($r4Why)" 'T1105/T1204.002'
     }
+    & $trace 'R4' 'downloaded then executed' "browser_downloads: $($r4Dl.Count) rows x exec evidence (4 sources): $r4Exec rows"
 
     # ---------- R5: USB execution trail (report-only) ----------
     $usb = @(Import-CaseCsv 'usb_devices')
@@ -8332,15 +8399,19 @@ function New-HuntFindings {
         if ($nonC.Count -gt 0) {
             & $find 'USB execution trail' 'info' "$($usb.Count) USB device(s) on record" "non-C: drive references: $(($nonC | Select-Object -First 3) -join ' | ')" 'T1091'
         }
+        & $trace 'R5' 'USB execution trail' "usb_devices: $($usb.Count) rows + lnk_parsed/shellbags scan"
+    } else {
+        & $trace 'R5' 'USB execution trail' 'gate: usb_devices empty or missing - skipped'
     }
 
     # ---------- R6: account created + privileged group change in window (report-only) ----------
-    $auth = Import-CaseCsv 'security_auth_events'
+    $auth = @(Import-CaseCsv 'security_auth_events')
     $created = @($auth | Where-Object { "$($_.EventId)" -eq '4720' } | ForEach-Object { "$($_.Account)" } | Sort-Object -Unique)
     $grpAdds = @($auth | Where-Object { @('4728', '4732', '4756') -contains "$($_.EventId)" })
     if ($created.Count -gt 0 -and $grpAdds.Count -gt 0) {
         & $find 'Account lifecycle - created + group change' 'info' (($created | Select-Object -First 5) -join ', ') "$($created.Count) account creation(s) + $($grpAdds.Count) privileged-group change(s) in window" 'T1136/T1098'
     }
+    & $trace 'R6' 'account lifecycle (created + group change)' "security_auth_events: $($auth.Count) rows, 4720: $($created.Count), group-adds: $($grpAdds.Count)"
 
     # ---------- R7: RDP logon from public internet IP (report-only) ----------
     $rdpPub = @($auth | Where-Object { "$($_.EventId)" -eq '4624' -and "$($_.LogonType)" -eq '10' -and (Test-IsPublicIp "$($_.SourceIp)") })
@@ -8348,11 +8419,13 @@ function New-HuntFindings {
         $accts = (@($g.Group | ForEach-Object { "$($_.Account)" } | Sort-Object -Unique | Select-Object -First 4)) -join ', '
         & $find 'RDP logon from public internet IP' 'medium' "$($g.Name)" "$($g.Count) RDP logon(s): $accts" 'T1021.001'
     }
+    & $trace 'R7' 'RDP logon from public IP' "security_auth_events: $($auth.Count) rows, RDP-public 4624s: $($rdpPub.Count)"
 
     # ---------- R8: LSASS access - non-system process opened lsass.exe (Sysmon EID 10) ----------
     $lsassOk = @('csrss.exe', 'lsm.exe', 'smss.exe', 'wininit.exe', 'winlogon.exe', 'services.exe', 'svchost.exe', 'lsass.exe', 'lsaiso.exe', 'msmpeng.exe', 'nissrv.exe', 'mssense.exe', 'sense.exe', 'sgrmbroker.exe', 'wmiprvse.exe', 'vssvc.exe', 'dfsr.exe', 'dfsrs.exe', 'taskhostw.exe', 'sihost.exe', 'spoolsv.exe')
     $lsassHits = @{}
-    foreach ($r in (Import-CaseCsv 'sysmon_process_access')) {
+    $r8In = @(Import-CaseCsv 'sysmon_process_access')
+    foreach ($r in $r8In) {
         $tgt = "$($r.TargetImage)"
         if ($tgt -notmatch '(?i)\\lsass\.exe$') { continue }
         $src = "$($r.SourceImage)"
@@ -8365,12 +8438,14 @@ function New-HuntFindings {
     foreach ($kv in ($lsassHits.GetEnumerator() | Sort-Object { $_.Value.Count } -Descending | Select-Object -First 10)) {
         & $find 'LSASS access - non-system process opened lsass.exe' 'high' $kv.Key "$($kv.Value.Count) handle event(s): $($kv.Value[0])" 'T1003.001'
     }
+    & $trace 'R8' 'LSASS access (Sysmon EID 10)' "sysmon_process_access: $($r8In.Count) rows, non-system openers: $($lsassHits.Count)"
 
     # ---------- R9: Office app spawned interpreter (4688 parent-child chain) ----------
     $officeApps = @('winword.exe', 'excel.exe', 'powerpnt.exe', 'outlook.exe', 'mspub.exe', 'onenote.exe', 'onenotem.exe')
     $interpreters = @('cmd.exe', 'powershell.exe', 'pwsh.exe', 'wscript.exe', 'cscript.exe', 'mshta.exe', 'rundll32.exe', 'regsvr32.exe', 'msbuild.exe', 'installutil.exe', 'certutil.exe', 'bitsadmin.exe', 'curl.exe', 'msxsl.exe')
     $r9Seen = @{}
-    foreach ($r in (Import-CaseCsv 'security_proc_events')) {
+    $r9In = @(Import-CaseCsv 'security_proc_events')
+    foreach ($r in $r9In) {
         $par = ''; $kid = ''
         try { $par = (Split-Path "$($r.ParentProcess)" -Leaf).ToLower() } catch { }
         try { $kid = (Split-Path "$($r.NewProcess)" -Leaf).ToLower() } catch { }
@@ -8381,10 +8456,12 @@ function New-HuntFindings {
         $cmd = "$($r.CommandLine)"; if ($cmd.Length -gt 200) { $cmd = $cmd.Substring(0, 200) + '...' }
         & $find 'Office app spawned interpreter' 'high' "$par -> $kid" "$($r.Time): $cmd" 'T1566.001/T1059'
     }
+    & $trace 'R9' 'Office app spawned interpreter' "security_proc_events: $($r9In.Count) rows"
 
     # ---------- R10: proxy-execution LOLBin command lines (4688 CommandLine; needs cmdline audit) ----------
     $r10Seen = @{}
-    foreach ($r in (Import-CaseCsv 'security_proc_events')) {
+    $r10In = @(Import-CaseCsv 'security_proc_events')
+    foreach ($r in $r10In) {
         $cmd = "$($r.CommandLine)".Trim()
         if ($cmd.Length -lt 8) { continue }
         $low = $cmd.ToLower()
@@ -8405,10 +8482,12 @@ function New-HuntFindings {
         if ($r10Seen.Count -gt 20) { break }
         & $find "LOLBin proxy-execution - $hit" $sev "$($r.NewProcess)" "$($r.Time): $(if ($cmd.Length -gt 220) { $cmd.Substring(0, 220) + '...' } else { $cmd })" 'T1218'
     }
+    & $trace 'R10' 'proxy-execution LOLBin command lines' "security_proc_events: $($r10In.Count) rows"
 
     # ---------- R11: UAC bypass pattern - ms-settings shell\open\command writes (Sysmon EID 13) ----------
     $r11Seen = @{}
-    foreach ($r in (Import-CaseCsv 'sysmon_registry')) {
+    $r11In = @(Import-CaseCsv 'sysmon_registry')
+    foreach ($r in $r11In) {
         $to = "$($r.TargetObject)"
         if ($to -notmatch '(?i)\\ms-settings\\shell\\open\\command') { continue }
         $k = $to -replace '^HKEY_USERS\\[^\\]+', 'HKCU'
@@ -8416,10 +8495,12 @@ function New-HuntFindings {
         $r11Seen[$k] = $true
         & $find 'UAC bypass pattern - ms-settings command hijack' 'medium' $to "registry write by $($r.Image) (fodhelper/eventvwr technique)" 'T1548.002'
     }
+    & $trace 'R11' 'UAC bypass pattern (ms-settings)' "sysmon_registry: $($r11In.Count) rows"
 
     # ---------- R12: executable written via admin share (5145 WriteData/Append on ADMIN$/x$) ----------
     $r12Seen = @{}
-    foreach ($r in (Import-CaseCsv 'security_share_access')) {
+    $r12In = @(Import-CaseCsv 'security_share_access')
+    foreach ($r in $r12In) {
         if ("$($r.EventId)" -ne '5145') { continue }
         $share = ("$($r.ShareName)" -replace '^[\*\\\s]+', '')
         if ($share -notmatch '(?i)^admin\$' -and $share -notmatch '(?i)^[a-z]\$$') { continue }
@@ -8431,11 +8512,13 @@ function New-HuntFindings {
         $r12Seen[$k] = $true
         & $find 'Admin-share executable staging' 'high' "$($r.SourceIp)" "'$tn' written on \\$share by $($r.Account) at $($r.Time)" 'T1021.002'
     }
+    & $trace 'R12' 'admin-share executable staging (5145)' "security_share_access: $($r12In.Count) rows"
 
     # ---------- R13: discovery command storm (4688 recon-tool burst per account) ----------
     $discBins = @('whoami.exe', 'net.exe', 'net1.exe', 'nltest.exe', 'systeminfo.exe', 'ipconfig.exe', 'quser.exe', 'qwinsta.exe', 'tasklist.exe', 'netstat.exe', 'nslookup.exe', 'arp.exe', 'route.exe', 'klist.exe', 'wmic.exe', 'dsquery.exe', 'adfind.exe', 'csvde.exe', 'ldifde.exe', 'tree.exe')
     $discByAcct = @{}
-    foreach ($r in (Import-CaseCsv 'security_proc_events')) {
+    $r13In = @(Import-CaseCsv 'security_proc_events')
+    foreach ($r in $r13In) {
         $leaf = ''
         try { $leaf = (Split-Path "$($r.NewProcess)" -Leaf).ToLower() } catch { }
         if ($discBins -notcontains $leaf) { continue }
@@ -8456,6 +8539,8 @@ function New-HuntFindings {
             & $find 'Discovery command storm' 'low' $discAcct "$($kv.Value.Count) recon commands ($distinct distinct): $tools" 'T1087/T1082'
         }
     }
+    $r13Cmds = 0; foreach ($v in $discByAcct.Values) { $r13Cmds += $v.Count }
+    & $trace 'R13' 'discovery command storm' "$($discByAcct.Count) accounts x $r13Cmds cmds (security_proc_events: $($r13In.Count) rows)"
 
     # ---------- R14: Defender tamper - real-time protection off / exclusion change (5001/5007) ----------
     $dcfg = @(Import-CaseCsv 'defender_config_events')
@@ -8466,13 +8551,15 @@ function New-HuntFindings {
     foreach ($e in (@($dcfg | Where-Object { "$($_.EventId)" -eq '5007' -and "$($_.Detail)" -match '(?i)exclusion' }) | Select-Object -First 3)) {
         & $find 'Defender exclusion configuration changed' 'high' $Computer "$($e.Time): $($e.Detail)" 'T1562.001'
     }
+    & $trace 'R14' 'Defender tamper (5001/5007)' "defender_config_events: $($dcfg.Count) rows"
 
     # ---------- R15: timestomping - creation time changed (Sysmon EID 2) ----------
     # v2.76: archive copy/extract tools legitimately preserve packed timestamps on copy/extract
     # (the WIN11 case's whole EID2 log was explorer.exe preserving archive times) - skip them.
     # Dedupe per target path BEFORE the 10-row cap; remaining images stay medium.
     $r15Seen = @{}
-    foreach ($r in (Import-CaseCsv 'sysmon_file_time')) {
+    $r15In = @(Import-CaseCsv 'sysmon_file_time')
+    foreach ($r in $r15In) {
         $r15Img = ''
         try { $r15Img = (Split-Path "$($r.Image)" -Leaf).ToLower() } catch { $r15Img = "$($r.Image)".ToLower() }
         if ($r15Img -eq 'explorer.exe' -or $r15Img -eq 'rar.exe' -or $r15Img -eq 'robocopy.exe' -or $r15Img -eq 'xcopy.exe' -or $r15Img -like '7z*.exe' -or $r15Img -like 'winrar*.exe' -or $r15Img -eq 'msiexec.exe') { continue }
@@ -8482,16 +8569,19 @@ function New-HuntFindings {
         if ($r15Seen.Count -gt 10) { break }
         & $find 'File creation time changed (timestomping candidate)' 'medium' "$($r.TargetFilename)" "by $($r.Image): $($r.PreviousCreationUtcTime) -> $($r.CreationUtcTime)" 'T1070.006'
     }
+    & $trace 'R15' 'timestomping (Sysmon EID 2)' "sysmon_file_time: $($r15In.Count) rows"
 
     # ---------- R16: DCSync - replication Get-Changes by a user account (4662) ----------
     $dcSeen = @{}
-    foreach ($r in (@(Import-CaseCsv 'security_ds_access') | Where-Object { "$($_.Properties)" -match '(?i)e3514235-4b06-11d1-ab04-00c04fc2dcd2|1131f6a[ad]-' -and "$($_.Account)" -notmatch '\$$' })) {
+    $r16In = @(Import-CaseCsv 'security_ds_access')
+    foreach ($r in ($r16In | Where-Object { "$($_.Properties)" -match '(?i)e3514235-4b06-11d1-ab04-00c04fc2dcd2|1131f6a[ad]-' -and "$($_.Account)" -notmatch '\$$' })) {
         $a = "$($r.Account)"
         if (-not $a -or $dcSeen.ContainsKey($a)) { continue }
         $dcSeen[$a] = $true
         if ($dcSeen.Count -gt 10) { break }
         & $find 'DCSync - replication access by user account' 'high' $a "4662 Get-Changes on $($r.Object) at $($r.Time)" 'T1003.006'
     }
+    & $trace 'R16' 'DCSync (4662 Get-Changes)' "security_ds_access: $($r16In.Count) rows"
 
     # ---------- R17: Kerberoasting pattern - RC4 TGS burst per source (4769) ----------
     $ker = @(Import-CaseCsv 'security_kerberos')
@@ -8502,6 +8592,7 @@ function New-HuntFindings {
             & $find 'Kerberoasting pattern - RC4 TGS burst' 'medium' "$($g.Name)" "$($g.Count) TGS requests for $($svc.Count) distinct SPNs over RC4" 'T1558.003'
         }
     }
+    & $trace 'R17' 'Kerberoasting (RC4 TGS burst)' "security_kerberos: $($ker.Count) rows, RC4 TGS: $($tgs.Count)"
 
     # ---------- R18: AS-REP roast pattern - TGT without pre-auth (4768 PreAuthType 0) ----------
     $asrepSeen = @{}
@@ -8511,6 +8602,7 @@ function New-HuntFindings {
         $asrepSeen[$a] = $true
         & $find 'AS-REP roast pattern - TGT requested without pre-auth' 'medium' $a "from $($r.IpAddress) at $($r.Time)" 'T1558.004'
     }
+    & $trace 'R18' 'AS-REP roast (no pre-auth TGT)' "security_kerberos: $($ker.Count) rows"
 
     # ---------- R19: password spray - many distinct accounts failing from one source (4771/4625) ----------
     $sprayFails = @()
@@ -8522,12 +8614,14 @@ function New-HuntFindings {
             & $find 'Password spray - many accounts from one source' 'high' "$($g.Name)" "$($g.Count) failures across $($accts.Count) accounts: $(($accts | Select-Object -First 5) -join ', ')" 'T1110.003'
         }
     }
+    & $trace 'R19' 'password spray (4771/4625)' "kerberos 4771: $(@($ker | Where-Object { "$($_.EventId)" -eq '4771' }).Count) + auth 4625: $(@($auth | Where-Object { "$($_.EventId)" -eq '4625' }).Count) rows"
 
     # ---------- R20: web server spawned interpreter (4688: w3wp/tomcat/httpd parent) ----------
     $webParents = @('w3wp.exe', 'tomcat8.exe', 'tomcat9.exe', 'httpd.exe', 'nginx.exe', 'php-cgi.exe')
     $webKids = @('cmd.exe', 'powershell.exe', 'pwsh.exe', 'wscript.exe', 'cscript.exe', 'mshta.exe', 'rundll32.exe', 'regsvr32.exe', 'certutil.exe', 'bitsadmin.exe', 'csc.exe', 'vbc.exe', 'msbuild.exe', 'curl.exe', 'net.exe')
     $r20Seen = @{}
-    foreach ($r in (Import-CaseCsv 'security_proc_events')) {
+    $r20In = @(Import-CaseCsv 'security_proc_events')
+    foreach ($r in $r20In) {
         $par = ''; $kid = ''
         try { $par = (Split-Path "$($r.ParentProcess)" -Leaf).ToLower() } catch { }
         try { $kid = (Split-Path "$($r.NewProcess)" -Leaf).ToLower() } catch { }
@@ -8538,11 +8632,14 @@ function New-HuntFindings {
         $cmd = "$($r.CommandLine)"; if ($cmd.Length -gt 200) { $cmd = $cmd.Substring(0, 200) + '...' }
         & $find 'Web server spawned interpreter' 'high' "$par -> $kid" "$($r.Time): $cmd" 'T1505.003'
     }
+    & $trace 'R20' 'web server spawned interpreter' "security_proc_events: $($r20In.Count) rows"
 
     # ---------- R21: web traffic anomalies (report-only leads from the IIS parse) ----------
-    foreach ($r in ((@(Import-CaseCsv 'iis_anomalies') | Where-Object { @('suspicious-uri', 'post-to-upload-path', 'headless-posts') -contains $_.Kind }) | Select-Object -First 5)) {
+    $r21In = @(@(Import-CaseCsv 'iis_anomalies') | Where-Object { @('suspicious-uri', 'post-to-upload-path', 'headless-posts') -contains $_.Kind })
+    foreach ($r in ($r21In | Select-Object -First 5)) {
         & $find 'Web traffic anomaly' 'medium' "$($r.Kind)" "$($r.Detail) - $($r.Sample)" 'T1190'
     }
+    & $trace 'R21' 'web traffic anomalies (IIS)' "iis_anomalies matched kinds: $($r21In.Count) rows"
 
     # ---------- R22: timestamp anomalies (MFT birth attributes x execution evidence) ----------
     # v2.76: lookups keyed by FULL path (FullPath column when present, Path fallback) - the old
@@ -8555,7 +8652,8 @@ function New-HuntFindings {
     # Sysmon EID 2 events for the same full path corroborate the skew check. Medium rules emit
     # before the low rows so a downstream cap cannot crowd them out.
     $mftByPath = @{}
-    foreach ($r in (Import-CaseCsv 'mft_recent')) {
+    $r22Mft = @(Import-CaseCsv 'mft_recent')
+    foreach ($r in $r22Mft) {
         $fp = ''
         foreach ($pn in @('FullPath', 'Path')) {
             $p2 = $r.PSObject.Properties[$pn]
@@ -8564,7 +8662,8 @@ function New-HuntFindings {
         if ($fp -and -not $mftByPath.ContainsKey($fp)) { $mftByPath[$fp] = $r }
     }
     $amcByPath = @{}
-    foreach ($r in (Import-CaseCsv 'amcache')) {
+    $r22Amc = @(Import-CaseCsv 'amcache')
+    foreach ($r in $r22Amc) {
         $fp = ''
         foreach ($pn in @('FullPath', 'Path')) {
             $p2 = $r.PSObject.Properties[$pn]
@@ -8578,7 +8677,8 @@ function New-HuntFindings {
         if (-not $amcByPath.ContainsKey($fp) -or ($t -and $amcByPath[$fp].T -and $t -lt $amcByPath[$fp].T)) { $amcByPath[$fp] = @{ T = $t; Src = 'amcache' } }
     }
     $eid2ByPath = @{}
-    foreach ($r in (Import-CaseCsv 'sysmon_file_time')) {
+    $r22Eid2 = @(Import-CaseCsv 'sysmon_file_time')
+    foreach ($r in $r22Eid2) {
         $fp = ''
         foreach ($pn in @('FullPath', 'TargetFilename')) {
             $p2 = $r.PSObject.Properties[$pn]
@@ -8638,6 +8738,7 @@ function New-HuntFindings {
         $tfLow++
         if ($tfLow -ge 40) { break }
     }
+    & $trace 'R22' 'timestamp anomalies (MFT x execution)' "mft_recent: $($r22Mft.Count) + amcache: $($r22Amc.Count) + sysmon_file_time: $($r22Eid2.Count) rows"
 
     # ---------- R23-R26: tunnel & remote-access pack (csv\remote_access.csv + collected sources) ----------
     # R23 tunnel binary active - high when running/installed/service-installed, medium when only on disk
@@ -8648,7 +8749,9 @@ function New-HuntFindings {
     $tunPat = '(?i)(^|[^a-z0-9])(ngrok|cloudflared|tailscaled?|chisel|ligolo|frpc|frps|gost|revsocks)([^a-z0-9]|$)'
     $raPat = '(?i)(^|[^a-z0-9])(anydesk|screenconnect|connectwisecontrol|teamviewer|rustdesk)([^a-z0-9]|$)'
     $raActive = @{}
-    foreach ($r in (Import-CaseCsv 'processes')) {
+    $raIn = 0
+    $raRows = @(Import-CaseCsv 'processes'); $raIn += $raRows.Count
+    foreach ($r in $raRows) {
         $leaf = ''
         try { $leaf = (Split-Path "$($r.Path)" -Leaf) } catch { continue }
         if (-not $leaf -or "$leaf" -notmatch $tunPat) { continue }
@@ -8658,7 +8761,8 @@ function New-HuntFindings {
         & $find 'Remote-access tunnel binary active' 'high' "$($r.Path)" "tunnel tool running as process '$leaf' (pid $($r.PID))" 'T1572'
         if ($raActive.Count -gt 10) { break }
     }
-    foreach ($r in (Import-CaseCsv 'services')) {
+    $raRows = @(Import-CaseCsv 'services'); $raIn += $raRows.Count
+    foreach ($r in $raRows) {
         $blob = "$($r.Name) $($r.DisplayName) $($r.PathName)"
         if ("$blob" -notmatch $tunPat) { continue }
         $key = "$($r.Name)".ToLower()
@@ -8667,7 +8771,8 @@ function New-HuntFindings {
         & $find 'Remote-access tunnel binary active' 'high' "$($r.PathName)" "tunnel tool installed as service '$($r.Name)' (state $($r.State))" 'T1572'
         if ($raActive.Count -gt 10) { break }
     }
-    foreach ($r in (Import-CaseCsv 'system_new_services')) {
+    $raRows = @(Import-CaseCsv 'system_new_services'); $raIn += $raRows.Count
+    foreach ($r in $raRows) {
         $blob = "$($r.Service) $($r.Binary)"
         if ("$blob" -notmatch $tunPat) { continue }
         $key = "$($r.Service)".ToLower()
@@ -8677,7 +8782,8 @@ function New-HuntFindings {
         if ($raActive.Count -gt 10) { break }
     }
     foreach ($src in @('mft_recent', 'amcache')) {
-        foreach ($r in (Import-CaseCsv $src)) {
+        $raRows = @(Import-CaseCsv $src); $raIn += $raRows.Count
+        foreach ($r in $raRows) {
             $lf = ''
             foreach ($pn in @('Path', 'Name', 'ApplicationName')) {
                 $p2 = $r.PSObject.Properties[$pn]
@@ -8692,7 +8798,8 @@ function New-HuntFindings {
         }
     }
     $raSvcSeen = @{}
-    foreach ($r in (Import-CaseCsv 'services')) {
+    $raRows = @(Import-CaseCsv 'services'); $raIn += $raRows.Count
+    foreach ($r in $raRows) {
         $blob = "$($r.Name) $($r.DisplayName) $($r.PathName)"
         if ("$blob" -notmatch $raPat) { continue }
         $key = "$($r.Name)".ToLower()
@@ -8701,7 +8808,8 @@ function New-HuntFindings {
         & $find 'Remote-access tool present' 'medium' "$($r.PathName)" "remote-access tool installed as service '$($r.Name)' (state $($r.State)) - dual-use, verify support expectation" 'T1219'
         if ($raSvcSeen.Count -gt 10) { break }
     }
-    foreach ($r in (Import-CaseCsv 'remote_access')) {
+    $raRows = @(Import-CaseCsv 'remote_access'); $raIn += $raRows.Count
+    foreach ($r in $raRows) {
         if ("$($r.Type)" -eq 'RA tool service' -or "$($r.Type)" -eq 'RA tool data dir') {
             $key = "$($r.Name)".ToLower()
             if (-not $raSvcSeen.ContainsKey($key)) {
@@ -8716,16 +8824,19 @@ function New-HuntFindings {
             & $find 'SSH authorized_keys present' 'high' "$($r.Path)" "$($r.Name) is $($r.State) - planted SSH trust anchor ($($r.Detail))" 'T1098.004'
         }
     }
+    & $trace 'R23-26' 'remote-access pack (tunnels/RA tools/RDP/SSH)' "6 sources: $raIn rows scanned"
 
     # ---------- R27: svchost masquerade (module 1.7 audit xref) ----------
     $svchN = 0
-    foreach ($r in (Import-CaseCsv 'svchost_audit')) {
+    $r27In = @(Import-CaseCsv 'svchost_audit')
+    foreach ($r in $r27In) {
         $sev = if ("$($r.Type)" -match 'UnregisteredGroup|OutOfPathServiceDll') { 'high' } else { 'medium' }
         $ent = if ("$($r.Path)") { "$($r.Path)" } elseif ("$($r.Service)") { "svchost -k $($r.Group) / $($r.Service)" } else { "svchost -k $($r.Group)" }
         & $find 'Svchost masquerade indicator' $sev $ent "$($r.Type): $($r.Detail)" 'T1036.005'
         $svchN++
         if ($svchN -ge 20) { break }
     }
+    & $trace 'R27' 'svchost masquerade (1.7 audit xref)' "svchost_audit: $($r27In.Count) rows"
 
     # ---------- R28: cross-process injection (Sysmon EID 8 CreateRemoteThread) ----------
     # v2.76 severity ladder (first match wins): target '<unknown process>' -> low;
@@ -8733,7 +8844,8 @@ function New-HuntFindings {
     # e.g. dwm -> csrss); target lsass OR source/target in a user-writable path -> high;
     # any other cross-boundary pair -> medium. One finding per source->target pair.
     $r28Seen = @{}
-    foreach ($r in (Import-CaseCsv 'sysmon_remote_thread')) {
+    $r28In = @(Import-CaseCsv 'sysmon_remote_thread')
+    foreach ($r in $r28In) {
         $src = "$($r.SourceImage)"; $tgt = "$($r.TargetImage)"
         if (-not $src -or -not $tgt) { continue }
         if ($src.ToLower() -eq $tgt.ToLower()) { continue }
@@ -8761,13 +8873,15 @@ function New-HuntFindings {
         }
         & $find 'Cross-process injection (remote thread)' $sev "$src -> $tgt" $ev 'T1055'
     }
+    & $trace 'R28' 'cross-process injection (Sysmon EID 8)' "sysmon_remote_thread: $($r28In.Count) rows"
 
     # ---------- R29: C2-style named pipes (Sysmon EID 17/18) ----------
     # Known C2 pipe families = high; any pipe created by a process in a user-writable path = medium.
     # (Sysmon logs PipeName without the \\.\pipe\ prefix; families match anywhere in the name)
     $r29Seen = @{}
     $c2PipePat = '(?i)msagent_[0-9a-f]|mssecsms|pipy_[0-9a-f]|postex_[0-9a-f]|status_[0-9a-f]{4}'
-    foreach ($r in (Import-CaseCsv 'sysmon_pipes')) {
+    $r29In = @(Import-CaseCsv 'sysmon_pipes')
+    foreach ($r in $r29In) {
         $pipe = "$($r.PipeName)"
         if (-not $pipe) { continue }
         $verb = 'seen'
@@ -8788,20 +8902,24 @@ function New-HuntFindings {
             & $find 'Named pipe created from user-writable path' 'medium' $pipe "pipe '$pipe' created by $($r.Image) - review (C2 channels and stagers often live here)" 'T1095'
         }
     }
+    & $trace 'R29' 'C2-style named pipes (Sysmon EID 17/18)' "sysmon_pipes: $($r29In.Count) rows"
 
     # ---------- R30: process image tampering (Sysmon EID 25 - hollowing / herpaderp) ----------
     # Sysmon fires this itself on an in-memory image swap: near-zero FP, no heuristics.
     $r30N = 0
-    foreach ($r in (Import-CaseCsv 'sysmon_proc_tamper')) {
+    $r30In = @(Import-CaseCsv 'sysmon_proc_tamper')
+    foreach ($r in $r30In) {
         $r30N++
         & $find 'Process image tampering (hollowing)' 'high' "$($r.Image)" "Sysmon EID 25 at $($r.Time): image of $(& { param($i) try { Split-Path $i -Leaf } catch { $i } } $r.Image) (pid $($r.ProcessId)) was swapped in memory$(if ("$($r.Type)") { " (type $($r.Type))" }) - classic hollowing/herpaderp" 'T1055.012'
         if ($r30N -ge 20) { break }
     }
+    & $trace 'R30' 'process image tampering (Sysmon EID 25)' "sysmon_proc_tamper: $($r30In.Count) rows"
 
     # ---------- R31: direct volume access (Sysmon EID 9 RawAccessRead) ----------
     # Raw \\.\ reads bypass file auditing: locked-hive credential theft (SAM/NTDS) or anti-forensics.
     $r31Seen = @{}
-    foreach ($r in (Import-CaseCsv 'sysmon_raw_access')) {
+    $r31In = @(Import-CaseCsv 'sysmon_raw_access')
+    foreach ($r in $r31In) {
         $img = "$($r.Image)"
         if (-not $img) { continue }
         $key = "$img|$($r.Device)".ToLower()
@@ -8814,11 +8932,13 @@ function New-HuntFindings {
             & $find 'Direct volume access (raw \\.\ read)' 'medium' $img "$($r.Time): $img read $($r.Device) raw - verify expectation (backup/AV tools do this legitimately)" 'T1006'
         }
     }
+    & $trace 'R31' 'direct volume access (Sysmon EID 9)' "sysmon_raw_access: $($r31In.Count) rows"
 
     # ---------- R32: WMI permanent event subscription (Sysmon EID 19/20/21) ----------
     # Filter+consumer+binding registration = the classic APT persistence; deduped per name.
     $r32Seen = @{}
-    foreach ($r in (Import-CaseCsv 'sysmon_wmi')) {
+    $r32In = @(Import-CaseCsv 'sysmon_wmi')
+    foreach ($r in $r32In) {
         $nm = if ("$($r.Name)") { "$($r.Name)" } elseif ("$($r.Consumer)") { "$($r.Consumer)" } else { "$($r.Filter)" }
         if (-not $nm) { continue }
         $key = $nm.ToLower()
@@ -8830,25 +8950,32 @@ function New-HuntFindings {
         if ("$($r.Destination)") { $detail += " | consumer dest: $($r.Destination)" }
         & $find 'WMI event subscription persistence' 'high' $nm "$detail - verify the consumer payload (legit software uses this rarely)" 'T1546.003'
     }
+    & $trace 'R32' 'WMI event subscription (Sysmon EID 19/20/21)' "sysmon_wmi: $($r32In.Count) rows"
 
     # ---------- R33: Sysmon configuration change (EID 16 - cannot be filtered) ----------
     # Someone retuning/disabling Sysmon mid-incident is anti-forensics; the raw CSV carries it.
-    foreach ($r in (Import-CaseCsv 'sysmon_events')) {
+    $r33In = @(Import-CaseCsv 'sysmon_events')
+    foreach ($r in $r33In) {
         if ("$($r.Id)" -ne '16') { continue }
         & $find 'Sysmon configuration changed' 'high' 'Sysmon' "$($r.TimeCreated): Sysmon service configuration change observed - anti-forensics tell (T1562.001); compare the copied config snapshot in raw\context with the endpoint's expectations" 'T1562.001'
         break
     }
+    & $trace 'R33' 'Sysmon configuration change (EID 16)' "sysmon_events: $($r33In.Count) rows"
 
     # ---------- R34: alternate data streams on executables (v2.62 - stager/stash spot) ----------
     # Non-Zone.Identifier ADS on a PE = payload riding next to a signed binary; inspect with dir /r.
-    foreach ($r in (Import-CaseCsv 'ads_findings')) {
+    $r34In = @(Import-CaseCsv 'ads_findings')
+    foreach ($r in $r34In) {
         & $find 'ADS on executable file' 'medium' "$($r.Path)" "non-Zone.Identifier alternate data stream '$($r.Stream)' ($($r.Length) bytes) on an executable - inspect with dir /r (T1564.004)" 'T1564.004'
     }
+    & $trace 'R34' 'ADS on executables' "ads_findings: $($r34In.Count) rows"
 
     # ---------- R35: webshell content heuristics (v2.62 - report-only medium, verify vs baseline) ----------
-    foreach ($r in (Import-CaseCsv 'webshell_candidates')) {
+    $r35In = @(Import-CaseCsv 'webshell_candidates')
+    foreach ($r in $r35In) {
         & $find 'Webshell content heuristics' 'medium' (Split-Path "$($r.Path)" -Leaf) "$($r.Path) modified $($r.Modified) matches webshell heuristics ($($r.Matches)) - verify against the source-control/deployment baseline" 'T1505.003'
     }
+    & $trace 'R35' 'webshell content heuristics' "webshell_candidates: $($r35In.Count) rows"
 
     Save-Rows -Name 'hunt_findings' -Rows $out.ToArray()
     $hi = @($out | Where-Object { $_.Severity -eq 'high' }).Count
@@ -9071,8 +9198,22 @@ function Get-CompromiseVerdict {
     $levelNames = @{ 4 = 'COMPROMISED'; 3 = 'LIKELY COMPROMISED'; 2 = 'SUSPICIOUS'; 1 = 'NO EVIDENCE OF COMPROMISE'; 0 = 'INCONCLUSIVE' }
 
     $signals = New-Object System.Collections.Generic.List[object]
+    # v2.79 trace: one line per signal added / coverage category missing - the case log ALWAYS
+    # carries them, the console shows them at -LogLevel Verbose only. Quiet path writes the log
+    # directly instead of Write-CaseLog -NoConsole: harnesses stub Write-CaseLog without that
+    # switch. Controller-side only (Invoke-RegenerateOutputs), so $CaseLog exists.
+    $logQ = {
+        param([string]$Msg)
+        if ($script:Verbosity -ge 2) { Write-CaseLog $Msg 'DarkGray' }
+        else { try { Add-Content -LiteralPath $CaseLog -Value ("[{0}] {1}" -f (Get-Date -Format 'HH:mm:ss'), $Msg) -Encoding UTF8 } catch { } }
+    }
     function Add-Signal([string]$name, [int]$floor, [int]$count, [string]$detail) {
-        if ($count -gt 0) { $signals.Add([pscustomobject]@{ Signal = $name; Weight = $floor; Count = $count; Detail = $detail }) }
+        if ($count -gt 0) {
+            $signals.Add([pscustomobject]@{ Signal = $name; Weight = $floor; Count = $count; Detail = $detail })
+            $vMsg = "verdict signal: $name (floor $floor x $count) - $("$detail" -replace '\s+', ' ')".Trim()
+            if ($vMsg.Length -gt 180) { $vMsg = $vMsg.Substring(0, 177) + '...' }
+            & $logQ $vMsg
+        }
     }
 
     # v2.41 FP fix: Defender-channel sigma rows are excluded here - they are already covered
@@ -9245,6 +9386,7 @@ function Get-CompromiseVerdict {
     $cov = New-Object System.Collections.Generic.List[object]
     function Add-Cov([string]$name, [bool]$present, [int]$weight) {
         $cov.Add([pscustomobject]@{ Source = $name; Collected = $present; Weight = $weight })
+        if (-not $present) { & $logQ "verdict coverage miss: $name (weight $weight)" }
     }
     $evtxDir = Join-Path $RawDir 'evtx'
     Add-Cov 'Volatile process inventory' (Test-CaseCsv 'flash_process_scored') 12
@@ -9622,6 +9764,38 @@ function Invoke-RegenerateOutputs {
     # Shared by New-Package and -Mode Parse: rebuilds every derived artifact from csv\
     # (supertimeline, gaps, parse_needed, verdict.json, SIEM export, ATT&CK layer, report.html).
     param([pscustomobject]$Case)
+    # v2.79 regen step summary: every derived-artifact producer is timed; its Save-Rows outputs
+    # (delta of $script:SavedArtifacts) or a step-set note become one RUN-detail-shaped line in
+    # the end-of-run summary block. Steps set $rgInfo['note'] for non-Save-Rows outputs.
+    $rgSteps = New-Object System.Collections.Generic.List[object]
+    $rgStart = Get-Date
+    $rgStep = {
+        param([string]$Name, [string]$Producer, [scriptblock]$Sb)
+        $rgInfo = @{}
+        $rgBefore = 0
+        if ($null -ne $script:SavedArtifacts) { $rgBefore = $script:SavedArtifacts.Count }
+        $rgSw = [System.Diagnostics.Stopwatch]::StartNew()
+        try { & $Sb } catch { $rgInfo['note'] = 'FAILED'; Write-CaseLog "    $Name failed: $($_.Exception.Message)" 'DarkYellow' }
+        $rgSw.Stop()
+        if (-not $rgInfo['note']) {
+            $rgSaved = @()
+            if ($null -ne $script:SavedArtifacts) {
+                for ($rgI = $rgBefore; $rgI -lt $script:SavedArtifacts.Count; $rgI++) { $rgSaved += $script:SavedArtifacts[$rgI] }
+            }
+            if ($rgSaved.Count -eq 1) {
+                $rgOne = $rgSaved[0]
+                $rgInfo['note'] = if ((ConvertTo-SafeInt "$($rgOne.Rows)") -lt 0) { "$($rgOne.Path) FAILED" } else { "$($rgOne.Path) $($rgOne.Rows) rows" }
+            } elseif ($rgSaved.Count -gt 1) {
+                $rgRows = 0; $rgBad = 0
+                foreach ($rgS in $rgSaved) { if ((ConvertTo-SafeInt "$($rgS.Rows)") -lt 0) { $rgBad++ } else { $rgRows += (ConvertTo-SafeInt "$($rgS.Rows)") } }
+                $rgInfo['note'] = "$($rgSaved.Count) csv, $rgRows rows$(if ($rgBad -gt 0) { ", $rgBad FAILED" })"
+            } else {
+                $rgInfo['note'] = '(no csv)'
+            }
+        }
+        $rgSteps.Add([pscustomobject]@{ Name = $Name; Producer = $Producer; Note = "$($rgInfo['note'])"; Seconds = $rgSw.Elapsed.TotalSeconds })
+    }
+
     # v2.58: remove v2.53-era SBECmd orphan strays - the old module 8.8 leaked per-hive
     # outputs (e.g. Aryan_NTUSER.csv, 0_Aryan_Aryan_UsrClass.csv) into the csv root, and
     # cases collected before the v2.54 fix keep carrying them as nameless 0-row unknowns
@@ -9652,21 +9826,21 @@ function Invoke-RegenerateOutputs {
             Write-CaseLog "    sortment: moved $($loose.Name) -> csv\$($rel.Substring(0, $rel.IndexOf('\')))\" 'DarkGray'
         } catch { Write-CaseLog "    sortment: could not move $($loose.Name) ($($_.Exception.Message)) - left flat in csv root" 'DarkYellow' }
     }
-    try { New-SuperTimeline } catch { Write-CaseLog "    supertimeline failed: $($_.Exception.Message)" 'DarkYellow' }
+    & $rgStep 'supertimeline' 'New-SuperTimeline' { New-SuperTimeline }
     # v2.57: merge an analyst-dropped plaso deep-timeline (plaso.csv in the case root)
-    try {
+    & $rgStep 'plaso import' 'Import-PlasoTimeline' {
         $plasoN = Import-PlasoTimeline (Split-Path -Parent $script:CsvDir)
-        if ($plasoN -ge 0) { Write-CaseLog "    plaso import: $plasoN row(s) merged into the master timeline (Source 'plaso')" 'Cyan' }
-    } catch { Write-CaseLog "    plaso import failed: $($_.Exception.Message)" 'DarkYellow' }
-    try { New-SigmaRuleLogs } catch { Write-CaseLog "    sigma rule logs failed: $($_.Exception.Message)" 'DarkYellow' }
-    try { New-HuntFindings } catch { Write-CaseLog "    hunt findings failed: $($_.Exception.Message)" 'DarkYellow' }
-    try { New-IocHits } catch { Write-CaseLog "    IOC xref failed: $($_.Exception.Message)" 'DarkYellow' }
-    try { New-CaseIocExport } catch { Write-CaseLog "    IOC export failed: $($_.Exception.Message)" 'DarkYellow' }
-    try { New-EntityCorrelation } catch { Write-CaseLog "    entity correlation failed: $($_.Exception.Message)" 'DarkYellow' }
-    try { New-SessionAttribution } catch { Write-CaseLog "    session attribution failed: $($_.Exception.Message)" 'DarkYellow' }
-    try { New-ProcessChains } catch { Write-CaseLog "    process lineage failed: $($_.Exception.Message)" 'DarkYellow' }
-    try { New-LoggingGaps } catch { Write-CaseLog "    logging gaps failed: $($_.Exception.Message)" 'DarkYellow' }
-    try { Get-ParseNeeds } catch { Write-CaseLog "    parse-needed check failed: $($_.Exception.Message)" 'DarkYellow' }
+        if ($plasoN -ge 0) { $rgInfo['note'] = "$plasoN row(s) merged"; Write-CaseLog "    plaso import: $plasoN row(s) merged into the master timeline (Source 'plaso')" 'Cyan' }
+    }
+    & $rgStep 'sigma rule logs' 'New-SigmaRuleLogs' { New-SigmaRuleLogs }
+    & $rgStep 'hunt findings' 'New-HuntFindings' { New-HuntFindings }
+    & $rgStep 'IOC xref' 'New-IocHits' { New-IocHits }
+    & $rgStep 'IOC export' 'New-CaseIocExport' { New-CaseIocExport }
+    & $rgStep 'entity correlation' 'New-EntityCorrelation' { New-EntityCorrelation }
+    & $rgStep 'session attribution' 'New-SessionAttribution' { New-SessionAttribution }
+    & $rgStep 'process lineage' 'New-ProcessChains' { New-ProcessChains }
+    & $rgStep 'logging gaps' 'New-LoggingGaps' { New-LoggingGaps }
+    & $rgStep 'parse-needed' 'Get-ParseNeeds' { Get-ParseNeeds }
     # v2.58: evidence-based 4688 check - the Security log is readable but zero 4688 rows were
     # parsed, so process-creation auditing is disabled. WARN posture row + hardening rec ONLY -
     # deliberately NOT a verdict weight (a missing log is a hardening gap, not compromise evidence).
@@ -9684,7 +9858,7 @@ function Invoke-RegenerateOutputs {
         }
     } catch { }
     $script:Verdict = $null
-    try {
+    & $rgStep 'verdict' 'Get-CompromiseVerdict' {
         $script:Verdict = Get-CompromiseVerdict
         if ($script:Verdict) {
             $script:Verdict | ConvertTo-Json -Depth 5 | Set-Content -LiteralPath (Join-Path $CaseDir 'verdict.json') -Encoding UTF8
@@ -9698,8 +9872,9 @@ function Invoke-RegenerateOutputs {
             }
             $vColor = switch ($script:Verdict.LevelRank) { 4 { 'Red' } 3 { 'Red' } 2 { 'Yellow' } 1 { 'Green' } default { 'DarkYellow' } }
             Write-CaseLog "    VERDICT: $($script:Verdict.Level) (evidence coverage $($script:Verdict.ConfidencePercent)%, $($script:Verdict.CoverageSourcesCollected)/$($script:Verdict.CoverageSourcesTotal) sources) - $($script:Verdict.Signals.Count) signal(s), $($script:Verdict.Caveats.Count) caveat(s) -> verdict.json" $vColor
+            $rgInfo['note'] = "verdict.json - $($script:Verdict.Level)"
         }
-    } catch { Write-CaseLog "    verdict engine failed: $($_.Exception.Message)" 'DarkYellow' }
+    }
     # v2.45 auto-correlation: when the scoring calls a process malicious (HIGH) - or a YARA-high
     # / live IOC fires - the focus dossier builds itself so the case ships with the "everything
     # it did" story pre-assembled. Skipped when the analyst already focused something manually
@@ -9761,16 +9936,31 @@ function Invoke-RegenerateOutputs {
     # renders these rows and the draft's BEST LEADS projects the same list (one builder,
     # one ranking). Empty result -> no file (v2.75 fix: a stale ranking from a previous
     # parse is deleted so it can't keep serving), both consumers degrade gracefully.
-    try {
+    & $rgStep 'triage leads' 'Get-TriageLeads' {
         $leadExport = @(Get-TriageLeads)
         $leadP = Get-CaseCsvFullPath 'leads'
         if ($leadExport.Count -gt 0) { $leadExport | Export-Csv -LiteralPath $leadP -NoTypeInformation -Encoding UTF8 }
         elseif (Test-Path -LiteralPath $leadP) { Remove-Item -LiteralPath $leadP -Force; Write-CaseLog "    leads: stale ranking removed - this parse ranked zero leads" 'DarkYellow' }
-    } catch { Write-CaseLog "    lead export failed: $($_.Exception.Message)" 'DarkYellow' }
-    try { Get-CaseNarrative | Set-Content -LiteralPath (Join-Path $CaseDir 'case_draft.txt') -Encoding UTF8 } catch { Write-CaseLog "    case draft failed: $($_.Exception.Message)" 'DarkYellow' }
-    try { New-SiemExport } catch { Write-CaseLog "    siem export failed: $($_.Exception.Message)" 'DarkYellow' }
-    try { New-AttackLayer } catch { Write-CaseLog "    ATT&CK layer failed: $($_.Exception.Message)" 'DarkYellow' }
-    try { New-HtmlReport | Out-Null } catch { Write-CaseLog "    report generation failed: $($_.Exception.Message)" 'DarkYellow' }
+        $rgInfo['note'] = "$($leadExport.Count) lead(s) -> csv\$(Get-CaseCsvPath 'leads')"
+    }
+    & $rgStep 'case draft' 'Get-CaseNarrative' {
+        Get-CaseNarrative | Set-Content -LiteralPath (Join-Path $CaseDir 'case_draft.txt') -Encoding UTF8
+        $rgInfo['note'] = 'case_draft.txt'
+    }
+    & $rgStep 'siem export' 'New-SiemExport' {
+        New-SiemExport
+        $p = Join-Path $CaseDir 'siem_export.ndjson'
+        $rgInfo['note'] = if ((Test-Path -LiteralPath $p) -and ((Get-Item -LiteralPath $p -ErrorAction SilentlyContinue).LastWriteTime -ge $rgStart)) { 'siem_export.ndjson' } else { '(no records)' }
+    }
+    & $rgStep 'ATT&CK layer' 'New-AttackLayer' {
+        New-AttackLayer
+        $p = Join-Path $CaseDir 'attack_layer.json'
+        $rgInfo['note'] = if ((Test-Path -LiteralPath $p) -and ((Get-Item -LiteralPath $p -ErrorAction SilentlyContinue).LastWriteTime -ge $rgStart)) { 'attack_layer.json' } else { '(no techniques)' }
+    }
+    & $rgStep 'report' 'New-HtmlReport' {
+        New-HtmlReport | Out-Null
+        $rgInfo['note'] = 'report.html'
+    }
     # v2.74 (Task 15): analyst-first entry point - one plain-language file at the case root
     # saying what the verdict is, what the folders mean and which files to open first.
     # Rebuilt on every regen (idempotent overwrite); the top-file list is existence-checked
@@ -9819,6 +10009,21 @@ function Invoke-RegenerateOutputs {
         $shL.Add("Everything else: collection.log (what ran) and csv\parse_needed.csv (what still needs the endpoint). Generated by Ophira v$ScriptVersion.")
         $shL.ToArray() | Set-Content -LiteralPath (Join-Path $CaseDir 'ANALYST-START-HERE.txt') -Encoding UTF8
     } catch { Write-CaseLog "    analyst start-here failed: $($_.Exception.Message)" 'DarkYellow' }
+    # v2.79: end-of-run summary block - one RUN-detail-shaped line per derived artifact:
+    # step name, producer function, output note (Save-Rows delta or step-set), elapsed.
+    # Console-visible at Normal (it IS the parse run feedback, like the per-module lines);
+    # the case log always carries it.
+    if ($rgSteps.Count -gt 0) {
+        $rgTotal = 0
+        foreach ($rgS in $rgSteps) { $rgTotal += $rgS.Seconds }
+        Write-CaseLog ("  regen summary: {0} steps in {1:N1}s" -f $rgSteps.Count, $rgTotal) 'Cyan'
+        foreach ($rgS in $rgSteps) {
+            $rgNm = "$($rgS.Name)"
+            if ($rgNm.Length -gt 24) { $rgNm = $rgNm.Substring(0, 21) + '...' }
+            $rgDots = '.' * [math]::Max(1, 26 - $rgNm.Length)
+            Write-CaseLog ("    [regen] {0} {1} {2} -> {3} in {4:N1}s" -f $rgNm, $rgDots, $rgS.Producer, $rgS.Note, $rgS.Seconds) $(if ($rgS.Note -eq 'FAILED') { 'DarkYellow' } else { 'DarkGray' })
+        }
+    }
 }
 
 function New-Package {

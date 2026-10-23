@@ -24,7 +24,7 @@ Check "removal: setup inventory no longer mentions the config" ($src -notmatch '
 Check "sortment: ioc_hits_hash + ioc_export mapped to derived" (($src -match [regex]::Escape("'ioc_hits_hash' = 'derived'")) -and ($src -match [regex]::Escape("'ioc_export' = 'derived'")))
 Check "evidence index: entries for ioc_hits_hash + ioc_export" (($src -match [regex]::Escape("'ioc_hits_hash'                   =")) -and ($src -match [regex]::Escape("'ioc_export'                      =")))
 Check "verdict: known-bad-hash-in-execution-history signal (floor 2)" ($src -match "Add-Signal 'IOC hit - known-bad binary hash in execution history' 2")
-Check "regen: New-CaseIocExport runs in the shared pipeline" ($src -match 'try \{ New-CaseIocExport \}')
+Check "regen: New-CaseIocExport runs in the shared pipeline" ($src -match '\{ New-CaseIocExport \}') # v2.79: producers moved into $rgStep scriptblocks
 Check "report: defanged block gains hash hits + fleet-memory pointer" (($src -match [regex]::Escape("Import-CaseCsv 'ioc_hits_hash'")) -and ($src -match 'Fleet memory:'))
 Check "focus: uncapped DOT export wired" ($src -match [regex]::Escape('focus_graph.dot'))
 

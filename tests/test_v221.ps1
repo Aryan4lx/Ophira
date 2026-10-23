@@ -196,7 +196,7 @@ Remove-Item -LiteralPath $logDir -Recurse -Force -ErrorAction SilentlyContinue
 # ============================================================================
 Check "compat: no PS3+ operators or PS5 ::new in source" ($src -notmatch ' -in @' -and $src -notmatch ' -notin ' -and $src -notmatch '::new\(')
 Check "whitelist: Get-IisW3cRows in SharedFunctions" ($src -match "'Get-IisW3cRows'")
-Check "regen: hunt runs BEFORE entity correlation (hunt category fresh in one pass)" ([regex]::Match($src, "try \{ New-HuntFindings \}[\s\S]*?try \{ New-EntityCorrelation \}").Success)
+Check "regen: hunt runs BEFORE entity correlation (hunt category fresh in one pass)" ([regex]::Match($src, "\{ New-HuntFindings \}[\s\S]*?\{ New-EntityCorrelation \}").Success) # v2.79: producers moved into $rgStep scriptblocks - ordering pin kept
 Check "regen: session attribution + lineage called" ($src -match 'New-SessionAttribution' -and $src -match 'New-ProcessChains')
 Check "case.json records Role" ($src -match 'Role = \$script:HostRole')
 Check "fleet: Role column in fleet_hosts" ($src -match 'Select-Object Host, Verdict, VerdictRank, Confidence, Role,')

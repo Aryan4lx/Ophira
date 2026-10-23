@@ -132,6 +132,22 @@ Every collection ends with `Get-CompromiseVerdict` correlating all findings into
 
 Verdicts are correlation heuristics over collected evidence — verify against raw CSV/evtx before acting.
 
+## Debugging a suspicious number (v2.79)
+
+Every report claim is backed by a CSV, a producer function and a line in the case's `collection.log` (console at `-LogLevel Verbose` for the chatty traces; Quiet still logs everything):
+
+| Report claim | Backing CSV | Producer | Log line to grep |
+|---|---|---|---|
+| Verdict rank + signals | `verdict.json` (`Signals[]`) | `Get-CompromiseVerdict` | `verdict signal: <name> (floor W x N)` |
+| Coverage % | `verdict.json` (`Coverage[]`) | `Get-CompromiseVerdict` | `verdict coverage miss: <source> (weight W)` |
+| Hunt findings (R1-R35) | `csv\hunt_findings.csv` | `New-HuntFindings` | `R13 discovery command storm: 2 accounts x 22 cmds -> 1 finding` (per-rule in/out counts; skipped rules log their gate) |
+| Sigma detections | `csv\hayabusa_timeline.csv` + `csv\sigma_rules\index.csv` | `New-SigmaRuleLogs` | `sigma rule logs: N rule(s)` |
+| Process verdicts | `csv\flash_process_scored.csv` | flash scoring (module 1.2) | `saved N rows -> csv\volatile\...` |
+| Leads | `csv\derived\leads.csv` | `Get-TriageLeads` | `[regen] triage leads ... Get-TriageLeads -> N lead(s)` |
+| What ran during a parse | every derived artifact | `Invoke-RegenerateOutputs` | end-of-run `regen summary:` block, one `[regen] <step> ... <producer> -> <output> in X.Xs` line each |
+
+A `0 rows` input on a rule trace means the source CSV was empty or absent — the technique did not "pass", it was blind. Same honesty rule as the report's evidence index.
+
 ## Delta collection (pseudo-monitoring)
 
 Run Ophira again on the same box days later: it auto-finds the previous case, compares flagged processes / tasks / services / autoruns / Sigma alerts, and reports **only what's NEW** — in the console, the report ("NEW since previous collection"), the SIEM export, and the SimpleUI owner screen. Point-in-time triage becomes a lightweight watch without installing anything.
@@ -308,6 +324,7 @@ while ($true) { try { (New-Object Net.Sockets.TcpClient('1.1.1.1', 443)).Close()
 - [x] **Hunt finding precision**: the four over-eager hunt rules that produced 44 of 47 findings on the real case now read the evidence honestly - R4 download-exec matches by full path + Authenticode signature (a signed installer in Downloads is medium, never the top lead), R15 skips copy/extract images (explorer/7z/winrar/msiexec...), R22 keys by full path and splits into future-birth / benign-archive-skew / predates-birth, R28 ranks injection (protected pair low, LSASS/user-path high), R13 demotes discovery storms (Ophira's own collection commands were the "storm"); the hunt table shows high+medium up front with low/info collapsed - 47 findings became 3 high + 1 medium + 19 collapsed with the verdict stable and the real renamed LOLBin leading (v2.76)
 - [x] **Truth and scanability**: the banner answers with both numbers (`80% weighted (23/29 sources, 6 missing)`), the coverage table's `Weight` becomes `Importance`, and the header states its provenance (`Collected by Ophira v2.66 | Rendered by Ophira v2.77 | Preset | Window` from case.json, folder-name fallback for empty CaseID); signals sort weight-first with plain-language rank labels (`near-certain/strong/corroborating/context` replace `[w1]`-`[w4]` chips), the hunt signal says `N rules / M findings`, and leading locale stamps in hunt evidence normalize to the `yyyy-MM-dd HH:mm` UTC dialect (command lines untouched) (v2.77)
 - [x] **Navigation polish**: the jump nav shows per-section row counts or `(none)` (from reads hoisted to the report top - net zero new IO), the embedded case draft collapses into a `<details>` (txt still ships, printing auto-expands), the Processes heading says `showing 30 of N` when truncated, and the banner "Do now" links to the full Recommendations section (v2.78)
+- [x] **Tool debuggability**: one trace line per hunt rule (input rows in -> findings out with severity split + gate decisions) and per verdict signal/coverage-miss in `collection.log`; `-Mode Parse` ends with a 17-step `[regen]` summary (producer -> output -> rows -> seconds); `-Mode Help` + README carry a "DEBUGGING A SUSPICIOUS NUMBER" cookbook (claim -> CSV -> producer -> log line); zero behavior change to any finding, verdict or coverage output (v2.79)
 
 
 - [ ] Offline/mounted-image triage

@@ -992,7 +992,7 @@ Check "t14 static: usn_write_bursts mapped (was flat since v2.42)" ($src -match 
 Check "t14 static: Get-CaseCsvPath wildcard scan present" ($src -match [regex]::Escape('foreach ($k in ($script:CsvCatMap.Keys | Sort-Object))'))
 $mRe74 = [regex]::Match($src, "(?s)function Invoke-RegenerateOutputs \{.*?\r?\n\}")
 if (-not $mRe74.Success) { throw 'extract failed: Invoke-RegenerateOutputs (v2.74)' }
-Check "t14 static: sweep runs before New-SuperTimeline in regen" ($mRe74.Value.IndexOf('sortment completion sweep') -lt $mRe74.Value.IndexOf('try { New-SuperTimeline }'))
+Check "t14 static: sweep runs before New-SuperTimeline in regen" ($mRe74.Value.IndexOf('sortment completion sweep') -lt $mRe74.Value.IndexOf('{ New-SuperTimeline }')) # v2.79: producers moved into $rgStep scriptblocks
 $mMap74 = [regex]::Match($src, "(?s)\`$script:CsvCatMap = @\{.*?\r?\n\}")
 if (-not $mMap74.Success) { throw 'extract failed: CsvCatMap' }
 Invoke-Expression $mMap74.Value

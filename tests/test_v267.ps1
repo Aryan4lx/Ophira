@@ -172,6 +172,7 @@ Check "Floor: nested Add-Signal extractable" $mAS.Success
 if ($mAS.Success) {
     Check "Floor: Add-Signal stamps the floor as the Weight property" ($mAS.Value.Contains('Weight = $floor'))
     $signals = New-Object System.Collections.Generic.List[object]
+    $logQ = { param([string]$Msg) } # v2.79: Add-Signal's trace collaborator (no-op here)
     Invoke-Expression $mAS.Value
     Add-Signal 'Unit test signal' 3 2 'evidence detail'
     $vj = [pscustomobject]@{ Level = 'LIKELY COMPROMISED'; LevelRank = 3; Signals = $signals.ToArray() } | ConvertTo-Json -Depth 5
@@ -228,7 +229,9 @@ if ($lines4.Count -ge 6100) {
     # rounded banner percent added ~20 more upstream lines - same report region)
     # window shifted 6041..6620 -> 6127..6706 (v2.78 nav row counts: the counted-nav build +
     # hoisted reads added ~86 lines upstream of the processes top-30 sort - same report region)
-    $region4 = ($lines4[6127..6706] -join "`n")
+    # window shifted 6127..6706 -> 6160..6739 (v2.79 cookbook in the help .NOTES added 33 lines
+    # above [CmdletBinding()] - same report region)
+    $region4 = ($lines4[6160..6739] -join "`n")
     Check "B5: no bare [int]quoted casts left in the report region" (-not $region4.Contains('[int]"$('))
     Check "B5: no bare [double]quoted casts left in the report region" (-not $region4.Contains('[double]"$('))
     Check "B5: no bare [long]quoted casts left in the report region" (-not $region4.Contains('[long]"$('))
