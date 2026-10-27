@@ -38,6 +38,9 @@ Check "garbage file -> no crash (rows or @(), never throws)" $noCrash
 # ---- behavioral: the weave picks up SRUM usage and skips zero-traffic rows ----
 $m = [regex]::Match($src, "(?s)function New-SuperTimeline \{.*?\r?\n\}")
 if (-not $m.Success) { throw 'New-SuperTimeline extract failed' }
+$mGid = [regex]::Match($src, "(?s)function Get-InvariantDate \{.*?\r?\n\}")
+if (-not $mGid.Success) { throw 'Get-InvariantDate extract failed' }
+Invoke-Expression $mGid.Value
 Invoke-Expression $m.Value
 $fixtureRows = @{
     'srum_usage' = @(

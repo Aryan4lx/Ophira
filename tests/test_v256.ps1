@@ -19,7 +19,7 @@ Assert-Has '$chainParent[(Split-Path "$($i.Image)" -Leaf).ToLower()]' '9b focus 
 # ---- Task 10: clickable local file links ----
 Assert-Has 'function ConvertTo-CaseFileLink' '10a file-link helper exists'
 Assert-Has 'ConvertTo-CaseFileLink $f.FullName $evLbl' '10b evidence index rows link'
-Assert-Has "ConvertTo-CaseFileLink (Join-Path `$caseRoot 'supertimeline.csv') 'supertimeline.csv'" '10b also-in-case links'
+Assert-Has 'ConvertTo-CaseFileLink (Join-Path $CsvDir (Get-CaseCsvPath ''supertimeline'')) "csv\$(Get-CaseCsvPath ''supertimeline'')"' '10b also-in-case links'
 Assert-Has "ConvertTo-CaseFileLink (Join-Path `$focusDirP 'focus_report.html') 'focus\focus_report.html'" '10b focus dossier links'
 Assert-Has "ConvertTo-CaseFileLink (Join-Path `$CsvDir (Get-CaseCsvPath 'supertimeline'))" '10b context-window link'
 

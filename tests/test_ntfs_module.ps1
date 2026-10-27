@@ -33,14 +33,18 @@ function Invoke-NativeTool {
     $outDir = $ToolArgs[([array]::IndexOf($ToolArgs, '--csv')) + 1]
     if ("$($ToolArgs[1])" -match 'MFT$') {
         # MFTECmd $MFT output fixture (standard CSV columns)
+        # recency-dated rows must be RELATIVE to run time: module 5.5 keeps only
+        # files created within the last 30 days (rolling cutoff), so hardcoded
+        # stamps age out of the window and time-bomb the test (v2.62 lesson).
+        $recentSys = [datetime]::Now.AddDays(-2).ToString('yyyy-MM-dd HH:mm:ss.ffffff')
         @'
 "EntryNumber","FileName","Extension","FileSize","ParentPath","IsDirectory","Created","LastModified"
 "1000","evil.exe",".exe","204800","C:\Users\u\AppData\Roaming","false","2026-08-01 10:00:00.0000000","2026-08-01 10:00:00.0000000"
-"1001","svchost.exe",".exe","48000","C:\Windows\System32","false","2026-09-24 10:00:00.0000000","2026-09-24 10:00:00.0000000"
+"1001","svchost.exe",".exe","48000","C:\Windows\System32","false","{0}","{0}"
 "1002","notes.txt",".txt","50","C:\Users\u\Desktop","false","2026-09-20 10:00:00.0000000","2026-09-20 10:00:00.0000000"
 "1003","old_thing.dll",".dll","1000","C:\Program Files\Legit","false","2020-01-01 10:00:00.0000000","2020-01-01 10:00:00.0000000"
 "1005","dropped.ps1",".ps1","900","C:\Users\u\AppData\Local\Temp","false","2026-09-25 09:00:00.0000000","2026-09-25 09:00:00.0000000"
-'@ | Set-Content -LiteralPath (Join-Path $outDir 'mft_full.csv') -Encoding UTF8
+'@ -f $recentSys | Set-Content -LiteralPath (Join-Path $outDir 'mft_full.csv') -Encoding UTF8
     } else {
         # USN journal fixture: burst minute + quiet minutes + non-write reasons
         $lines = @('"EntryNumber","Offset","TimeStamp","Reason","SourceFile"')

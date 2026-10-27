@@ -11,7 +11,7 @@ function Check([string]$label, [bool]$ok) {
     else { $script:fail++; Write-Host "  [FAIL] $label" -ForegroundColor Red }
 }
 
-foreach ($n in 'Get-CompromiseVerdict', 'Get-LvlRank') {
+foreach ($n in 'Get-CompromiseVerdict', 'Get-LvlRank', 'Get-InvariantDate', 'Get-SafeRuleKey', 'Get-SafeRuleKeyMap', 'Resolve-SafeRuleKey') {
     $m = [regex]::Match($src, "(?s)function $n \{.*?\r?\n\}")
     if (-not $m.Success) { throw "$n extract failed" }
     Invoke-Expression $m.Value

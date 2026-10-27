@@ -284,14 +284,15 @@ Check "A8-1: MEDIUM-only credential CSV still shows the clean row" (@(Get-Clean 
 $script:fixtureRows = @{ 'credential_sweep' = @([pscustomobject]@{ Item = 'Auto-logon'; Detail = 'cached password: PRESENT'; Risk = 'high' }) }
 Check "A8-1: lowercase 'high' row suppresses the clean row (verdict-aligned ^high$ filter)" (@(Get-Clean 'Credential exposure sweep').Count -eq 0)
 
-# A8-2 log integrity: verdict keys EventId 1102/104 with Meaning clear|stop fallback - same predicate
+# A8-2 log integrity: verdict keys EventId 1102/104 with Meaning 'clear' fallback - same predicate
+# (v2.80: 'stop' dropped - benign 6006 'Event logging STOPPED (shutdown)' is not a tamper event)
 $script:fixtureRows = @{ 'logging_gaps' = @([pscustomobject]@{ Time = '2026-10-14 18:00'; EventId = '1102'; Meaning = 'Security audit log CLEARED'; Source = 'security_events'; Message = '' }) }
 $script:presentCsvs = @('logging_gaps')
 Check "A8-2: gap row EventId 1102 suppresses the Log-integrity clean row" (@(Get-Clean 'Log integrity').Count -eq 0)
 $script:fixtureRows = @{ 'logging_gaps' = @([pscustomobject]@{ Time = ''; EventId = ''; Meaning = 'chronological gaps detected in evtx (see raw\analysis\evtx_gaps.txt)'; Source = 'chainsaw'; Message = '' }) }
 Check "A8-2: plain gap row without tamper evidence keeps the Log-integrity clean row" (@(Get-Clean 'Log integrity').Count -eq 1)
 $script:fixtureRows = @{ 'logging_gaps' = @([pscustomobject]@{ Time = ''; EventId = '6006'; Meaning = 'Event logging STOPPED (shutdown)'; Source = 'system_events'; Message = '' }) }
-Check "A8-2: 6006 stopped row suppresses too (same predicate as the verdict's tamper count)" (@(Get-Clean 'Log integrity').Count -eq 0)
+Check "A8-2: benign 6006 'STOPPED (shutdown)' row keeps the clean row (v2.80: stop is not tamper)" (@(Get-Clean 'Log integrity').Count -eq 1)
 
 # A8-3 beacon: suppressed when BOTH Sysmon and DNS telemetry are absent (presence check, no live-probe)
 $script:fixtureRows = @{}

@@ -1,5 +1,5 @@
 ﻿<#
-Ophira v2.79  -  Windows Incident Response Triage Toolkit
+Ophira v2.80  -  Windows Incident Response Triage Toolkit
 READ-ONLY by design: never modifies the system, only reads and copies data
 into its own output folder. Intended to be handed to a system owner or run
 by a responder during early triage / threat hunting.
@@ -356,7 +356,7 @@ param(
     [switch]$ExitVerdict
 )
 
-$ScriptVersion = "2.79"
+$ScriptVersion = "2.80"
 $ErrorActionPreference = 'Continue'
 $ProgressPreference = 'SilentlyContinue'
 
@@ -678,7 +678,23 @@ function Save-Rows {
     $rel = "$((Get-CaseCsvPath $Name))"
     try {
         if ($Rows -and @($Rows).Count -gt 0) {
-            @($Rows) | Export-Csv -LiteralPath $path -NoTypeInformation -Encoding UTF8
+            # v2.80 (F2): Export-Csv keeps only the FIRST object's properties as the header, so mixed
+            # event-ID lists lose later schemas (4.9: 4769 TicketEnc after a 4768, 5136 ObjectDN after
+            # a 4662). Union schema: every row carries all columns seen on any row, empty when N/A.
+            $all = @($Rows)
+            $cols = New-Object System.Collections.Generic.List[string]
+            $seen = New-Object 'System.Collections.Generic.HashSet[string]' (,[System.StringComparer]::OrdinalIgnoreCase)
+            foreach ($r in $all) {
+                if ($null -eq $r) { continue }
+                foreach ($p in $r.PSObject.Properties) { if ($seen.Add("$($p.Name)")) { $cols.Add("$($p.Name)") } }
+            }
+            foreach ($r in $all) {
+                if ($null -eq $r) { continue }
+                foreach ($c in $cols) {
+                    if ($null -eq $r.PSObject.Properties[$c]) { Add-Member -InputObject $r -NotePropertyName $c -NotePropertyValue '' }
+                }
+            }
+            $all | Export-Csv -LiteralPath $path -NoTypeInformation -Encoding UTF8
             Write-CaseLog ("    saved {0} rows -> csv\{1}" -f @($Rows).Count, $rel) 'DarkGray'
             # v2.69 (F1): feed the RUN detail line (path + real row count; console-only, log keeps its own record)
             # ($null -ne, NOT truthiness - an EMPTY List is falsy in PS and would skip the first save forever)
@@ -735,6 +751,15 @@ function Convert-WmiDate {
     try { return [System.Management.ManagementDateTimeConverter]::ToDateTime("$Value") } catch { return $null }
 }
 
+function Get-InvariantDate {
+    # Culture-invariant datetime parse for persisted CSV values ('02/03/2026' must not flip
+    # meaning with the OS locale); returns [datetime]::MinValue when unparseable so callers
+    # can filter. Shared with pool workers via $script:SharedFunctions.
+    param([object]$Value)
+    if ($Value -is [datetime]) { return $Value }
+    try { return [datetime]::Parse("$Value", [System.Globalization.CultureInfo]::InvariantCulture) } catch { return [datetime]::MinValue }
+}
+
 function Test-IsPublicIp {
     param([string]$IpString)
     $ip = $null
@@ -752,6 +777,7 @@ function Test-IsPublicIp {
     if ($b[0] -eq 172 -and $b[1] -ge 16 -and $b[1] -le 31) { return $false }
     if ($b[0] -eq 192 -and $b[1] -eq 168) { return $false }
     if ($b[0] -eq 169 -and $b[1] -eq 254) { return $false }
+    if ($b[0] -eq 100 -and $b[1] -ge 64 -and $b[1] -le 127) { return $false } # CGNAT 100.64.0.0/10 - ISP carrier NAT (mobile hotspots), not public internet
     if ($b[0] -ge 224) { return $false }
     return $true
 }
@@ -2355,7 +2381,7 @@ function Test-WebshellContent {
 $script:SharedFunctions = @(
     'Get-KitRoot', 'Get-ToolsDir', 'Copy-LockedFile', 'Get-LogStart', 'Get-IocList', 'Test-TrustedPublisher',
     'Get-CaseCsvPath', 'Test-CaseCsv', 'Get-CaseCsvFullPath',
-    'Save-Rows', 'Out-RawText', 'Invoke-ExeCapture', 'Invoke-NativeTool', 'Get-WmiOrCim', 'Convert-WmiDate',
+    'Save-Rows', 'Out-RawText', 'Invoke-ExeCapture', 'Invoke-NativeTool', 'Get-WmiOrCim', 'Convert-WmiDate', 'Get-InvariantDate',
     'Test-IsPublicIp', 'Test-IsUserWritablePath', 'Get-SignatureInfo', 'Get-SysmonState',
     'Get-UserProfileList', 'Get-UserAssistRows', 'ConvertTo-Rot13', 'Get-FilteredEvents', 'Export-Evtx',
     'Import-CaseCsv', 'Invoke-BrowserIocXref', 'Get-EventDataRows', 'Get-IisW3cRows', 'Get-StartupInfoRows', 'Get-WerReportRows', 'Test-SigmaSelfNoise', 'Remove-SigmaDuplicateEvents', 'Get-IpCloudClass', 'Get-LocalAdminMembers',
@@ -5255,7 +5281,10 @@ function Invoke-SelectedModules {
 function ConvertTo-HtmlEsc {
     param([string]$s)
     if ($null -eq $s) { return '' }
-    return ($s -replace '&', '&amp;' -replace '<', '&lt;' -replace '>', '&gt;' -replace '"', '&quot;')
+    # v2.80 (I4): single quote escaped too - New-VtLink interpolates into SINGLE-quoted href
+    # attributes, so the escaper must cover both quote styles. '&' runs first and the entities
+    # emitted here contain no quotes, so the chain stays double-escape-safe.
+    return ($s -replace '&', '&amp;' -replace '<', '&lt;' -replace '>', '&gt;' -replace '"', '&quot;' -replace "'", '&#39;')
 }
 
 function New-VtLink {
@@ -5363,6 +5392,50 @@ function Get-LvlRank {
     # Top-level (was nested in New-HtmlReport): also used by New-SigmaRuleLogs and fleet reporting.
     param([string]$l)
     switch -Regex ("$l") { 'crit' { 5; break } 'high' { 4; break } 'med' { 3; break } 'low' { 2; break } default { 1 } }
+}
+
+function Get-SafeRuleKey {
+    # Filesystem/js-safe key for a Sigma rule name - the exact charset/sanitize the per-rule
+    # CSV filenames have always used ('unnamed_rule' fallback, 80-char truncate).
+    param([string]$Name)
+    $safe = ("$Name" -replace '[^A-Za-z0-9\._-]+', '_') -replace '^_+|_+$', ''
+    if (-not $safe) { $safe = 'unnamed_rule' }
+    if ($safe.Length -gt 80) { $safe = $safe.Substring(0, 80) }
+    return $safe
+}
+
+function Get-SafeRuleKeyMap {
+    # raw rule name -> collision-free safe key. Two distinct rule names can sanitize to the
+    # same key (collisions merged drill-downs / overwrote per-rule CSVs); colliding names get
+    # a deterministic _2/_3 suffix, unique names keep today's key. All scopes that share a
+    # name universe (report drills/leads/ATT&CK + New-SigmaRuleLogs per-rule CSVs) must build
+    # their map from the SAME rows so keys stay consistent across report and CSVs.
+    param($Rows, [string]$NameCol)
+    $map = @{}
+    $byKey = @{}
+    foreach ($nm in @($Rows | ForEach-Object { "$($_.$NameCol)" } | Sort-Object -Unique)) {
+        $k = Get-SafeRuleKey $nm
+        if (-not $byKey.ContainsKey($k)) { $byKey[$k] = New-Object System.Collections.Generic.List[string] }
+        $null = $byKey[$k].Add($nm)
+    }
+    foreach ($k in ($byKey.Keys | Sort-Object)) {
+        $i = 1
+        foreach ($nm in $byKey[$k].ToArray()) {
+            $cand = $k
+            if ($i -gt 1) { $cand = "${k}_$i" }
+            while ($map.ContainsValue($cand)) { $i++; $cand = "${k}_$i" }
+            $map[$nm] = $cand
+            $i++
+        }
+    }
+    return $map
+}
+
+function Resolve-SafeRuleKey {
+    param($Map, [string]$Name)
+    $n = "$Name"
+    if ($Map -and $Map.ContainsKey($n)) { return $Map[$n] }
+    return Get-SafeRuleKey $n
 }
 
 function Get-TacticLabel {
@@ -5492,10 +5565,12 @@ function Get-CleanCheckSummary {
     $auth = @(Import-CaseCsv 'security_auth_events')
     if ($auth.Count -gt 0 -and @(Import-CaseCsv 'security_bruteforce_candidates').Count -eq 0) { & $add 'Brute-force analysis' "$($auth.Count) logon events analyzed, 0 brute-force source candidates" }
     # Log integrity: v2.64 - SAME predicate as the verdict's tamper count (EventId 1102/104,
-    # Meaning clear|stop fallback). The old Detail-based filter read a column logging_gaps
-    # doesn't have, so real clear events never suppressed this row.
+    # Meaning 'clear' fallback). The old Detail-based filter read a column logging_gaps
+    # doesn't have, so real clear events never suppressed this row. v2.80: 'stop' dropped from
+    # the Meaning fallback - benign 6006 'Event logging STOPPED (shutdown)' rows are not tamper
+    # events and must not suppress this clean attestation.
     $gaps = @(Import-CaseCsv 'logging_gaps')
-    if ((Test-CaseCsv 'logging_gaps') -and @($gaps | Where-Object { "$($_.EventId)" -match '^(1102|104)$' -or "$($_.Meaning)" -match 'clear|stop' }).Count -eq 0) { & $add 'Log integrity' 'no security log clear/stop events found' }
+    if ((Test-CaseCsv 'logging_gaps') -and @($gaps | Where-Object { "$($_.EventId)" -match '^(1102|104)$' -or "$($_.Meaning)" -match 'clear' }).Count -eq 0) { & $add 'Log integrity' 'no security log clear events found' }
     # Credential exposure: v2.64 - same ^high$ filter the verdict's credential signal keys on
     # (case-insensitive exact match; a MEDIUM-only sweep is still a clean row)
     if ((Test-CaseCsv 'credential_sweep') -and @(@(Import-CaseCsv 'credential_sweep') | Where-Object { "$($_.Risk)" -match '(?i)^high$' }).Count -eq 0) { & $add 'Credential exposure sweep' 'no HIGH-risk exposure (auto-logon secrets, LSASS dumps on disk, key material)' }
@@ -5516,6 +5591,9 @@ function New-HtmlReport {
     $scored = @(Import-CaseCsv 'flash_process_scored.csv')
     $iocHits = @(Import-CaseCsv 'flash_ioc_hits.csv')
     $hayRows = @(Import-CaseCsv 'hayabusa_timeline.csv')
+    # v2.80 (T4/M6): unfiltered copy - the rule-key map must cover the same name universe
+    # New-SigmaRuleLogs names the per-rule CSVs from (raw CSV, no dedupe/noise filtering)
+    $hayRaw = $hayRows
     # v2.63: supertimeline read ONCE here - glance/entity/master views below derive from $tlRows
     $tlRows = @(Import-CaseCsv 'supertimeline')
     # v2.55: dedupe events matched by multiple rules + drop self-noise (our own collection activity)
@@ -5903,8 +5981,19 @@ tr.techrow{cursor:pointer}
     # v2.66 (B10): the shared 5000-row embed budget is spent in this same top-12 order, so
     # the walk happens here too: $drillTake holds each rule's embedded-row share. A rule with
     # a zero share gets no drill-down UI at all - so deep links must not target it either.
+    # v2.80 (T4/M6): keys come from the shared collision-free map, built from the RAW hayabusa
+    # rows so drill keys, lead hrefs, ATT&CK links and New-SigmaRuleLogs CSV filenames all
+    # agree even when distinct rule names sanitize to the same key.
     $drillSafeNames = New-Object 'System.Collections.Generic.HashSet[string]'
     $drillTake = @{}
+    $safeRuleMap = @{}
+    if ($hayRaw.Count -gt 0) {
+        $nameColPre = $null
+        foreach ($cand in @('RuleTitle', 'Alert', 'RuleFile')) {
+            if ($hayRaw[0].PSObject.Properties[$cand]) { $nameColPre = $cand; break }
+        }
+        if ($nameColPre) { $safeRuleMap = Get-SafeRuleKeyMap $hayRaw $nameColPre }
+    }
     if ($hayRows.Count -gt 0) {
         $alertColPre = $null
         foreach ($cand in @('RuleTitle', 'Alert', 'RuleFile')) {
@@ -5913,9 +6002,7 @@ tr.techrow{cursor:pointer}
         if ($alertColPre) {
             $budgetWalk = 5000
             foreach ($g2 in ($hayRows | Group-Object $alertColPre | Sort-Object Count -Descending | Select-Object -First 12)) {
-                $s2 = ("$($g2.Name)" -replace '[^A-Za-z0-9\._-]+', '_') -replace '^_+|_+$', ''
-                if (-not $s2) { $s2 = 'unnamed_rule' }
-                if ($s2.Length -gt 80) { $s2 = $s2.Substring(0, 80) }
+                $s2 = Resolve-SafeRuleKey $safeRuleMap $g2.Name
                 $take2 = [Math]::Min($g2.Count, [Math]::Max(0, $budgetWalk))
                 $budgetWalk -= $take2
                 $drillTake[$s2] = $take2
@@ -5993,7 +6080,7 @@ tr.techrow{cursor:pointer}
                     # a filter keep the plain section-top jump as today.
                     $deepAttr = ''
                     if ($ld.Anchor -eq 'sigma' -and "$($ld.Rule)") {
-                        $lsafe = ("$($ld.Rule)" -replace '[^A-Za-z0-9\._-]+', '_') -replace '^_+|_+$', ''
+                        $lsafe = Resolve-SafeRuleKey $safeRuleMap $ld.Rule
                         if ($lsafe -and $drillSafeNames.Contains($lsafe)) { $deepAttr = " data-rule='$lsafe'" }
                     }
                     $null = $sb.AppendLine("<div style='margin-top:5px'><a href='#$($ld.Anchor)'$deepAttr>-> evidence in the $(ConvertTo-HtmlEsc $ld.Anchor) section</a></div>")
@@ -6117,8 +6204,7 @@ tr.techrow{cursor:pointer}
                 # v2.66 (B6): same-rule drill-down deep link - opens the rule's browser with the
                 # filter box pre-filled to this exact event (RecordID, else EID). Rules without
                 # a rendered drill-down stay plain text - never a dead link.
-                $safeRl = ("$($e.Rule)" -replace '[^A-Za-z0-9\._-]+', '_') -replace '^_+|_+$', ''
-                if ($safeRl.Length -gt 80) { $safeRl = $safeRl.Substring(0, 80) }
+                $safeRl = Resolve-SafeRuleKey $safeRuleMap $e.Rule
                 $qv6 = if ("$($e.Rid)") { "$($e.Rid)" } else { "$($e.Eid)" }
                 $alertCell = if ($safeRl -and $drillSafeNames.Contains($safeRl) -and "$($qv6)") { "<a href='#sigma' class='a-drill' data-rule='$safeRl' data-q=""$(ConvertTo-HtmlEsc $qv6)"" title='open the Sigma drill-down for this rule, pre-filtered'>$(ConvertTo-HtmlEsc $e.Rule)</a>" } else { ConvertTo-HtmlEsc $e.Rule }
                 $null = $sb.AppendLine("<tr><td>$(ConvertTo-HtmlEsc $e.Last)</td><td>$alertCell</td><td class='$evCls'>$(ConvertTo-HtmlEsc $e.Level)</td></tr>")
@@ -6267,9 +6353,7 @@ tr.techrow{cursor:pointer}
                 $best = @($g.Group | Sort-Object { Get-LvlRank "$($_.Level)" } -Descending | Select-Object -First 1)
                 $lvl = "$($best.Level)"
                 $lvlClass = switch -Regex ($lvl) { 'crit' { 'crit'; break } 'high' { 'high'; break } 'med' { 'med'; break } default { 'info' } }
-                $safe = ("$($g.Name)" -replace '[^A-Za-z0-9\._-]+', '_') -replace '^_+|_+$', ''
-                if (-not $safe) { $safe = 'unnamed_rule' }
-                if ($safe.Length -gt 80) { $safe = $safe.Substring(0, 80) }
+                $safe = Resolve-SafeRuleKey $safeRuleMap $g.Name
                 $csvLink = "csv\sigma_rules\$safe.csv"
                 $csvFull = Join-Path $CsvDir "sigma_rules\$safe.csv"
                 # v2.66 (B10): this rule's share of the embed budget (precomputed with drillSafeNames)
@@ -6407,7 +6491,8 @@ tr.techrow{cursor:pointer}
     }
     if ($runKeys.Count -gt 0) {
         $persAny = $true
-        $null = $sb.AppendLine("<h3>Run keys / startup entries</h3><details><summary>show $($runKeys.Count) entries</summary><table><tr><th>Name</th><th>Command</th></tr>")
+        $rkLbl = if ($runKeys.Count -gt 60) { "showing first 60 of $($runKeys.Count) entries" } else { "show $($runKeys.Count) entries" }
+        $null = $sb.AppendLine("<h3>Run keys / startup entries</h3><details><summary>$rkLbl</summary><table><tr><th>Name</th><th>Command</th></tr>")
         foreach ($r in ($runKeys | Select-Object -First 60)) {
             $null = $sb.AppendLine("<tr><td>$(ConvertTo-HtmlEsc $r.Name)</td><td class='path'>$(ConvertTo-HtmlEsc $r.Value)</td></tr>")
         }
@@ -6583,7 +6668,7 @@ tr.techrow{cursor:pointer}
         foreach ($h2 in ($mainRows | Sort-Object { switch -Regex ("$($_.Severity)") { 'high' { 0 } 'medium' { 1 } default { 2 } } })) {
             $null = $sb.AppendLine((& $huntRowHtml $h2))
         }
-        $null = $sb.AppendLine("</table><div class='meta'>High-severity rules are high-precision (version-info renames, side-loaded system DLLs, downloads staged outside Downloads, LSASS access, Office-to-interpreter chains, proxy-execution LOLBin command lines, admin-share staging, Defender tamper, DCSync, password spray, injection into LSASS or from user-writable paths, C2-style named pipes) and contribute to the verdict - the exception is Sysmon configuration changes (report-only, no verdict weight). Medium rules are report-only leads (download-exec with missing/uncheckable signature, UAC bypass pattern, future-birth / execution-predates-birth timestamps, Kerberoasting/AS-REP patterns, web anomalies, privilege-boundary injection without a privilege tell). Low rows (extracted-archive birth-attribute skew, discovery command storms, protected-pair injection) are collapsed below as context. Verify against the cited raw evidence. Source: csv\hunt_findings.csv</div>")
+        $null = $sb.AppendLine("</table><div class='meta'>High-severity rules are high-precision (version-info renames, side-loaded system DLLs, downloads staged outside Downloads, LSASS access, Office-to-interpreter chains, proxy-execution LOLBin command lines, admin-share staging, Defender tamper, DCSync, password spray, injection into LSASS or from user-writable paths, C2-style named pipes) and contribute to the verdict. Medium rules are report-only leads (download-exec with missing/uncheckable signature, UAC bypass pattern, future-birth / execution-predates-birth timestamps, Kerberoasting/AS-REP patterns, web anomalies, privilege-boundary injection without a privilege tell). Low rows (extracted-archive birth-attribute skew, discovery command storms, protected-pair injection) are collapsed below as context. Verify against the cited raw evidence. Source: csv\hunt_findings.csv</div>")
         if ($lowRows.Count -gt 0) {
             $null = $sb.AppendLine("<details><summary>Low / informational findings ($($lowRows.Count))</summary><table><tr><th>Severity</th><th>Rule</th><th>ATT&amp;CK</th><th>Entity</th><th>Evidence</th></tr>")
             foreach ($h2 in $lowRows) {
@@ -6622,7 +6707,7 @@ tr.techrow{cursor:pointer}
         # against the converted $fs below; do NOT re-shift either side)
         $tlPre = @()
         try {
-            $tlPre = @($tlRows | ForEach-Object { $t = $null; try { $t = [datetime]$_.Timestamp } catch { }; if ($t) { [pscustomobject]@{ T = $t; Row = $_ } } })
+            $tlPre = @($tlRows | ForEach-Object { $t = Get-InvariantDate $_.Timestamp; if ($t -gt [datetime]::MinValue) { [pscustomobject]@{ T = $t; Row = $_ } } })
         } catch { }
         # v2.66 (B12): shared text filter over the entity cards
         $null = $sb.AppendLine("<div class='sbar'><input id='entf' data-secfilter='1' data-wrap='entwrap' data-sel='details' data-cnt='cnt_ent' placeholder='filter entities (name / path / evidence)...' style='width:340px'> <span class='meta' id='cnt_ent'></span></div>")
@@ -6659,8 +6744,8 @@ tr.techrow{cursor:pointer}
             }
             $null = $sb.AppendLine("</table>")
             # +/-30 min context window around first seen, pulled from the master timeline
-            $fs = $null
-            try { $fs = ([datetime]$e.FirstSeen).ToUniversalTime() } catch { }
+            $fs = Get-InvariantDate $e.FirstSeen
+            if ($fs -gt [datetime]::MinValue) { $fs = $fs.ToUniversalTime() } else { $fs = $null }
             if ($fs -and $tlPre.Count -gt 0) {
                 $lo = $fs.AddMinutes(-30); $hi = $fs.AddMinutes(30)
                 $ctx = @($tlPre | Where-Object { $_.T -ge $lo -and $_.T -le $hi } | Select-Object -First 15)
@@ -6814,7 +6899,7 @@ tr.techrow{cursor:pointer}
     $tlAll = $tlRows
     $tlSources = @($tlAll | ForEach-Object { "$($_.Source)" } | Sort-Object -Unique)
     $null = $sb.AppendLine("<a name='timeline'></a><h2>Master timeline (gathered evidence chronology)</h2>")
-    $null = $sb.AppendLine("<div class='card'>The full chronology lives in <b>csv\$(ConvertTo-HtmlEsc (Get-CaseCsvPath 'supertimeline'))</b> ($(ConvertTo-HtmlEsc $tlAll.Count) events from $($tlSources.Count) evidence sources - open it in Excel/Timeline Explorer and filter by Timestamp). Evidence sources woven: $(ConvertTo-HtmlEsc ($tlSources -join ', ')). Scanner conclusions (Sigma detections, hunt findings, beacons) are intentionally NOT part of it - they have their own sections above. For windowed pivots with per-source/busiest-minute summaries run <b>-Mode Timeline</b>.</div>")
+    $null = $sb.AppendLine("<div class='card'>The full chronology lives in <b>csv\$(ConvertTo-HtmlEsc (Get-CaseCsvPath 'supertimeline'))</b> ($(ConvertTo-HtmlEsc $tlAll.Count) events from $($tlSources.Count) evidence sources - open it in Excel/Timeline Explorer and filter by Timestamp). Evidence sources woven: $(ConvertTo-HtmlEsc ($tlSources -join ', ')). Per-source row caps (200-5000 per source) keep the file bounded - when a cap bites, the NEWEST events of that source are kept, and the total file is capped at the newest 120,000 events. Scanner conclusions (Sigma detections, hunt findings, beacons) are intentionally NOT part of it - they have their own sections above. For windowed pivots with per-source/busiest-minute summaries run <b>-Mode Timeline</b>.</div>")
     if ($tlAll.Count -gt 0) {
         # v2.59: per-day activity sparkline - the case's shape at a glance before the newest-150 table
         # task 10: bars only for days inside the clamped display window ($tlCut from the banner
@@ -6877,7 +6962,7 @@ tr.techrow{cursor:pointer}
             $null = $tlShowL.Add($t)
         }
         $tlShow = $tlShowL.ToArray()
-        $tlCap = if ($tlNoise -gt 0) { "Newest $($tlShow.Count) of $($tlAll.Count) events (collector self-noise suppressed: $tlNoise rows)" } else { "Newest 150 of $($tlAll.Count) events, newest first:" }
+        $tlCap = if ($tlNoise -gt 0) { "Newest $($tlShow.Count) of $($tlAll.Count) events (collector self-noise suppressed: $tlNoise rows)" } else { "Newest $($tlShow.Count) of $($tlAll.Count) events, newest first:" }
         $null = $sb.AppendLine("<div class='meta'>$tlCap</div>")
         # v2.66 (B11): text + source + from/to date filters compose (AND) - inline table only,
         # the full CSV / -Mode Timeline stay the pivoting surface
@@ -7392,7 +7477,7 @@ tr.techrow{cursor:pointer}
     }
     $caseRoot = Split-Path -Parent $CsvDir
     $alsoIn = @()
-    $alsoIn += "$(ConvertTo-CaseFileLink (Join-Path $caseRoot 'supertimeline.csv') 'supertimeline.csv') (MASTER chronology - every artifact, filter by time)"
+    $alsoIn += "$(ConvertTo-CaseFileLink (Join-Path $CsvDir (Get-CaseCsvPath 'supertimeline')) "csv\$(Get-CaseCsvPath 'supertimeline')") (MASTER chronology - every artifact, filter by time)"
     $alsoIn += "$(ConvertTo-CaseFileLink (Join-Path $caseRoot 'csv\evtx_ecmd') 'csv\evtx_ecmd\') (full event-log CSVs for deep-dives, when EvtxECmd ran in Parse mode)"
     $alsoIn += "$(ConvertTo-CaseFileLink (Join-Path $caseRoot 'siem_export.ndjson') 'siem_export.ndjson') (Splunk/Elastic-ready records)"
     $alsoIn += "$(ConvertTo-CaseFileLink (Join-Path $caseRoot 'case_draft.txt') 'case_draft.txt') (auto-written executive draft - edit into your report)"
@@ -7513,37 +7598,48 @@ function New-SuperTimeline {
     # v2.24 MASTER TIMELINE: every artifact source woven into ONE chronological CSV with a
     # normalized schema (Timestamp, Source, Type, Actor, Entity, Detail) so the analyst can
     # open a single file and filter to any timeframe ("weird activity at 14:00" checks).
-    # Per-source caps + a total cap keep the file bounded; hayabusa sort-csv dedupes overlaps.
+    # Per-source caps + a total cap keep the file bounded; per-source caps keep the NEWEST
+    # events (head-counting used to keep the oldest while the total cap kept the newest,
+    # silently dropping the newest evidence on busy cases); hayabusa sort-csv dedupes overlaps.
     $rows = New-Object System.Collections.Generic.List[object]
     $add = {
         param($ts, [string]$source, [string]$type, [string]$actor, [string]$entity, [string]$detail)
         if (-not $ts) { return }
         $iso = "$ts"
-        try { $iso = ([datetime]$ts).ToUniversalTime().ToString('yyyy-MM-dd HH:mm:ss') } catch { }
+        $dt = Get-InvariantDate $ts
+        if ($dt -gt [datetime]::MinValue) { $iso = $dt.ToUniversalTime().ToString('yyyy-MM-dd HH:mm:ss') }
         $d = ("$detail" -replace '\s+', ' ').Trim()
         if ($d.Length -gt 240) { $d = $d.Substring(0, 240) + '...' }
         $null = $rows.Add([pscustomobject]@{ Timestamp = $iso; Source = $source; Type = "$type"; Actor = "$actor"; Entity = "$entity"; Detail = $d })
     }
+    $keepNewest = {
+        # per-source cap: buffer all mapped rows, keep the NEWEST $cap by parsed timestamp
+        param($buf, [int]$cap)
+        # comma operator: survive PS one-level output unroll (a bare single-row return
+        # would make the caller iterate the row's fields instead of the rows)
+        if ($buf.Count -le $cap) { return ,$buf }
+        ,@($buf | Sort-Object { Get-InvariantDate $_[0] } -Descending | Select-Object -First $cap)
+    }
     $weave = {
         param([string]$name, [int]$cap, [scriptblock]$map)
-        $n = 0
+        $buf = New-Object System.Collections.Generic.List[object]
         foreach ($r in (Import-CaseCsv $name)) {
-            if ($n -ge $cap) { break }
             $m = $null
             try { $m = & $map $r } catch { }
-            if ($m -and "$($m[0])") { $n++; & $add $m[0] $name $m[1] $m[2] $m[3] $m[4] }
+            if ($m -and "$($m[0])") { $buf.Add(@("$($m[0])", $m[1], $m[2], $m[3], $m[4])) }
         }
+        foreach ($m in (& $keepNewest $buf $cap)) { & $add $m[0] $name $m[1] $m[2] $m[3] $m[4] }
     }
     $leaf = { param($p) try { if ("$p") { (Split-Path "$p" -Leaf) } else { '' } } catch { "$p" } }
 
     # generic event-log CSVs (Get-FilteredEvents shape: TimeCreated/Id/Message)
     foreach ($name in @('security_events', 'powershell_events', 'sysmon_events', 'system_events', 'defender_events', 'rdp_localsession', 'rdp_connections', 'application_events')) {
-        $n = 0
+        $buf = New-Object System.Collections.Generic.List[object]
         foreach ($r in (Import-CaseCsv $name)) {
-            if ($n -ge 5000 -or -not $r.PSObject.Properties['TimeCreated']) { continue }
-            $n++
-            & $add $r.TimeCreated $name "EID $($r.Id)" '' '' $r.Message
+            if (-not $r.PSObject.Properties['TimeCreated']) { continue }
+            $buf.Add(@("$($r.TimeCreated)", "EID $($r.Id)", '', '', "$($r.Message)"))
         }
+        foreach ($m in (& $keepNewest $buf 5000)) { & $add $m[0] $name $m[1] $m[2] $m[3] $m[4] }
     }
     # structured security telemetry
     & $weave 'security_auth_events' 5000 { param($r) $t = $(if ("$($r.EventId)" -eq '4625') { 'failed logon' } else { 'logon' }); if ("$($r.LogonType)") { $t = "$t (type $($r.LogonType))" } @("$($r.Time)", $t, "$($r.Account)", "$($r.SourceIp)", "LogonId $($r.LogonId)") }
@@ -7571,13 +7667,12 @@ function New-SuperTimeline {
     $exec = Import-CaseCsv 'execution_timeline'
     if ($exec.Count -gt 0) {
         $tCol = ($exec[0].PSObject.Properties.Name | Select-Object -First 1)
-        $n = 0
+        $buf = New-Object System.Collections.Generic.List[object]
         foreach ($r in $exec) {
-            if ($n -ge 3000) { break }
             $line = ($r.PSObject.Properties | ForEach-Object { "$($_.Value)" }) -join ' '
-            $n++
-            & $add $r.$tCol 'execution_timeline' 'shimcache/amcache entry' '' '' $line
+            $buf.Add(@("$($r.$tCol)", 'shimcache/amcache entry', '', '', $line))
         }
+        foreach ($m in (& $keepNewest $buf 3000)) { & $add $m[0] 'execution_timeline' $m[1] $m[2] $m[3] $m[4] }
     }
     $pfT = { param($r) $c = @($r.PSObject.Properties.Name | Where-Object { $_ -match '(?i)lastrun' } | Select-Object -First 1)[0]; if ($c) { "$($r.$c)" } else { '' } }
     $pfE = { param($r) $c = @($r.PSObject.Properties.Name | Where-Object { $_ -match '(?i)executable|^name$' } | Select-Object -First 1)[0]; if ($c) { "$($r.$c)" } else { '' } }
@@ -7586,7 +7681,7 @@ function New-SuperTimeline {
         param($r)
         $t = $null
         foreach ($pn in (@($r.PSObject.Properties.Name) | Where-Object { $_ -match '(?i)timestamp|time$' })) {
-            try { $t2 = [datetime]"$($r.$pn)"; if ($t2 -and (-not $t -or $t2 -lt $t)) { $t = $t2 } } catch { }
+            try { $t2 = Get-InvariantDate "$($r.$pn)"; if ($t2 -gt [datetime]::MinValue -and (-not $t -or $t2 -lt $t)) { $t = $t2 } } catch { }
         }
         $nm = ''; foreach ($pn in @('Name', 'ApplicationName', 'SourceSimpleName')) { $p2 = $r.PSObject.Properties[$pn]; if ($p2 -and "$($p2.Value)") { $nm = "$($p2.Value)"; break } }
         @($(if ($t) { $t.ToString('yyyy-MM-dd HH:mm:ss') } else { '' }), 'amcache entry', $nm, $nm, "source $($r.SourceFile)")
@@ -7633,7 +7728,7 @@ function New-SuperTimeline {
     # evidence only; conclusions live in their own report sections.
 
     if ($rows.Count -eq 0) { return }
-    $sorted = @($rows | Sort-Object { $t = [datetime]::MinValue; try { $t = [datetime]::Parse($_.Timestamp, [System.Globalization.CultureInfo]::InvariantCulture) } catch { }; $t })
+    $sorted = @($rows | Sort-Object { Get-InvariantDate $_.Timestamp })
     if ($sorted.Count -gt 120000) { $sorted = @($sorted | Select-Object -Last 120000) }
     $out = Get-CaseCsvFullPath 'supertimeline'
     $sorted | Export-Csv -LiteralPath $out -NoTypeInformation -Encoding UTF8
@@ -7649,13 +7744,14 @@ function New-SigmaRuleLogs {
     $hay = Import-CaseCsv 'hayabusa_timeline'
     if ($hay.Count -eq 0) { return }
     $nameCol = if ($hay[0].PSObject.Properties['RuleTitle']) { 'RuleTitle' } elseif ($hay[0].PSObject.Properties['Alert']) { 'Alert' } else { return }
+    # v2.80 (T4/M6): same collision-free key map the report renders with (raw $hay = same name
+    # universe) so per-rule CSV filenames match drill keys/lead hrefs even on sanitize collisions
+    $sigmaRuleMap = Get-SafeRuleKeyMap $hay $nameCol
     $dir = Join-Path $CsvDir 'sigma_rules'
     if (-not (Test-Path $dir)) { New-Item -ItemType Directory -Path $dir -Force | Out-Null }
     $index = @()
     foreach ($g in ($hay | Group-Object $nameCol)) {
-        $safe = ("$($g.Name)" -replace '[^A-Za-z0-9\._-]+', '_') -replace '^_+|_+$', ''
-        if (-not $safe) { $safe = 'unnamed_rule' }
-        if ($safe.Length -gt 80) { $safe = $safe.Substring(0, 80) }
+        $safe = Resolve-SafeRuleKey $sigmaRuleMap $g.Name
         $rows = @($g.Group | Sort-Object Timestamp)
         $rows | Select-Object Timestamp, Level, Computer, Channel, EventID, RecordID, RuleID, Details, ExtraFieldInfo |
             Export-Csv -LiteralPath (Join-Path $dir "$safe.csv") -NoTypeInformation -Encoding UTF8
@@ -8303,7 +8399,8 @@ function New-HuntFindings {
         }
     }
     foreach ($kv in $namePaths.GetEnumerator()) {
-        $inSys = @($kv.Value | Where-Object { $_ -match '(?i)^c:\\windows\\(system32|syswow64|sysnative)\\' })
+        # v2.80 (F8): drive-agnostic - the C:-only form missed multi-boot/D: system dirs
+        $inSys = @($kv.Value | Where-Object { $_ -match '(?i)^[a-z]:\\windows\\(system32|syswow64|sysnative)\\' })
         $inUser = @($kv.Value | Where-Object { Test-IsUserWritablePath $_ })
         if ($inSys.Count -gt 0 -and $inUser.Count -gt 0) {
             & $find 'DLL side-load - planted system DLL name in user path' 'high' $kv.Key "system: $($inSys[0]) | user: $($inUser[0])$(if ($inUser.Count -gt 1) { ' (+' + ($inUser.Count - 1) + ' more)' })" 'T1574.002'
@@ -8362,18 +8459,29 @@ function New-HuntFindings {
         # severity: outside a Downloads folder = high (staged/renamed); in Downloads unsigned =
         # high; in Downloads signed OR signature not checkable (file gone on parse mode) = medium;
         # no-directory download row = medium (leaf match only - Test-Path would probe the
-        # analyst's CWD, so there is nothing honest to signature-check on disk)
+        # analyst's CWD, so there is nothing honest to signature-check on disk).
+        # v2.80 (F5): HashMismatch = content altered AFTER the signed build (classic
+        # defense-evasion tell, never softened to 'unverifiable') - high outside Downloads,
+        # medium inside; the signature is probed wherever the file is present on disk.
         $r4Sev = 'high'; $r4Why = ''
-        if ($r4Dir -and $tp -notmatch '(?i)\\downloads\\') {
-            $r4Why = 'staged outside a Downloads folder (renamed or relayed payload)'
-        } elseif (-not $r4Dir) {
+        $r4Sig = $null
+        if ($r4Dir -and (Test-Path -LiteralPath $tp)) {
+            try { $r4Sig = Get-AuthenticodeSignature -LiteralPath $tp } catch { $r4Sig = $null }
+        }
+        $r4Status = if ($r4Sig) { "$($r4Sig.Status)" } else { '' }
+        if (-not $r4Dir) {
             $r4Why = 'signature not checkable (download row carries no directory)'; $r4Sev = 'medium'
+        } elseif ($r4Status -eq 'HashMismatch') {
+            $r4Why = 'binary MODIFIED after signing'
+            if ($tp -match '(?i)\\downloads\\') { $r4Sev = 'medium' }
+        } elseif ($tp -notmatch '(?i)\\downloads\\') {
+            $r4Why = 'staged outside a Downloads folder (renamed or relayed payload)'
+        } elseif (-not $r4Sig) {
+            $r4Why = 'signature not checkable (file no longer present)'; $r4Sev = 'medium'
+        } elseif ($r4Status -eq 'NotSigned') {
+            $r4Why = 'unsigned binary in Downloads'
         } else {
-            $r4Sig = $null
-            try { if (Test-Path -LiteralPath $tp) { $r4Sig = Get-AuthenticodeSignature -LiteralPath $tp } } catch { $r4Sig = $null }
-            if (-not $r4Sig) { $r4Why = 'signature not checkable (file no longer present)'; $r4Sev = 'medium' }
-            elseif ("$($r4Sig.Status)" -eq 'NotSigned') { $r4Why = 'unsigned binary in Downloads' }
-            else { $r4Why = "signed ($("$($r4Sig.Status)"))"; $r4Sev = 'medium' }
+            $r4Why = "signed ($r4Status)"; $r4Sev = 'medium'
         }
         & $find 'Downloaded then executed' $r4Sev $tp "'$n' downloaded via browser and later appears in execution evidence ($r4Why)" 'T1105/T1204.002'
     }
@@ -8431,7 +8539,11 @@ function New-HuntFindings {
         $src = "$($r.SourceImage)"
         $leaf = ''
         try { $leaf = (Split-Path $src -Leaf).ToLower() } catch { }
-        if (-not $leaf -or $lsassOk -contains $leaf) { continue }
+        # v2.80 (F7): leaf-name match alone let name-spoofed copies (C:\Users\Public\svchost.exe)
+        # open lsass unchallenged - allowlisted names only count when the SourceImage really
+        # lives in a Windows system dir (same drive-agnostic pattern as the R3 inSys filter).
+        if (-not $leaf) { continue }
+        if ($lsassOk -contains $leaf -and "$src" -match '(?i)^[a-z]:\\windows\\(system32|syswow64|sysnative)\\') { continue }
         if (-not $lsassHits.ContainsKey($src)) { $lsassHits[$src] = New-Object System.Collections.Generic.List[string] }
         $null = $lsassHits[$src].Add("granted=$($r.GrantedAccess) @ $($r.Time)")
     }
@@ -8878,7 +8990,10 @@ function New-HuntFindings {
     # ---------- R29: C2-style named pipes (Sysmon EID 17/18) ----------
     # Known C2 pipe families = high; any pipe created by a process in a user-writable path = medium.
     # (Sysmon logs PipeName without the \\.\pipe\ prefix; families match anywhere in the name)
-    $r29Seen = @{}
+    # v2.80 (F4): separate dedupe tables + caps per class - the old shared counter let 40+
+    # medium rows exhaust the loop (break) before older HIGH C2-pipe rows were ever classified.
+    $r29SeenHi = @{}
+    $r29SeenMed = @{}
     $c2PipePat = '(?i)msagent_[0-9a-f]|mssecsms|pipy_[0-9a-f]|postex_[0-9a-f]|status_[0-9a-f]{4}'
     $r29In = @(Import-CaseCsv 'sysmon_pipes')
     foreach ($r in $r29In) {
@@ -8887,18 +9002,18 @@ function New-HuntFindings {
         $verb = 'seen'
         if ("$($r.EventId)" -eq '17') { $verb = 'created' } elseif ("$($r.EventId)" -eq '18') { $verb = 'connected' }
         if ($pipe -match $c2PipePat) {
-            if ($r29Seen.ContainsKey($pipe.ToLower())) { continue }
-            $r29Seen[$pipe.ToLower()] = $true
-            if ($r29Seen.Count -gt 20) { break }
+            if ($r29SeenHi.ContainsKey($pipe.ToLower())) { continue }
+            $r29SeenHi[$pipe.ToLower()] = $true
+            if ($r29SeenHi.Count -gt 20) { continue }
             & $find 'C2-style named pipe (known C2 family)' 'high' $pipe "pipe '$pipe' $verb by $($r.Image) - Cobalt Strike-class SMB beacon channel" 'T1095'
             continue
         }
         if ("$($r.EventId)" -ne '17') { continue }
         if (Test-IsUserWritablePath "$($r.Image)") {
             $key = "$pipe|$($r.Image)".ToLower()
-            if ($r29Seen.ContainsKey($key)) { continue }
-            $r29Seen[$key] = $true
-            if ($r29Seen.Count -gt 40) { break }
+            if ($r29SeenMed.ContainsKey($key)) { continue }
+            $r29SeenMed[$key] = $true
+            if ($r29SeenMed.Count -gt 40) { continue }
             & $find 'Named pipe created from user-writable path' 'medium' $pipe "pipe '$pipe' created by $($r.Image) - review (C2 channels and stagers often live here)" 'T1095'
         }
     }
@@ -9241,7 +9356,10 @@ function Get-CompromiseVerdict {
     $procMed = @($proc | Where-Object { "$($_.Verdict)" -eq 'MEDIUM' }).Count
     $yaraHi = @($yara | Where-Object { "$($_.Severity)" -match '^(high|critical)$' }).Count
     $yaraMed = @($yara | Where-Object { "$($_.Severity)" -match '^medium$' }).Count
-    $gapTamper = @($gaps | Where-Object { "$($_.EventId)" -match '^(1102|104)$' -or "$($_.Meaning)" -match 'clear|stop' }).Count
+    # v2.80 FP fix: Meaning fallback is 'clear' ONLY - the old 'clear|stop' also matched benign
+    # 6006 'Event logging STOPPED (shutdown)' rows, adding a phantom weight-2 tamper signal on
+    # nearly every host. Real clears stay covered by EventId 1102/104 + the 'clear' Meaning.
+    $gapTamper = @($gaps | Where-Object { "$($_.EventId)" -match '^(1102|104)$' -or "$($_.Meaning)" -match 'clear' }).Count
     $beaconHi = @($beacons | Where-Object { "$($_.Severity)" -match '^high$' }).Count
     $beaconMed = @($beacons | Where-Object { "$($_.Severity)" -match '^medium$' }).Count
     $dnsHi = @($dnsBeacons | Where-Object { "$($_.Severity)" -match '^high$' }).Count
@@ -9253,7 +9371,7 @@ function Get-CompromiseVerdict {
     $postureBad = @($posture | Where-Object { "$($_.Status)" -eq 'BAD' })
     $credSweep = Import-CaseCsv 'credential_sweep'
     $hunt = Import-CaseCsv 'hunt_findings'
-    $huntHi = @($hunt | Where-Object { "$($_.Severity)" -eq 'high' -and "$($_.Rule)" -match 'Renamed LOLBin|side-load|Downloaded then executed|LSASS access|Office app spawned|proxy-execution|Admin-share staging|Defender (real-time|exclusion)|DCSync|Password spray|Web server spawned|Remote-access tunnel|ServiceDll tamper|authorized_keys|Svchost masquerade|Cross-process injection|C2-style named pipe|image tampering|Direct volume access|WMI event subscription' })
+    $huntHi = @($hunt | Where-Object { "$($_.Severity)" -eq 'high' -and "$($_.Rule)" -match 'Renamed LOLBin|side-load|Downloaded then executed|LSASS access|Office app spawned|proxy-execution|Admin-share|Defender (real-time|exclusion)|DCSync|Password spray|Web server spawned|Remote-access tunnel|ServiceDll tamper|authorized_keys|Svchost masquerade|Cross-process injection|C2-style named pipe|image tampering|Direct volume access|WMI event subscription|Sysmon configuration changed' })
     # v2.64: EcsConfigs-only 5007 exclusion - Features\EcsConfigs is Defender's tamper-protected,
     # platform-managed cloud-config key (rewritten on every engine sync), NOT a user-set exclusion.
     # A 'Defender exclusion configuration changed' finding that only touches EcsConfigs paths is
@@ -9431,7 +9549,12 @@ function Get-CompromiseVerdict {
     foreach ($c in $cov) { if ($c.Collected) { $covGot += $c.Weight } }
     $covN = @($cov | Where-Object { $_.Collected }).Count
     $covM = $cov.Count
-    $isAdminRun = if ($null -ne $script:EndpointAdmin) { [bool]$script:EndpointAdmin } else { Test-IsAdmin }
+    # v2.80 (T4/I2): $null EndpointAdmin (analyst-side Parse of a package - the flag was never
+    # set) is UNKNOWN, not non-elevated: do not Test-IsAdmin the ANALYST's token, do not apply
+    # the -15 penalty or the endpoint "NOT elevated" caveat; say the status is unknown instead.
+    $isAdminRun = $true
+    $endpointAdminUnknown = ($null -eq $script:EndpointAdmin)
+    if (-not $endpointAdminUnknown) { $isAdminRun = [bool]$script:EndpointAdmin }
     # v2.68 (B7): CoveragePercentUnadjusted is the fraction BEFORE the non-elevated -15 weight
     # correction - same Round/Max math, same 0..100 clamps applied to both values. Elevated runs
     # have no correction so the two properties are identical there by design; on non-elevated
@@ -9464,6 +9587,7 @@ function Get-CompromiseVerdict {
     # caveats = what would change this verdict
     $caveats = New-Object System.Collections.Generic.List[string]
     if (-not $isAdminRun) { $caveats.Add('Run was NOT elevated - several sources are incomplete or missing') }
+    if ($endpointAdminUnknown) { $caveats.Add('Endpoint elevation status unknown (parsed package) - coverage may reflect missing elevated sources') }
     if (-not $Sysmon) { $caveats.Add('No Sysmon on host - process injection / image-load / per-process network telemetry were not available') }
     if (Test-Path $evtxDir) {
         if ($script:LogStartDT) { $caveats.Add("Event-log analysis covered $(Get-LogRangeText) only - activity outside that window not assessed") }
@@ -10026,6 +10150,43 @@ function Invoke-RegenerateOutputs {
     }
 }
 
+function New-CaseManifest {
+    # v2.80 (T4/I3): shared manifest writer (New-Package + Parse-mode repack) so a repacked
+    # zip never ships stale per-file hashes. Writes manifest.txt for -ForDir: caller header
+    # lines + SCRIPT self-hash + TOOLS AVAILABLE + one SHA256 line per file (the manifest
+    # itself and *.zip excepted - the zip hash is appended by the caller after compression).
+    param([string]$ForDir, [string[]]$HeaderLines)
+    $manifest = @()
+    foreach ($l in $HeaderLines) { $manifest += $l }
+    $manifest += ""
+    try {
+        $selfHash = (Get-FileHash -LiteralPath $PSCommandPath -Algorithm SHA256).Hash
+        $manifest += "SCRIPT: Ophira v$ScriptVersion  SHA256: $selfHash"
+    } catch { $manifest += "SCRIPT: Ophira v$ScriptVersion  (self-hash unavailable)" }
+    $tDirM = Get-ToolsDir
+    if ($tDirM) {
+        $toolExes = Get-ChildItem -Path $tDirM -Recurse -File -Include 'hayabusa*.exe', 'chainsaw*.exe', 'vol.exe', '*winpmem*.exe', 'AmcacheParser*.exe', 'RBCmd*.exe', 'yr.exe' -ErrorAction SilentlyContinue
+        if ($toolExes) {
+            $manifest += "TOOLS AVAILABLE:"
+            foreach ($exe in $toolExes) {
+                $th = ''
+                try { $th = (Get-FileHash -LiteralPath $exe.FullName -Algorithm SHA256).Hash.Substring(0, 16) } catch { }
+                $manifest += "  $($exe.Name)  [$th...]"
+            }
+        }
+    }
+    $manifest += ""
+    $manifest += "{0,-70} {1,12} SHA256" -f "File", "SizeBytes"
+    $files = Get-ChildItem -LiteralPath $ForDir -Recurse -File | Where-Object { $_.Name -ne 'manifest.txt' -and $_.Name -notmatch '\.zip$' }
+    foreach ($f in ($files | Sort-Object FullName)) {
+        $h = ''
+        try { $h = (Get-FileHash -LiteralPath $f.FullName -Algorithm SHA256).Hash } catch { $h = 'HASH-ERROR' }
+        $rel = $f.FullName.Substring($ForDir.Length + 1)
+        $manifest += "{0,-70} {1,12} {2}" -f $rel, $f.Length, $h
+    }
+    $manifest | Set-Content -LiteralPath (Join-Path $ForDir 'manifest.txt') -Encoding UTF8
+}
+
 function New-Package {
     if (-not $script:SimpleUI -and $script:Verbosity -ge 1) { Write-Host "" }
     Write-CaseLog "Packaging case folder..." 'Cyan'
@@ -10065,33 +10226,7 @@ function New-Package {
     $manifest += "Host: $Computer  Collected: $($StartTime.ToString('u'))  Packaged: $((Get-Date).ToUniversalTime().ToString('u'))"
     $manifest += "Scope: every file in this folder is SHA256-hashed below (the manifest itself excepted - hash it after zip)."
     $manifest += "Custody: the case zip is the evidence unit; keep the hash of the zip with your case notes."
-    $manifest += ""
-    try {
-        $selfHash = (Get-FileHash -LiteralPath $PSCommandPath -Algorithm SHA256).Hash
-        $manifest += "SCRIPT: Ophira v$ScriptVersion  SHA256: $selfHash"
-    } catch { $manifest += "SCRIPT: Ophira v$ScriptVersion  (self-hash unavailable)" }
-    $tDirM = Get-ToolsDir
-    if ($tDirM) {
-        $toolExes = Get-ChildItem -Path $tDirM -Recurse -File -Include 'hayabusa*.exe', 'chainsaw*.exe', 'vol.exe', '*winpmem*.exe', 'AmcacheParser*.exe', 'RBCmd*.exe', 'yr.exe' -ErrorAction SilentlyContinue
-        if ($toolExes) {
-            $manifest += "TOOLS AVAILABLE:"
-            foreach ($exe in $toolExes) {
-                $th = ''
-                try { $th = (Get-FileHash -LiteralPath $exe.FullName -Algorithm SHA256).Hash.Substring(0, 16) } catch { }
-                $manifest += "  $($exe.Name)  [$th...]"
-            }
-        }
-    }
-    $manifest += ""
-    $manifest += "{0,-70} {1,12} SHA256" -f "File", "SizeBytes"
-    $files = Get-ChildItem -LiteralPath $CaseDir -Recurse -File | Where-Object { $_.Name -ne 'manifest.txt' -and $_.Name -notmatch '\.zip$' }
-    foreach ($f in ($files | Sort-Object FullName)) {
-        $h = ''
-        try { $h = (Get-FileHash -LiteralPath $f.FullName -Algorithm SHA256).Hash } catch { $h = 'HASH-ERROR' }
-        $rel = $f.FullName.Substring($CaseDir.Length + 1)
-        $manifest += "{0,-70} {1,12} {2}" -f $rel, $f.Length, $h
-    }
-    $manifest | Set-Content -LiteralPath (Join-Path $CaseDir 'manifest.txt') -Encoding UTF8
+    New-CaseManifest -ForDir $CaseDir -HeaderLines $manifest
 
     $zipPath = "$CaseDir.zip"
     $zipped = $false
@@ -10684,8 +10819,25 @@ function Invoke-ParseMode {
     # 4) re-pack if the input was a zip
     if ($tmp) {
         try {
+            # v2.80 (T4/I3): regenerate manifest.txt BEFORE re-zipping - the zip content changed
+            # (derived outputs rebuilt), stale endpoint hashes would lie. Keep the endpoint's
+            # original collection header lines, note the analyst-side refresh, refresh hashes,
+            # and append the PACKAGE SHA256 of the new zip after compression (same convention
+            # as New-Package).
+            $mfPath = Join-Path $caseDirP 'manifest.txt'
+            $mfHdr = @()
+            if (Test-Path -LiteralPath $mfPath) {
+                $origMf = @(Get-Content -LiteralPath $mfPath)
+                $mfCut = [Array]::IndexOf($origMf, '')
+                if ($mfCut -gt 0) { $mfHdr = @($origMf | Select-Object -First $mfCut) }
+            }
+            $mfHdr += "ANALYST-PARSED: Ophira v$ScriptVersion re-processed this package at $((Get-Date).ToUniversalTime().ToString('u')) - per-file hashes below were refreshed analyst-side; the PACKAGE SHA256 line appended after re-zipping is the hash of THIS package."
+            New-CaseManifest -ForDir $caseDirP -HeaderLines $mfHdr
             $items = Get-ChildItem -LiteralPath $caseDirP | Where-Object { $_.Name -ne 'memory' } | ForEach-Object { $_.FullName }
             Compress-Archive -Path $items -DestinationPath $Path -CompressionLevel Fastest -Force
+            $rpZipHash = (Get-FileHash -LiteralPath $Path -Algorithm SHA256).Hash
+            Add-Content -LiteralPath $mfPath -Encoding UTF8 -Value ""
+            Add-Content -LiteralPath $mfPath -Encoding UTF8 -Value "PACKAGE SHA256 ($([IO.Path]::GetFileName($Path))): $rpZipHash"
             Write-Host "Repacked: $Path" -ForegroundColor Green
         } catch { Write-Host "repack failed ($($_.Exception.Message)) - parsed files remain in $caseDirP" -ForegroundColor Yellow }
         Remove-Item $tmp -Recurse -Force -ErrorAction SilentlyContinue

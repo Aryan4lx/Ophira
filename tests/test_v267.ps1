@@ -231,7 +231,9 @@ if ($lines4.Count -ge 6100) {
     # hoisted reads added ~86 lines upstream of the processes top-30 sort - same report region)
     # window shifted 6127..6706 -> 6160..6739 (v2.79 cookbook in the help .NOTES added 33 lines
     # above [CmdletBinding()] - same report region)
-    $region4 = ($lines4[6160..6739] -join "`n")
+    # window shifted 6160..6739 -> 6237..6820 (v2.80 T4: Get-InvariantDate + M6 SafeRuleKey
+    # helpers + hayRaw/safeRuleMap capture added ~77 lines upstream of the report region)
+    $region4 = ($lines4[6236..6819] -join "`n")
     Check "B5: no bare [int]quoted casts left in the report region" (-not $region4.Contains('[int]"$('))
     Check "B5: no bare [double]quoted casts left in the report region" (-not $region4.Contains('[double]"$('))
     Check "B5: no bare [long]quoted casts left in the report region" (-not $region4.Contains('[long]"$('))

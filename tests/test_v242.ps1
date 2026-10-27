@@ -57,7 +57,7 @@ Check "wiring: coverage checks use Test-CaseCsv" (([regex]::Matches($src, 'Test-
 Check "wiring: canary B-side reads are flat-mapped" (([regex]::Matches($src, 'Import-CsvFlatMapped ')).Count -ge 10)
 Check "wiring: evidence index recurses into category folders" ($src -match "(?s)Evidence index.*?-Recurse")
 Check "wiring: focus scan recurses with subdir exclusions" (($src -match [regex]::Escape("-Filter '*.csv' -File -Recurse")) -and ($src -match [regex]::Escape("@('sigma_rules', 'evtx_ecmd', 'recmd_out') -notcontains")))
-Check "enrichment: timeline table + client-side filter rendered" (($src -match "name='timeline'") -and ($src -match 'tlFilter') -and ($src -match 'Newest 150 of'))
+Check "enrichment: timeline table + client-side filter rendered" (($src -match "name='timeline'") -and ($src -match 'tlFilter') -and ($src -match [regex]::Escape('Newest $($tlShow.Count) of')))
 Check "enrichment: entities expanded to 12 + 30-min context + focus hint" (($src -match [regex]::Escape('Select-Object -First 12)')) -and ($src -match 'AddMinutes\(-30\)') -and ($src -match '-Mode Focus -ProcessName'))
 Check "enrichment: case narrative gains the focus paragraph" ($src -match 'FOCUSED ANALYSIS')
 

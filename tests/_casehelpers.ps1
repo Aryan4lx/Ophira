@@ -6,7 +6,7 @@ $hsrc = if ($src) { $src } else { Get-Content -LiteralPath $repoScript -Raw }
 $hm = [regex]::Match($hsrc, '(?s)\$script:CsvCatMap = @\{.*?\r?\n\}')
 if (-not $hm.Success) { throw '_casehelpers: CsvCatMap extract failed' }
 Invoke-Expression $hm.Value
-foreach ($hfn in @('Get-CaseCsvPath', 'Test-CaseCsv', 'Get-CaseCsvFullPath', 'Import-CsvFlatMapped', 'ConvertTo-HtmlEsc', 'Get-SectionAnchorForSource', 'ConvertTo-CaseFileLink', 'Test-IsUserWritablePath', 'Get-UserProfileList', 'Find-AdsOnPe', 'Test-WebshellContent')) {
+foreach ($hfn in @('Get-CaseCsvPath', 'Test-CaseCsv', 'Get-CaseCsvFullPath', 'Import-CsvFlatMapped', 'ConvertTo-HtmlEsc', 'Get-SectionAnchorForSource', 'ConvertTo-CaseFileLink', 'Test-IsUserWritablePath', 'Get-UserProfileList', 'Find-AdsOnPe', 'Test-WebshellContent', 'Get-InvariantDate', 'Get-SafeRuleKey', 'Get-SafeRuleKeyMap', 'Resolve-SafeRuleKey')) {
     $hm2 = [regex]::Match($hsrc, "(?s)function $hfn \{.*?\r?\n\}")
     if ($hm2.Success) { Invoke-Expression $hm2.Value }
 }
