@@ -62,6 +62,8 @@ foreach ($n in @('Get-FilteredEvents')) {
 $saved = @{}
 function Save-Rows { param([string]$Name, $Rows) $script:saved[$Name] = $Rows }
 function Write-CaseLog { param([string]$Message, [string]$Color = 'Gray') }
+# v2.83: module 4.10 now also saves esent_ntds via a helper this suite does not exercise
+function Get-EsentNtdsRows { param($Start) return @() }
 function Export-Evtx { param([string]$LogName, [string]$FileName) $script:exported = $FileName }
 function Get-LogStart { $null }
 $CsvDir = Join-Path $fx 'csv'

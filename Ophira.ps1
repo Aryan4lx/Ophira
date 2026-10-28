@@ -1,5 +1,5 @@
 <#
-Ophira v2.82  -  Windows Incident Response Triage Toolkit
+Ophira v2.83  -  Windows Incident Response Triage Toolkit
 READ-ONLY by design: never modifies the system, only reads and copies data
 into its own output folder. Intended to be handed to a system owner or run
 by a responder during early triage / threat hunting.
@@ -356,7 +356,7 @@ param(
     [switch]$ExitVerdict
 )
 
-$ScriptVersion = "2.82"
+$ScriptVersion = "2.83"
 $ErrorActionPreference = 'Continue'
 $ProgressPreference = 'SilentlyContinue'
 
@@ -548,6 +548,7 @@ $script:CsvCatMap = @{
     'autoruns_runkeys' = 'persistence'; 'autoruns_startup_folders' = 'persistence'
     'services' = 'persistence'; 'services_flagged' = 'persistence'
     'scheduled_tasks' = 'persistence'; 'scheduled_tasks_flagged' = 'persistence'
+    'scheduled_taskcache' = 'persistence'; 'task_deletions' = 'persistence'; 'esent_ntds' = 'persistence'
     'wmi_event_filters' = 'persistence'; 'wmi_event_consumers' = 'persistence'; 'wmi_bindings' = 'persistence'
     'asep_sweep' = 'persistence'
     # NETWORK
@@ -564,7 +565,8 @@ $script:CsvCatMap = @{
     'sysmon_file_create' = 'logs'; 'sysmon_file_delete' = 'logs'
     'sysmon_remote_thread' = 'logs'; 'sysmon_pipes' = 'logs'
     'sysmon_proc_tamper' = 'logs'; 'sysmon_raw_access' = 'logs'; 'sysmon_wmi' = 'logs'
-    'shimcache' = 'artifacts'
+    'shimcache' = 'artifacts'; 'shimcache_exec' = 'timeline'
+    'radar_exec' = 'artifacts'; 'appswitched' = 'artifacts'
     'rdp_localsession' = 'logs'; 'rdp_connections' = 'logs'; 'system_events' = 'logs'; 'system_new_services' = 'logs'
     'hayabusa_timeline' = 'logs'; 'hayabusa_report' = 'logs'; 'logon_summary' = 'logs'
     'ps_decoded_commands' = 'logs'; 'yara_hits' = 'logs'; 'yara_scanned' = 'logs'
@@ -2250,6 +2252,108 @@ function Get-UserAssistRows {
     return $rows
 }
 
+function Get-RegKeyLastWrite {
+    # v2.83 (R47): PS 5.1's registry provider does not expose LastWriteTime (that arrived in
+    # PS7) - P/Invoke RegQueryInfoKey instead. Returns $null on any failure so callers
+    # degrade to an empty timestamp instead of crashing the module.
+    param([string]$KeyPath)
+    try {
+        if (-not $script:OphiraRegLwt) {
+            try {
+                $script:OphiraRegLwt = Add-Type -TypeDefinition @'
+    using System;
+    using System.Runtime.InteropServices;
+    using Microsoft.Win32.SafeHandles;
+    public static class OphiraRegLwt {
+        [DllImport("advapi32.dll", CharSet = CharSet.Unicode)]
+        public static extern int RegQueryInfoKey(SafeRegistryHandle hKey, IntPtr lpClass, IntPtr lpcbClass, IntPtr lpReserved, IntPtr lpcSubKeys, IntPtr lpcbMaxSubKeyLen, IntPtr lpcbMaxClassLen, IntPtr lpcValues, IntPtr lpcbMaxValueNameLen, IntPtr lpcbMaxValueLen, IntPtr lpcbSecurityDescriptor, out long lpftLastWriteTime);
+    }
+'@ -PassThru -ErrorAction Stop
+            } catch { $script:OphiraRegLwt = 'failed' }
+        }
+        if ($script:OphiraRegLwt -is [type]) {
+            $k = Get-Item -LiteralPath $KeyPath -ErrorAction Stop
+            $ft = [long]0
+            $rc = [OphiraRegLwt]::RegQueryInfoKey($k.Handle, [IntPtr]::Zero, [IntPtr]::Zero, [IntPtr]::Zero, [IntPtr]::Zero, [IntPtr]::Zero, [IntPtr]::Zero, [IntPtr]::Zero, [IntPtr]::Zero, [IntPtr]::Zero, [IntPtr]::Zero, [ref]$ft)
+            if ($rc -eq 0 -and $ft -gt 0) { return [DateTime]::FromFileTime($ft) }
+        }
+    } catch { }
+    return $null
+}
+
+function Get-RadarRows {
+    # v2.83 (R47): RADAR heap-leak DiagnosedApplications - Windows memory diagnostics recorded
+    # these apps crossing the heap threshold, so the KEY LastWriteTime is proof the binary
+    # executed on or before it. Server-friendly execution evidence where Prefetch is disabled.
+    $rows = @()
+    try {
+        $radarRoot = 'HKLM:\SOFTWARE\Microsoft\RADAR\Heap Leak Detection\DiagnosedApplications'
+        if (Test-Path $radarRoot) {
+            foreach ($k in @(Get-ChildItem $radarRoot -ErrorAction SilentlyContinue)) {
+                $lwt = $null
+                try { $lwt = Get-RegKeyLastWrite $k.PSPath } catch { }
+                $rows += [pscustomobject]@{ Application = $k.PSChildName; KeyLastWrite = "$lwt" }
+            }
+        }
+    } catch { }
+    return $rows
+}
+
+function Get-AppSwitchedRows {
+    # v2.83 (R48): Explorer FeatureUsage\AppSwitched - taskbar focus-switch COUNTERS per app.
+    # Count-only (no timestamps, no MRU order): context for what the interactive user actually
+    # switched to - an interactive attacker session shows here too.
+    $rows = @()
+    try {
+        foreach ($sid in @(Get-ChildItem 'Registry::HKEY_USERS' -ErrorAction SilentlyContinue | Where-Object { $_.PSChildName -match '^S-1-5-21-' })) {
+            $fu = "$($sid.PSPath)\Software\Microsoft\Windows\CurrentVersion\Explorer\FeatureUsage\AppSwitched"
+            if (-not (Test-Path $fu)) { continue }
+            $prop = Get-ItemProperty -Path $fu -ErrorAction SilentlyContinue
+            if (-not $prop) { continue }
+            foreach ($p in ($prop.PSObject.Properties | Where-Object { $_.Name -notmatch '^PS' })) {
+                $rows += [pscustomobject]@{ User = $sid.PSChildName; App = $p.Name; SwitchCount = $p.Value }
+            }
+        }
+    } catch { }
+    return $rows
+}
+
+function Get-EsentNtdsRows {
+    # v2.83 (R46): ESENT 325/326 rows mentioning ntds.dit - the AD database was opened by
+    # something. Legit: VSS/wbengine backup engines. Theft prep (ntdsutil IFM, custom tooling)
+    # logs the same event class - hence the BackupPattern flag; the verdict only weights the
+    # non-backup shape.
+    param($Start)
+    $rows = @()
+    try {
+        $ev = @(Get-FilteredEvents -LogName 'Application' -Ids @(325, 326) -Start $Start -MaxMsg 300)
+        foreach ($e in $ev) {
+            if ("$($e.Message)" -notmatch '(?i)ntds') { continue }
+            $backup = [bool]("$($e.Message)" -match '(?i)wbengine|volume shadow|vss|backup')
+            $rows += [pscustomobject]@{ Time = $e.TimeCreated; EventId = $e.Id; BackupPattern = $backup; Message = "$($e.Message)" }
+        }
+    } catch { }
+    return $rows
+}
+
+function Get-TaskDeletionRows {
+    # v2.83 (R45): TaskScheduler 4699 - a task was DELETED. Deleting the registry keys + XML
+    # does not unload an already-loaded task until reboot, so deletions pair with TaskCache
+    # anomalies (scheduled_taskcache.csv) for the disappearing-task anti-forensics trick.
+    param($Start)
+    $rows = @()
+    try {
+        $ev = @(Get-FilteredEvents -LogName 'Microsoft-Windows-TaskScheduler/Operational' -Ids @(4699) -Start $Start -MaxMsg 200)
+        foreach ($e in $ev) {
+            $task = ''; $user = ''
+            if ("$($e.Message)" -match 'deleted task\s+"?([^"\r\n]+?)"?\s+for user\s+"?([^"\r\n]+?)"?\.?\s*$') { $task = $Matches[1]; $user = $Matches[2] }
+            elseif ("$($e.Message)" -match '"([^"]+)"') { $task = $Matches[1] }
+            $rows += [pscustomobject]@{ Time = $e.TimeCreated; TaskName = $task; User = $user; Message = "$($e.Message)" }
+        }
+    } catch { }
+    return $rows
+}
+
 function Invoke-NativeTool {
     param([string]$ExePath, [string[]]$ToolArgs, [string]$WorkingDir = '', [switch]$QuietLog, [switch]$CaptureOut)
     $out = ''; $err = ''
@@ -2437,7 +2541,8 @@ $script:SharedFunctions = @(
     'Test-IsPublicIp', 'Test-IsUserWritablePath', 'Get-SignatureInfo', 'Get-SysmonState',
     'Get-UserProfileList', 'Get-UserAssistRows', 'ConvertTo-Rot13', 'Get-FilteredEvents', 'Export-Evtx',
     'Import-CaseCsv', 'Invoke-BrowserIocXref', 'Get-EventDataRows', 'Get-IisW3cRows', 'Get-StartupInfoRows', 'Get-WerReportRows', 'Test-SigmaSelfNoise', 'Remove-SigmaDuplicateEvents', 'Get-IpCloudClass', 'Get-LocalAdminMembers',
-    'Find-AdsOnPe', 'Test-WebshellContent', 'Test-IsAdmin', 'Out-Flash', 'Get-DotNetRelease', 'Get-LevenshteinDistance'
+    'Find-AdsOnPe', 'Test-WebshellContent', 'Test-IsAdmin', 'Out-Flash', 'Get-DotNetRelease', 'Get-LevenshteinDistance',
+    'Get-RegKeyLastWrite', 'Get-RadarRows', 'Get-AppSwitchedRows', 'Get-EsentNtdsRows', 'Get-TaskDeletionRows'
 )
 
 $script:ModuleWorkerText = @'
@@ -2819,6 +2924,35 @@ $script:Modules = @(
                     Flags = ($flags -join ';')
                 }
             }
+            # v2.83 (R45): TaskCache registry side - ghost/hidden-task checks. Deleting the
+            # Tree key + Tasks key + XML does NOT unload an already-loaded task until reboot,
+            # and deleting the SD value HIDES the task from schtasks/GUI while it keeps
+            # running. Tasks\{guid} with no Tree\GID link or missing SD = tamper signal.
+            $tcRows = New-Object System.Collections.Generic.List[object]
+            try {
+                $tcRoot = 'HKLM:\SOFTWARE\Microsoft\Windows NT\CurrentVersion\Schedule\TaskCache'
+                $treeGids = @{}
+                if (Test-Path "$tcRoot\Tree") {
+                    foreach ($k in @(Get-ChildItem "$tcRoot\Tree" -Recurse -ErrorAction SilentlyContinue)) {
+                        $gid = ''
+                        try { $gid = "$($k.GetValue('GID'))".Trim() } catch { }
+                        if ($gid) { $treeGids[$gid.ToLower()] = $true }
+                        $tp = ($k.Name -replace '^.*TaskCache\\Tree', '')
+                        $null = $tcRows.Add([pscustomobject]@{ Kind = 'tree'; TaskPath = $tp; Guid = $gid; SdPresent = ''; Flags = '' })
+                    }
+                }
+                if (Test-Path "$tcRoot\Tasks") {
+                    foreach ($k in @(Get-ChildItem "$tcRoot\Tasks" -ErrorAction SilentlyContinue)) {
+                        $sd = $false
+                        try { $sd = ($null -ne $k.GetValue('SD')) } catch { }
+                        $tflags = @()
+                        if (-not $sd) { $tflags += 'SD-MISSING (hidden from schtasks/GUI)' }
+                        if (-not $treeGids.ContainsKey($k.PSChildName.ToLower())) { $tflags += 'ORPHANED (no Tree link)' }
+                        $null = $tcRows.Add([pscustomobject]@{ Kind = 'tasks'; TaskPath = ''; Guid = $k.PSChildName; SdPresent = $sd; Flags = ($tflags -join ';') })
+                    }
+                }
+            } catch { }
+            Save-Rows -Name 'scheduled_taskcache' -Rows $tcRows.ToArray()
             Save-Rows -Name 'scheduled_tasks' -Rows $rows
             Save-Rows -Name 'scheduled_tasks_flagged' -Rows @($rows | Where-Object { $_.Flags })
         } }
@@ -3259,6 +3393,11 @@ $script:Modules = @(
             $shareEv = Get-EventDataRows -LogName 'Security' -Id @(5140, 5145) -Start $start -Cap 8000 -Fields ([ordered]@{ Account = 'SubjectUserName'; LogonId = 'SubjectLogonId'; ShareName = 'ShareName'; RelativeTargetName = 'RelativeTargetName'; SourceIp = 'IpAddress'; AccessList = 'AccessList' })
             Save-Rows -Name 'security_share_access' -Rows $shareEv
             if ($shareEv.Count -ge 8000) { Write-CaseLog "    share access: capped at 8000 rows - wide file-share activity (file server?)" 'DarkGray' }
+            # v2.83 (R45): task DELETIONS from the TaskScheduler operational log + evtx export
+            $tsDel = @(Get-TaskDeletionRows $start)
+            Save-Rows -Name 'task_deletions' -Rows $tsDel
+            if ($tsDel.Count -gt 0) { Write-CaseLog "    scheduled task DELETIONS (4699): $($tsDel.Count)" 'Yellow' }
+            Export-Evtx -LogName 'Microsoft-Windows-TaskScheduler/Operational' -FileName 'TaskScheduler_Operational.evtx'
             Export-Evtx -LogName 'Security' -FileName 'Security.evtx'
         } }
     [pscustomobject]@{ Id = '4.2'; Cat = 'LOGS'; Name = 'PowerShell operational log (4104 script blocks)'; Default = $true; Quick = $false;
@@ -3650,6 +3789,8 @@ $script:Modules = @(
             if ($ev.Count -gt 0) {
                 Write-CaseLog "    application events: $($ev.Count) (crashes/installs - crashed attacker tools show up here) -> csv\application_events.csv" 'Gray'
             }
+            # v2.83 (R46): ESENT 325/326 mentioning ntds.dit - the AD database was opened
+            Save-Rows -Name 'esent_ntds' -Rows (Get-EsentNtdsRows $start)
             Export-Evtx -LogName 'Application' -FileName 'Application.evtx'
         } }
     [pscustomobject]@{ Id = '5.1'; Cat = 'ARTIFACTS'; Name = 'Prefetch files'; Default = $true; Quick = $false;
@@ -3700,6 +3841,9 @@ $script:Modules = @(
                 catch { & esentutl.exe /y "$amc" /d "$out" 2>&1 | Out-Null }
             }
             Save-Rows -Name 'userassist' -Rows (Get-UserAssistRows)
+            # v2.83 (R47/R48): RADAR heap-leak execution evidence + AppSwitched counters
+            Save-Rows -Name 'radar_exec' -Rows (Get-RadarRows)
+            Save-Rows -Name 'appswitched' -Rows (Get-AppSwitchedRows)
         } }
     [pscustomobject]@{ Id = '5.3'; Cat = 'ARTIFACTS'; Name = 'SRUM database (larger, uses VSS copy)'; Default = $true; Quick = $false;
         Run = {
@@ -5403,7 +5547,8 @@ function Get-SectionAnchorForSource {
         '^(ioc_hits|flash_ioc_hits)'                   { 'ioc'; break }
         '^(flash_process_scored|processes|process_hashes|sysmon_proc_create|sysmon_proc_tamper)' { 'processes'; break }
         '^(security_auth|bruteforce|rdp_|logon)'       { 'logons'; break }
-        '^(autoruns|asep|services|scheduled_tasks|wmi_|sysmon_wmi|registry)' { 'persistence'; break }
+        '^(autoruns|asep|services|scheduled_task|task_deletions|esent_ntds)' { 'persistence'; break }
+        '^(radar_exec|appswitched)'                    { 'snapshot'; break }
         '^(mft_recent|usn_write_bursts|prefetch|shellbags|sysmon_file)' { 'filesystem'; break }
         '^(flash_public_connections|connections|sysmon_network|srum_|net_)' { 'network'; break }
         '^(sysmon_dns|dns_)'                           { 'beacons'; break }
@@ -5675,6 +5820,14 @@ function New-HtmlReport {
     $authEv = @(Import-CaseCsv 'security_auth_events.csv')
     $runKeys = @(Import-CaseCsv 'autoruns_runkeys.csv')
     $tasksFlag = @(Import-CaseCsv 'scheduled_tasks_flagged.csv')
+    # v2.83: ghost/hidden tasks + ntds access + execution-evidence extras
+    $taskCacheRows = @(Import-CaseCsv 'scheduled_taskcache.csv')
+    $taskCacheAnom = @($taskCacheRows | Where-Object { "$($_.Flags)" })
+    $taskDel = @(Import-CaseCsv 'task_deletions.csv')
+    $esentRows = @(Import-CaseCsv 'esent_ntds.csv')
+    $scExec = @(Import-CaseCsv 'shimcache_exec.csv')
+    $radarRows = @(Import-CaseCsv 'radar_exec.csv')
+    $aswRows = @(Import-CaseCsv 'appswitched.csv')
     $svcFlag = @(Import-CaseCsv 'services_flagged.csv')
     $wmiBind = @(Import-CaseCsv 'wmi_bindings.csv')
     $deltaRows = @(Import-CaseCsv 'delta_new.csv')
@@ -5866,14 +6019,14 @@ tr.techrow{cursor:pointer}
         processes = $scored.Count
         sigma = $hayRows.Count
         logons = $authEv.Count + $authSum.Count + $brute.Count + $secNav
-        persistence = $tasksFlag.Count + $svcFlag.Count + $wmiBind.Count + $runKeys.Count + $asepHot.Count + $certHot.Count
+        persistence = $tasksFlag.Count + $svcFlag.Count + $wmiBind.Count + $runKeys.Count + $asepHot.Count + $certHot.Count + $taskCacheAnom.Count + $taskDel.Count + $esentRows.Count
         filesystem = $usnBursts.Count + $pfParsed.Count + $mftRecent.Count
         beacons = $beacons.Count + $dnsBeacons.Count
         network = $pubConns.Count
         drivers = $lolHits.Count
         hunt = $huntRows.Count + $liveScan.Count
         entities = $entNav
-        snapshot = $defStatus.Count + $defThreats.Count + $credSweep.Count + $savedCreds.Count + $rdpTgt.Count + $bitsJobs.Count + $memMfR.Count + $browserIocR.Count + $posture.Count
+        snapshot = $defStatus.Count + $defThreats.Count + $credSweep.Count + $savedCreds.Count + $rdpTgt.Count + $bitsJobs.Count + $memMfR.Count + $browserIocR.Count + $posture.Count + $radarRows.Count + $aswRows.Count
         timeline = $tlRows.Count
         focus = if ($ft) { ConvertTo-SafeInt "$($ft.HitCount)" } else { 0 }
     }
@@ -6525,6 +6678,32 @@ tr.techrow{cursor:pointer}
         }
         $null = $sb.AppendLine("</table>")
     }
+    if ($taskCacheAnom.Count -gt 0) {
+        $persAny = $true
+        $null = $sb.AppendLine("<h3>Task cache anomalies (ghost / hidden scheduled tasks)</h3><table><tr><th>Kind</th><th>Guid</th><th>Task path</th><th>SD present</th><th>Flags</th></tr>")
+        foreach ($t4 in ($taskCacheAnom | Select-Object -First 40)) {
+            $null = $sb.AppendLine("<tr><td>$(ConvertTo-HtmlEsc $t4.Kind)</td><td class='path'>$(ConvertTo-HtmlEsc $t4.Guid)</td><td class='path'>$(ConvertTo-HtmlEsc $t4.TaskPath)</td><td>$(ConvertTo-HtmlEsc $t4.SdPresent)</td><td class='crit'>$(ConvertTo-HtmlEsc $t4.Flags)</td></tr>")
+        }
+        $null = $sb.AppendLine("</table><div class='meta'>Deleting a task's Tree key + Tasks key + XML does not unload an already-loaded task until reboot; deleting the SD value hides it from schtasks/GUI while it still runs. ORPHANED = Tasks\{guid} with no Tree\GID link. Source: csv\scheduled_taskcache.csv</div>")
+    }
+    if ($taskDel.Count -gt 0) {
+        $persAny = $true
+        $null = $sb.AppendLine("<h3>Scheduled task deletions (EID 4699)</h3><table><tr><th>Time</th><th>Task</th><th>User</th></tr>")
+        foreach ($t5 in ($taskDel | Select-Object -First 25)) {
+            $null = $sb.AppendLine("<tr><td>$(ConvertTo-HtmlEsc $t5.Time)</td><td class='path'>$(ConvertTo-HtmlEsc $t5.TaskName)</td><td>$(ConvertTo-HtmlEsc $t5.User)</td></tr>")
+        }
+        $null = $sb.AppendLine("</table><div class='meta'>Deletion alone is normal ops - correlate with the TaskCache anomalies above and recent 4698 installs. Source: csv\task_deletions.csv</div>")
+    }
+    if ($esentRows.Count -gt 0) {
+        $persAny = $true
+        $null = $sb.AppendLine("<h3>ntds.dit access (ESENT 325/326)</h3><table><tr><th>Time</th><th>Pattern</th><th>Event</th></tr>")
+        foreach ($e5 in ($esentRows | Select-Object -First 25)) {
+            $pat5 = if ("$($e5.BackupPattern)" -eq 'True') { 'backup-pattern (verify schedule)' } else { 'NON-BACKUP - possible AD database theft' }
+            $cls5 = if ("$($e5.BackupPattern)" -eq 'True') { 'info' } else { 'crit' }
+            $null = $sb.AppendLine("<tr><td>$(ConvertTo-HtmlEsc $e5.Time)</td><td class='$cls5'>$(ConvertTo-HtmlEsc $pat5)</td><td class='path'>$(ConvertTo-HtmlEsc $e5.Message)</td></tr>")
+        }
+        $null = $sb.AppendLine("</table><div class='meta'>Something opened the Active Directory database. VSS/wbengine backup engines are the benign pattern; ntdsutil IFM or custom tooling is credential-theft prep (T1003.003). Source: csv\esent_ntds.csv</div>")
+    }
     if ($svcFlag.Count -gt 0) {
         $persAny = $true
         $null = $sb.AppendLine("<h3>Flagged services</h3><table><tr><th>Service</th><th>Binary</th><th>Flags</th></tr>")
@@ -6984,6 +7163,22 @@ tr.techrow{cursor:pointer}
         }
         $null = $sb.AppendLine("</table><div class='meta'>BITS is abused for stealthy persistence/download. Source: csv\bits_jobs.csv</div>")
     }
+    if ($radarRows.Count -gt 0) {
+        $snapAny = $true
+        $null = $sb.AppendLine("<h3>RADAR diagnosed applications (execution evidence)</h3><table><tr><th>Application</th><th>Key last write (executed on or before)</th></tr>")
+        foreach ($r6 in ($radarRows | Select-Object -First 20)) {
+            $null = $sb.AppendLine("<tr><td class='path'>$(ConvertTo-HtmlEsc $r6.Application)</td><td>$(ConvertTo-HtmlEsc $r6.KeyLastWrite)</td></tr>")
+        }
+        $null = $sb.AppendLine("</table><div class='meta'>Windows RADAR memory diagnostics recorded these apps crossing the heap threshold - the key's LastWriteTime is execution evidence that survives Prefetch deletion and works on servers with Prefetch disabled. Source: csv\radar_exec.csv</div>")
+    }
+    if ($aswRows.Count -gt 0) {
+        $snapAny = $true
+        $null = $sb.AppendLine("<h3>App focus switches (taskbar FeatureUsage)</h3><table><tr><th>User</th><th>App</th><th>Switches</th></tr>")
+        foreach ($a3 in (@($aswRows | Sort-Object -Property @{Expression = { [int]($_.SwitchCount) }; Descending = $true } -ErrorAction SilentlyContinue) | Select-Object -First 15)) {
+            $null = $sb.AppendLine("<tr><td>$(ConvertTo-HtmlEsc $a3.User)</td><td class='path'>$(ConvertTo-HtmlEsc $a3.App)</td><td>$(ConvertTo-HtmlEsc $a3.SwitchCount)</td></tr>")
+        }
+        $null = $sb.AppendLine("</table><div class='meta'>Counters only (no timestamps) - what the interactive user actually switched to. An interactive attacker session shows here too. Source: csv\appswitched.csv</div>")
+    }
     if ($memMfR.Count -gt 0) {
         $snapAny = $true
         $null = $sb.AppendLine("<h3>Memory analysis: malfind (possible code injection)</h3><table><tr><th>Process</th><th>PID</th><th>Protection</th></tr>")
@@ -7017,6 +7212,19 @@ tr.techrow{cursor:pointer}
     $tlSources = @($tlAll | ForEach-Object { "$($_.Source)" } | Sort-Object -Unique)
     $null = $sb.AppendLine("<a name='timeline'></a><h2>Master timeline (gathered evidence chronology)</h2>")
     $null = $sb.AppendLine("<div class='card'>The full chronology lives in <b>csv\$(ConvertTo-HtmlEsc (Get-CaseCsvPath 'supertimeline'))</b> ($(ConvertTo-HtmlEsc $tlAll.Count) events from $($tlSources.Count) evidence sources - open it in Excel/Timeline Explorer and filter by Timestamp). Evidence sources woven: $(ConvertTo-HtmlEsc ($tlSources -join ', ')). Per-source row caps (200-5000 per source) keep the file bounded - when a cap bites, the NEWEST events of that source are kept, and the total file is capped at the newest 120,000 events. Scanner conclusions (Sigma detections, hunt findings, beacons) are intentionally NOT part of it - they have their own sections above. For windowed pivots with per-source/busiest-minute summaries run <b>-Mode Timeline</b>.</div>")
+    if ($scExec.Count -gt 0) {
+        $scNo = @($scExec | Where-Object { $_.Executed -eq 'no' })
+        $scYes = @($scExec | Where-Object { $_.Executed -eq 'yes' })
+        $null = $sb.AppendLine("<h3>Shimcache executed-flag (Win10+ records, decoded from the raw entry blob)</h3>")
+        $null = $sb.AppendLine("<div class='meta'>$($scYes.Count) executed-flag / $($scNo.Count) not-executed-flag of $($scExec.Count) decoded entries. The flag is CONFIDENCE, not proof: a right-click context-menu open can set it without execution, and flag=0 is not evidence of non-execution. Only non-native binaries get shimcache entries at all on Win10+. Compare the not-executed rows against amcache/prefetch/BAM timestamps for timestamp-scrub detection. Source: csv\shimcache_exec.csv</div>")
+        if ($scNo.Count -gt 0) {
+            $null = $sb.AppendLine("<details><summary>$($scNo.Count) entries flagged NOT executed</summary><table><tr><th>Path</th><th>Last modified</th><th>Executed</th></tr>")
+            foreach ($s3 in ($scNo | Select-Object -First 30)) {
+                $null = $sb.AppendLine("<tr><td class='path'>$(ConvertTo-HtmlEsc $s3.Path)</td><td>$(ConvertTo-HtmlEsc $s3.LastModified)</td><td>$(ConvertTo-HtmlEsc $s3.Executed)</td></tr>")
+            }
+            $null = $sb.AppendLine("</table></details>")
+        }
+    }
     if ($tlAll.Count -gt 0) {
         # v2.59: per-day activity sparkline - the case's shape at a glance before the newest-150 table
         # task 10: bars only for days inside the clamped display window ($tlCut from the banner
@@ -7312,6 +7520,12 @@ tr.techrow{cursor:pointer}
         'connections'                     = 'Full connection table (netstat) at collection time'
         'connections_public_established'  = 'ESTABLISHED public-IP connections - C2 candidates'
         'dns_cache'                       = 'DNS resolver cache - look up domains malware resolved recently'
+    'scheduled_taskcache'             = 'TaskCache registry side (Tree + Tasks keys) - ghost/hidden-task cross-check; SD-MISSING/ORPHANED flags are tamper signals'
+    'task_deletions'                  = 'EID 4699 scheduled task DELETIONS (TaskScheduler log) - pairs with TaskCache anomalies for the disappearing-task trick'
+    'esent_ntds'                      = 'ESENT 325/326 events mentioning ntds.dit - the AD database was opened; BackupPattern=True rows are usually legit backups'
+    'shimcache_exec'                  = 'Shimcache entries with the Win10+ executed-flag decoded (last 4 record bytes) - flag=0 is context, never proof of non-execution'
+    'radar_exec'                      = 'RADAR heap-leak DiagnosedApplications - key LastWriteTime = executed on or before that time (server-friendly execution evidence)'
+    'appswitched'                     = 'Explorer FeatureUsage AppSwitched counters - taskbar focus-switch counts per app (no timestamps; user-behavior context)'
         'connections_dns'                 = 'Public connections resolved via the DNS cache (CNAME chains walked) - what each remote IP actually was'
         'arp_table'                       = 'ARP cache - hosts on the local segment'
         'logon_sessions'                  = 'Active logon sessions (who is on the box right now)'
@@ -7519,6 +7733,12 @@ tr.techrow{cursor:pointer}
         'delta_new'                       = 'nothing NEW since the previous collection (empty is good), or this is the first collection so there is no baseline to diff'
         'dns_beacon_candidates'           = 'needs 15+ combined Sysmon network/DNS events in the window to run (telemetry too thin), or no regular-interval DNS beacons found'
         'dns_cache'                       = 'resolver cache empty - flushed, just booted, or no name resolution since boot'
+    'scheduled_taskcache'             = 'TaskCache keys not enumerable (needs admin) or the Schedule service store is empty - check the elevation caveats'
+    'task_deletions'                  = 'no EID 4699 task deletions in the window (empty is good - bulk deletions are an anti-forensics tell)'
+    'esent_ntds'                      = 'no ntds.dit access events - expected on non-DC hosts (ESENT only logs AD database opens on domain controllers)'
+    'shimcache_exec'                  = 'shimcache parse pending (module 5.4 / chainsaw) or no Win10+ entries to decode - see parse_needed.csv'
+    'radar_exec'                      = 'RADAR has no diagnosed apps - common on workstations (memory diagnostics mostly fire on servers)'
+    'appswitched'                     = 'no AppSwitched counters - FeatureUsage absent for the profiles or no interactive GUI session history'
         'domain_info'                     = 'Win32_ComputerSystem returned nothing - the WMI repository may be damaged on this host (itself an IR-relevant condition; check collection.log for other WMI failures)'
         'entities_accounts'               = 'joins logons/RDP/console history per account - nothing to join when those sources are empty'
         'entities_binaries'               = 'joins execution/persistence/network/verdict evidence per binary - nothing to join when the underlying sources are empty'
@@ -7774,6 +7994,8 @@ function New-SuperTimeline {
     & $weave 'security_proc_events' 5000 { param($r) @("$($r.Time)", 'process created (4688)', "$($r.Account)", (& $leaf $r.NewProcess), "parent $(& $leaf $r.ParentProcess) | $($r.CommandLine)") }
     & $weave 'security_share_access' 5000 { param($r) @("$($r.Time)", "share access (EID $($r.EventId))", "$($r.Account)", "$("$($r.ShareName)" -replace '^[\*\\\s]+', '')\$("$($r.RelativeTargetName)" -replace '\\', '/')", "from $($r.SourceIp) [$(("$($r.AccessList)" -replace '%%', ''))]") }
     & $weave 'security_task_install' 500 { param($r) @("$($r.Time)", 'scheduled task installed (4698)', "$($r.Account)", "$($r.TaskName)", "$($r.Command)") }
+    & $weave 'task_deletions' 200 { param($r) @("$($r.Time)", 'scheduled task deleted (4699)', "$($r.User)", (& $leaf $r.TaskName), "$($r.Message)") }
+    & $weave 'esent_ntds' 200 { param($r) @("$($r.Time)", 'ntds.dit accessed (ESENT 325/326)', '', '', "$(if ("$($r.BackupPattern)" -eq 'True') { 'backup-pattern' } else { 'NON-BACKUP - theft prep?' }) | $($r.Message)") }
     & $weave 'security_kerberos' 3000 { param($r) @("$($r.Time)", "kerberos (EID $($r.EventId))", "$($r.Account)", "$($r.IpAddress)", "svc=$($r.Service) enc=$($r.TicketEnc) preauth=$($r.PreAuth)") }
     & $weave 'security_ds_access' 3000 { param($r) @("$($r.Time)", "directory service (EID $($r.EventId))", "$($r.Account)", "$($r.Object)$("$($r.ObjectDN)")", "$("$($r.Properties)" -replace '\s+', ' ') | $($r.Attribute)=$($r.Value)") }
     & $weave 'defender_config_events' 500 { param($r) @("$($r.Time)", "defender config (EID $($r.EventId))", '', '', "$($r.Detail)") }
@@ -8276,6 +8498,50 @@ function New-ProcessChains {
     }
 }
 
+function New-ShimcacheExec {
+    # v2.83 (R44): Win10+ shimcache entries carry a 4-byte executed flag as the last bytes of
+    # the record blob (01 00 00 00 = executed). Zimmerman/13Cubed caveats kept honest: only
+    # non-native binaries are tracked on Win10+, a right-click context-menu open can set the
+    # flag WITHOUT execution, and flag=0 is NOT proof of non-execution - this is a confidence
+    # column, never a verdict weight.
+    $out = New-Object System.Collections.Generic.List[object]
+    foreach ($r in (Import-CaseCsv 'execution_timeline')) {
+        if ("$($r.'Entry Type')" -ne 'ShimcacheFileEntry') { continue }
+        $raw = "$($r.'Raw Entry')"
+        if (-not $raw -or $raw.Length -lt 8) { continue }
+        try {
+            $j = $raw | ConvertFrom-Json
+            $path = ''
+            if ($j.entry_type -and $j.entry_type.File) { $path = "$($j.entry_type.File.path)" }
+            if (-not $path) { continue }
+            $exec = ''
+            $p2 = $j.PSObject.Properties['executed']
+            if ($p2 -and $null -ne $p2.Value) { $exec = if ($p2.Value) { 'yes' } else { 'no' } }
+            $data = $j.data
+            if (-not $exec -and $data) {
+                $b = @($data)
+                if ($b.Count -ge 4) {
+                    $n = $b.Count
+                    $v = $b[$n - 4] + $b[$n - 3] * 256 + $b[$n - 2] * 65536 + $b[$n - 1] * 16777216
+                    if ($v -eq 1) { $exec = 'yes' } elseif ($v -eq 0) { $exec = 'no' }
+                }
+            }
+            $null = $out.Add([pscustomobject]@{
+                Path = $path
+                LastModified = "$($j.last_modified_ts)"
+                Executed = $exec
+                ControlSet = "$($j.controlset)"
+                CachePosition = "$($j.cache_entry_position)"
+                Signature = "$($j.signature)"
+            })
+        } catch { }
+    }
+    Save-Rows -Name 'shimcache_exec' -Rows $out.ToArray()
+    $yes = @($out | Where-Object { $_.Executed -eq 'yes' }).Count
+    $no = @($out | Where-Object { $_.Executed -eq 'no' }).Count
+    Write-CaseLog "    shimcache exec flags: $($out.Count) Win10+ entries ($yes executed-flag, $no not-executed-flag) -> csv\shimcache_exec.csv" 'DarkGray'
+}
+
 function New-ConnectionDns {
     # v2.82: attribute public connections to hostnames via the collected DNS cache
     # (dns_cache.csv Entry/Data/Type). Walks CNAME chains alias -> target -> A record so an
@@ -8518,7 +8784,7 @@ function New-HuntFindings {
     $r1In = @((Import-CaseCsv 'processes') | Select-Object -First 400)
     foreach ($r in $r1In) {
         $p = "$($r.Path)"
-        if (-not $p -or -not (Test-Path -LiteralPath $p -PathType Leaf)) { continue }
+        if (-not $p -or -not (Test-Path -LiteralPath $p -PathType Leaf -ErrorAction SilentlyContinue)) { continue }
         $leaf = $null
         try { $leaf = (Split-Path $p -Leaf).ToLower() } catch { continue }
         if (-not $leaf -or $r1Seen.ContainsKey($p.ToLower())) { continue }
@@ -9332,7 +9598,7 @@ function New-HuntFindings {
         if ($r36Path -match '(?i)^\\device\\harddiskvolume\d+(\\.*)$') { $r36Path = "C:$($Matches[1])" }
         $r36Bare = ($r36Path -notmatch '[\\/]')
         $r36Sig = $null
-        if (-not $r36Bare -and (Test-Path -LiteralPath $r36Path)) {
+        if (-not $r36Bare -and (Test-Path -LiteralPath $r36Path -ErrorAction SilentlyContinue)) {
             try { $r36Sig = Get-AuthenticodeSignature -LiteralPath $r36Path } catch { $r36Sig = $null }
         }
         $r36Sys = ($r36Path -match $r36SysRe)
@@ -9479,6 +9745,33 @@ function New-HuntFindings {
         $r38Stage++
     }
     & $trace 'R38' 'execution hour-of-day stacking' "amcache+prefetch_parsed+security_proc_events+sysmon_proc_create: $r38In rows -> $($r38Seen.Count) first-seen binaries -> $r38Burst off-hours burst + $r38Stage staging findings"
+
+    # ---------- R45: TaskCache tamper - hidden/orphaned scheduled tasks (v2.83) ----------
+    $r45In = @(Import-CaseCsv 'scheduled_taskcache')
+    foreach ($r in $r45In) {
+        $r45Flags = "$($r.Flags)"
+        if (-not $r45Flags) { continue }
+        $r45G = "$($r.Guid)"
+        if ($r45Flags -match 'SD-MISSING') {
+            & $find 'Hidden scheduled task (TaskCache SD value stripped)' 'high' "Tasks\$r45G" "no SD value - invisible to schtasks/GUI but still runs (deleted Tree+XML does not unload a loaded task until reboot)" 'T1053.005'
+        } elseif ($r45Flags -match 'ORPHANED') {
+            & $find 'Orphaned scheduled task cache entry' 'medium' "Tasks\$r45G" "no Tree\GID link - deleted from the UI but still in TaskCache, or planted" 'T1053.005'
+        }
+    }
+    & $trace 'R45' 'TaskCache ghost/hidden tasks' "scheduled_taskcache: $($r45In.Count) keys"
+
+    # ---------- R46: ntds.dit access via ESENT 325/326 (v2.83) ----------
+    $r46In = @(Import-CaseCsv 'esent_ntds')
+    foreach ($r in $r46In) {
+        # BackupPattern arrives from Export-Csv as the STRING 'True'/'False' - 'False' is
+        # truthy in PS, so compare text, never boolean-coerce
+        if ("$($r.BackupPattern)" -eq 'True') {
+            & $find 'ntds.dit accessed (backup-pattern ESENT)' 'low' "$($r.Time)" "ESENT $($r.EventId) with backup engine pattern - verify the backup schedule covers this host" 'T1003.003'
+        } else {
+            & $find 'ntds.dit accessed (ESENT 325/326)' 'high' "$($r.Time)" "non-backup pattern - possible AD database theft prep (ntdsutil IFM / custom tooling): $($r.Message)" 'T1003.003'
+        }
+    }
+    & $trace 'R46' 'ESENT ntds.dit access' "esent_ntds: $($r46In.Count) rows"
 
     Save-Rows -Name 'hunt_findings' -Rows $out.ToArray()
     $hi = @($out | Where-Object { $_.Severity -eq 'high' }).Count
@@ -9697,6 +9990,9 @@ function Get-CompromiseVerdict {
     $asep = Import-CaseCsv 'asep_sweep'
     $memMf = Import-CaseCsv 'memory_malfind'
     $browserIoc = Import-CaseCsv 'ioc_hits_browser'
+    # v2.83 (R45/R46): TaskCache tamper + ntds.dit access
+    $taskCache = Import-CaseCsv 'scheduled_taskcache'
+    $esentNtds = Import-CaseCsv 'esent_ntds'
 
     $levelNames = @{ 4 = 'COMPROMISED'; 3 = 'LIKELY COMPROMISED'; 2 = 'SUSPICIOUS'; 1 = 'NO EVIDENCE OF COMPROMISE'; 0 = 'INCONCLUSIVE' }
 
@@ -9752,6 +10048,12 @@ function Get-CompromiseVerdict {
     $beaconMed = @($beacons | Where-Object { "$($_.Severity)" -match '^medium$' }).Count
     $dnsHi = @($dnsBeacons | Where-Object { "$($_.Severity)" -match '^high$' }).Count
     $dnsMed = @($dnsBeacons | Where-Object { "$($_.Severity)" -match '^medium$' }).Count
+    # v2.83 (R45/R46): SD-stripped = strong anti-forensics; orphaned = suspicious; ntds only
+    # weights the non-backup shape (VSS/wbengine rows are usually scheduled backups)
+    $tcHidden = @($taskCache | Where-Object { "$($_.Flags)" -match 'SD-MISSING' })
+    $tcOrphan = @($taskCache | Where-Object { "$($_.Flags)" -match 'ORPHANED' })
+    $ntdsTheft = @($esentNtds | Where-Object { "$($_.BackupPattern)" -ne 'True' })
+    $ntdsBackup = @($esentNtds | Where-Object { "$($_.BackupPattern)" -eq 'True' })
     $lolMal = @($lol | Where-Object { $_.Status -eq 'malicious' }).Count
     # v2.55: posture gaps + credential exposure now carry verdict weight (previously report-only).
     # v2.64: imported BEFORE the hunt filter so the EcsConfigs exclusion can cross-check posture.
@@ -9885,6 +10187,10 @@ function Get-CompromiseVerdict {
     Add-Signal 'Defender detection - active or in log window' 2 $defFresh.Count (& $defDetail $defFresh)
     Add-Signal 'Defender detection - stale history (resolved / outside log window)' 1 $defStale.Count (& $defDetail $defStale)
     Add-Signal 'Security tooling tampering / log clearing' 2 $gapTamper "log cleared or security service stopped"
+    Add-Signal 'Hidden scheduled task (TaskCache SD stripped)' 3 $tcHidden.Count (($tcHidden | Select-Object -First 3 | ForEach-Object { "Tasks\$($_.Guid)" }) -join '; ')
+    Add-Signal 'Orphaned TaskCache entries (no Tree link)' 2 $tcOrphan.Count (($tcOrphan | Select-Object -First 3 | ForEach-Object { "Tasks\$($_.Guid)" }) -join '; ')
+    Add-Signal 'ntds.dit accessed - non-backup pattern (ESENT 325/326)' 3 $ntdsTheft.Count (($ntdsTheft | Select-Object -First 2 | ForEach-Object { "$($_.Time)" }) -join '; ')
+    Add-Signal 'ntds.dit accessed - backup pattern (verify schedule)' 0 $ntdsBackup.Count "ESENT events matching backup engines - confirm the backup window covers them"
     Add-Signal 'Process anomaly verdict MEDIUM' 1 $procMed "unsigned/user-path binaries worth review"
     Add-Signal 'Brute-force source(s) seen' 0 @($brute).Count "failed logon sources - check for follow-up success"
 
@@ -10363,6 +10669,7 @@ function Invoke-RegenerateOutputs {
     & $rgStep 'session attribution' 'New-SessionAttribution' { New-SessionAttribution }
     & $rgStep 'process lineage' 'New-ProcessChains' { New-ProcessChains }
     & $rgStep 'connection attribution' 'New-ConnectionDns' { New-ConnectionDns }
+    & $rgStep 'shimcache exec flags' 'New-ShimcacheExec' { New-ShimcacheExec }
     & $rgStep 'logging gaps' 'New-LoggingGaps' { New-LoggingGaps }
     & $rgStep 'parse-needed' 'Get-ParseNeeds' { Get-ParseNeeds }
     # v2.58: evidence-based 4688 check - the Security log is readable but zero 4688 rows were

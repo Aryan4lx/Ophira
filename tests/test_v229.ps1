@@ -79,6 +79,8 @@ function Export-Evtx { param($LogName, $FileName) }
 $saved4 = @{}
 function Save-Rows { param([string]$Name, $Rows) $script:saved4[$Name] = $Rows }
 function Write-CaseLog { param([string]$Message, [string]$Color = 'Gray') }
+# v2.83: module 4.1 now also saves task_deletions via a helper this suite does not exercise
+function Get-TaskDeletionRows { param($Start) return @() }
 function Get-EventDataRowsStub { param($LogName, $Id, $Start, $Cap, $Fields)
     if (@($Id) -contains 4720) {
         @([pscustomobject]@{ Time = (Get-Date '2026-10-04 12:01:00'); EventId = 4720; Account = 'canary_test'; SourceIp = ''; LogonType = ''; LogonId = '' },

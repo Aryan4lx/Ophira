@@ -236,7 +236,7 @@ if ($lines4.Count -ge 6100) {
     # -> 6259..6842 (v2.81 T1: Get-LevenshteinDistance helper added +22 lines upstream)
     # window shifted 6297..6897 -> 6340..6939 (v2.82: Get-DomainProvider + Azure IP rules
     # + connections_dns emptyWhy added upstream; same report region)
-    $region4 = ($lines4[6339..6938] -join "`n")
+    $region4 = ($lines4[6505..7104] -join "`n")
     Check "B5: no bare [int]quoted casts left in the report region" (-not $region4.Contains('[int]"$('))
     Check "B5: no bare [double]quoted casts left in the report region" (-not $region4.Contains('[double]"$('))
     Check "B5: no bare [long]quoted casts left in the report region" (-not $region4.Contains('[long]"$('))

@@ -56,7 +56,7 @@ Invoke-Expression $m.Value
 $null = New-HuntFindings
 
 $huntLogText = Get-Content -LiteralPath $huntLog -Raw
-Check "T12: exactly one trace line per rule (37 rule blocks)" (@([regex]::Matches($huntLogText, '(?m)^\[[\d:]+\] R\d')).Count -eq 37)
+Check "T12: exactly one trace line per rule (39 rule blocks)" (@([regex]::Matches($huntLogText, '(?m)^\[[\d:]+\] R\d')).Count -eq 39)
 Check "T12: R13 trace carries input counts AND findings-out counts (the brief's polarity example)" ($huntLogText -match [regex]::Escape('R13 discovery command storm: 2 accounts x 22 cmds (security_proc_events: 22 rows) -> 2 findings (2 low)'))
 Check "T12: R14 rule with a finding logs 1 in / 1 high out" ($huntLogText -match [regex]::Escape('R14 Defender tamper (5001/5007): defender_config_events: 1 rows -> 1 finding (1 high)'))
 Check "T12: clean rule logs its empty-input gate (R34)" ($huntLogText -match [regex]::Escape('R34 ADS on executables: ads_findings: 0 rows -> 0 findings'))
@@ -140,8 +140,8 @@ Invoke-Expression $m.Value
 Invoke-RegenerateOutputs -Case $null
 
 $regLines = @($regCap | Where-Object { $_ -match '\[regen\]|regen summary:' })
-Check "T13: summary header with step count + total seconds" (($regCap | Where-Object { $_ -match '^  regen summary: 18 steps in [\d.]+s$' }).Count -eq 1)
-Check "T13: one summary line per derived artifact (18)" (@($regLines | Where-Object { $_ -match '\[regen\]' }).Count -eq 18)
+Check "T13: summary header with step count + total seconds" (($regCap | Where-Object { $_ -match '^  regen summary: 19 steps in [\d.]+s$' }).Count -eq 1)
+Check "T13: one summary line per derived artifact (19)" (@($regLines | Where-Object { $_ -match '\[regen\]' }).Count -eq 19)
 Check "T13: Save-Rows producer line carries producer + path + row count + elapsed" (($regCap | Where-Object { $_ -match [regex]::Escape('[regen] supertimeline') -and $_ -match [regex]::Escape('New-SuperTimeline -> csv\fake\supertimeline.csv 1234 rows in ') }).Count -eq 1)
 Check "T13: multi-artifact step aggregates counts (2 csv, 3 rows)" (($regCap | Where-Object { $_ -match [regex]::Escape('[regen] IOC xref') -and $_ -match [regex]::Escape('2 csv, 3 rows') }).Count -eq 1)
 Check "T13: step without csv output gets the (no csv) marker (plaso)" (($regCap | Where-Object { $_ -match [regex]::Escape('[regen] plaso import') -and $_ -match [regex]::Escape('Import-PlasoTimeline -> (no csv) in ') }).Count -eq 1)

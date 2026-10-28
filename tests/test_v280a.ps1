@@ -60,12 +60,19 @@ $expectedHi = @(
     'SSH authorized_keys present',
     'Sysmon configuration changed',
     'Web server spawned interpreter',
-    'WMI event subscription persistence'
+    'WMI event subscription persistence',
+    # v2.83: these two reach the verdict through DEDICATED Add-Signal lines (floor 3) instead
+    # of the huntHi catch-all regex - the mapping must stay explicit so a new high rule cannot
+    # silently skip the verdict
+    'Hidden scheduled task (TaskCache SD value stripped)',
+    'ntds.dit accessed (ESENT 325/326)'
 )
 Check "hunt rules: found $totalFinds &find call sites (extraction sane)" ($totalFinds -ge 40)
 $litHiUniq = @($litHi | Sort-Object -Unique)
-Check "literal-high rules: 20 distinct (got $($litHiUniq.Count))" ($litHiUniq.Count -eq 20)
-$misses = @($expectedHi | Where-Object { $_ -notmatch $verdictRe })
+$dedicatedHi = @('Hidden scheduled task (TaskCache SD value stripped)', 'ntds.dit accessed (ESENT 325/326)')
+Check "literal-high rules: 22 distinct (got $($litHiUniq.Count))" ($litHiUniq.Count -eq 22)
+$misses = @($expectedHi | Where-Object { $_ -notin $dedicatedHi -and $_ -notmatch $verdictRe })
+Check "dedicated verdict-door highs are wired as signals" ($src.Contains("Add-Signal 'Hidden scheduled task (TaskCache SD stripped)' 3") -and $src.Contains("Add-Signal 'ntds.dit accessed - non-backup pattern (ESENT 325/326)' 3"))
 Check "every literal-high rule name matches the verdict high-precision regex$(if ($misses.Count) { ' - misses: ' + ($misses -join '; ') })" ($misses.Count -eq 0)
 
 # ---- two-way drift pin: extracted names must EQUAL the hardcoded list (catches renames and

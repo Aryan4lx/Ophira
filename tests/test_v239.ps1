@@ -34,6 +34,8 @@ function Export-Evtx { param($LogName, $FileName) }
 $saved = @{}
 function Save-Rows { param([string]$Name, $Rows) $script:saved[$Name] = $Rows }
 function Write-CaseLog { param([string]$Message, [string]$Color = 'Gray') }
+# v2.83: module 4.1 now also saves task_deletions via a helper this suite does not exercise
+function Get-TaskDeletionRows { param($Start) return @() }
 $mod41 = [pscustomobject]@{ Id = '4.1'; Name = 'Security log'; Run = [scriptblock]::Create($m41.Groups[1].Value) }
 & $mod41.Run
 $a = @($saved['security_auth_events'])[0]

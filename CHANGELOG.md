@@ -1,5 +1,43 @@
 ﻿# Changelog
 
+## v2.83
+- **ShimCache executed-flag decode (R44, derived)**: `New-ShimcacheExec` decodes the
+  trailing 4-byte execution flag chainsaw leaves null on Win10+ records (data\[-4..-1]
+  little-endian dword: 1 = executed, 0 = not) with the `executed` JSON field taking
+  precedence when present. Output: `csv\timeline\shimcache_exec.csv` (880 entries decoded
+  on the reference case: 213 yes / 639 no) and a report timeline block of not-executed
+  entries. Honest about the caveat: right-click context-menu entries record as executed,
+  and flag = 0 is NOT proof of non-execution.
+- **Hidden/orphaned TaskCache tasks (R45)**: module 2.3 walks
+  `HKLM\...\TaskCache\Tree` (GUID -> task path map) and `HKLM\...\TaskCache\Tasks`
+  (SD value presence) and flags tasks whose Tasks SD value is missing (hidden from
+  schtasks/GUI - HIGH, T1053.005, verdict floor 3) or whose GUID has no Tree link
+  (orphaned - medium). Pairing with 4698/4699 events shows install-and-strip.
+- **Task deletion capture**: module 4.1 parses TaskScheduler/Operational EID 4699
+  ("deleted task ... for user ...") into `csv\task_deletions.csv` (also collected as
+  `TaskScheduler_Operational.evtx`) and weaves deletions into the master timeline.
+- **ntds.dit access scan (R46)**: module 4.10 parses Application-log ESENT EIDs 325/326
+  mentioning ntds (credential-theft via copy) into `csv\esent_ntds.csv`; non-backup
+  pattern access = HIGH (T1003.003, verdict floor 3), backup-engine pattern (wbengine/
+  VSS) = informational. All consumers text-compare `BackupPattern` ('True'/'False'
+  strings survive CSV round-trips; PowerShell treats 'False' as truthy).
+- **RADAR evidence of execution (R47)**: module 5.2 reads
+  `HKLM\SOFTWARE\Microsoft\RADAR\Heap Leak Detection\DiagnosedApplications` - an
+  overlooked execution artifact valuable on servers without prefetch (key LastWriteTime
+  = executed on or before). Rows -> `csv\radar_exec.csv` + report snapshot block.
+  New `Get-RegKeyLastWrite` helper (P/Invoke RegQueryInfoKey - the PS 5.1 registry
+  provider does not expose LastWriteTime).
+- **AppSwitched FeatureUsage (R48)**: module 5.2 reads per-user
+  `...\Explorer\FeatureUsage\AppSwitched` switch counters -> `csv\appswitched.csv` +
+  report snapshot block (weak recency signal, no timestamps - documented as such).
+- Report persistence section gained Task-cache anomalies / Task deletions / ntds.dit
+  blocks; verdict gains dedicated floor-3 signals for hidden tasks and non-backup ntds
+  access; regen is 19 steps. E2E on the reference case: verdict unchanged (SUSPICIOUS
+  86%, 6 signals) - all new rules correctly silent on a clean-enough host.
+- Test-support fixes: R1/R36 evidence-path probes now pass `-ErrorAction SilentlyContinue`
+  (Access-denied noise on Program Files probing also broke the exit code); test stubs
+  updated for the new module helpers.
+
 ## v2.82
 - **DNS connection attribution (derived)**: `New-ConnectionDns` joins every public
   connection to the collected DNS resolver cache (`dns_cache.csv`), walks CNAME chains
