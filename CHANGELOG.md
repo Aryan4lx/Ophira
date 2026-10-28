@@ -1,5 +1,30 @@
 ﻿# Changelog
 
+## v2.85
+- **Recon sessions (R51, derived)**: `New-ReconSessions` clusters discovery-tool executions
+  (whoami/net/net1/nltest/quser/qwinsta/tasklist/systeminfo/ipconfig/nslookup/arp/netstat/nbtstat/route/wmic/klist/dsquery/csvde/ldifde/adfind/dsacls/vaultcmd/driverquery/reg/sc + AD PowerShell cmdlets) from 4688 + Sysmon EID 1 + PowerShell 4104 into 15-minute sessions
+  (the SANS-2017 'recon-scan' adapted to one host). A burst of 4+ DISTINCT tools in one
+  session is hands-on recon: medium hunt finding, floor-2 verdict signal; 6+ tools is a
+  floor-3 signal. 2-3 tool sessions stay report-only. -> `csv\recon_sessions.csv`
+- **Temporal execution correlation (t-corr, derived)**: `New-TCorr` seeds from every
+  medium/high hunt finding and ranks other executions within +-30 min (weight =
+  exp(-delta/10 min), 0.1 floor) over amcache FileKeyLastWriteTimestamp + prefetch run
+  history + 4688/Sysmon process creation. Pairs implying each other (both weights >= 0.5)
+  are flagged **bidirectional** - look there first. Analytics view, no verdict impact.
+  -> `csv\exec_tcorr.csv`
+- **Hunt rule R51** 'Recon tool burst' (T1087): medium 4-5 tools, high 6+; verdict gets
+  dedicated Add-Signal doors (2 / 3) so the huntHi catch-all cannot double-count.
+- **Report (hunt section)**: two new h3 blocks - 'Recon sessions - clustered
+  discovery-tool activity' (top 8, severity classed) and 'Temporal execution correlation
+  (t-corr)' (top 15, bidirectional bonds highlighted) + honest empty states (blind without
+  4688 command auditing / Sysmon EID 1; t-corr needs seeds + timestamped execution
+  evidence). Nav Hunt count includes both artifacts.
+- **Internal**: regen now 22 steps ('recon sessions' before hunt findings, 'temporal
+  correlation' after); CsvCatMap + anchor + desc/emptyWhy maps extended; leftover
+  DBG-EXECSTACKS debug line removed; tests: new test_v285.ps1 (33 checks), v267 window
+  6505..7150, v279 counts 42/22, v280a variable-severity 7 with dedicated-door pin,
+  v283/v284 version pins.
+
 ## v2.84
 - **Execution stacks (R49, derived)**: `New-ExecStacks` builds two stack views from
   amcache + shimcache_exec + prefetch: one name -> every path it executed from

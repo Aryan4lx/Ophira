@@ -82,12 +82,16 @@ $gotHi = (@($litHiUniq | Sort-Object) -join "`n")
 $wantHi = (@($expectedHi | Sort-Object) -join "`n")
 Check "two-way drift pin: literal-high names extracted from source == hardcoded list" ($gotHi -eq $wantHi)
 
-# ---- the 6 variable-severity rules (can emit high) must match the verdict regex too ----
-$expectedVar = @('Downloaded then executed', 'LOLBin proxy-execution - $hit', 'Svchost masquerade indicator', 'Cross-process injection (remote thread)', 'Lookalike system binary (Levenshtein near-name)', 'Known-bad name pattern')
+# ---- the 7 variable-severity rules (can emit high) must match the verdict regex or a
+# dedicated verdict door (v2.85: 'Recon tool burst' goes through its own Add-Signal floors
+# so the huntHi catch-all does not double-count the same burst) ----
+$expectedVar = @('Downloaded then executed', 'LOLBin proxy-execution - $hit', 'Svchost masquerade indicator', 'Cross-process injection (remote thread)', 'Lookalike system binary (Levenshtein near-name)', 'Known-bad name pattern', 'Recon tool burst')
 $varUniq = @($varSev | Sort-Object -Unique)
-$varMiss = @($expectedVar | Where-Object { $_ -notmatch $verdictRe })
-Check "variable-severity rules: 6 distinct (got $($varUniq.Count))" ($varUniq.Count -eq 6)
+$dedicatedVar = @('Recon tool burst')
+$varMiss = @($expectedVar | Where-Object { $_ -notin $dedicatedVar -and $_ -notmatch $verdictRe })
+Check "variable-severity rules: 7 distinct (got $($varUniq.Count))" ($varUniq.Count -eq 7)
 Check "two-way drift pin: variable-severity names == hardcoded list" ((@($varUniq | Sort-Object) -join "`n") -eq (@($expectedVar | Sort-Object) -join "`n"))
+Check "dedicated variable-severity door wired" ($src.Contains("Add-Signal 'Recon tool burst - 6+ distinct discovery tools in one session' 3"))
 Check "every variable-severity rule name matches the verdict regex$(if ($varMiss.Count) { ' - misses: ' + ($varMiss -join '; ') })" ($varMiss.Count -eq 0)
 
 # ---- F1 behavioral pin: the gap-tamper filters no longer count benign 6006 'STOPPED' rows ----

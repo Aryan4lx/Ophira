@@ -1,5 +1,5 @@
 <#
-Ophira v2.84  -  Windows Incident Response Triage Toolkit
+Ophira v2.85  -  Windows Incident Response Triage Toolkit
 READ-ONLY by design: never modifies the system, only reads and copies data
 into its own output folder. Intended to be handed to a system owner or run
 by a responder during early triage / threat hunting.
@@ -356,7 +356,7 @@ param(
     [switch]$ExitVerdict
 )
 
-$ScriptVersion = "2.84"
+$ScriptVersion = "2.85"
 $ErrorActionPreference = 'Continue'
 $ProgressPreference = 'SilentlyContinue'
 
@@ -606,6 +606,7 @@ $script:CsvCatMap = @{
     'ioc_hits_network' = 'derived'; 'ioc_hits_mft' = 'derived'; 'ioc_hits_hash' = 'derived'
     'ioc_export' = 'derived'; 'process_pivot' = 'derived'; 'leads' = 'derived'
     'exec_stacks_byname' = 'derived'; 'exec_stacks_bypath' = 'derived'; 'exec_window_ratio' = 'derived'
+    'recon_sessions' = 'derived'; 'exec_tcorr' = 'derived'
 }
 
 function Get-LocalAdminMembers {
@@ -5544,7 +5545,7 @@ function Get-SectionAnchorForSource {
         '^(hayabusa|sigma)'                            { 'sigma'; break }
         '^yara'                                        { 'yara'; break }
         '^(beacon_candidates|dns_beacon_candidates)'   { 'beacons'; break }
-        '^(hunt_findings|exec_stacks|exec_window)'      { 'hunt'; break }
+        '^(hunt_findings|exec_stacks|exec_window|recon_sessions|exec_tcorr)' { 'hunt'; break }
         '^(ioc_hits|flash_ioc_hits)'                   { 'ioc'; break }
         '^(flash_process_scored|processes|process_hashes|sysmon_proc_create|sysmon_proc_tamper)' { 'processes'; break }
         '^(security_auth|bruteforce|rdp_|logon)'       { 'logons'; break }
@@ -5831,6 +5832,8 @@ function New-HtmlReport {
     $stacksName = @(Import-CaseCsv 'exec_stacks_byname.csv')
     $stacksPath = @(Import-CaseCsv 'exec_stacks_bypath.csv')
     $winRatio = @(Import-CaseCsv 'exec_window_ratio.csv')
+    $reconSessions = @(Import-CaseCsv 'recon_sessions.csv')
+    $tcorrRows = @(Import-CaseCsv 'exec_tcorr.csv')
     $radarRows = @(Import-CaseCsv 'radar_exec.csv')
     $aswRows = @(Import-CaseCsv 'appswitched.csv')
     $svcFlag = @(Import-CaseCsv 'services_flagged.csv')
@@ -6029,7 +6032,7 @@ tr.techrow{cursor:pointer}
         beacons = $beacons.Count + $dnsBeacons.Count
         network = $pubConns.Count
         drivers = $lolHits.Count
-        hunt = $huntRows.Count + $liveScan.Count
+        hunt = $huntRows.Count + $liveScan.Count + $reconSessions.Count + $tcorrRows.Count
         entities = $entNav
         snapshot = $defStatus.Count + $defThreats.Count + $credSweep.Count + $savedCreds.Count + $rdpTgt.Count + $bitsJobs.Count + $memMfR.Count + $browserIocR.Count + $posture.Count + $radarRows.Count + $aswRows.Count
         timeline = $tlRows.Count
@@ -6929,6 +6932,32 @@ tr.techrow{cursor:pointer}
         $null = $sb.AppendLine("<div class='meta'>No hunt findings - all techniques clean.</div>")
     }
 
+    # ---------- recon sessions (v2.85 - the SANS-2017 recon-scan view) ----------
+    if ($reconSessions.Count -gt 0) {
+        $null = $sb.AppendLine("<h3>Recon sessions - clustered discovery-tool activity</h3>")
+        $null = $sb.AppendLine("<table><tr><th>Start (UTC)</th><th>Minutes</th><th>Events</th><th>Tools</th><th>Distinct discovery tools</th><th>Sample commands</th></tr>")
+        foreach ($rs in ($reconSessions | Sort-Object { ConvertTo-SafeInt $_.ToolCount } -Descending | Select-Object -First 8)) {
+            $rsCls = switch -Regex ("$(ConvertTo-SafeInt $rs.ToolCount)") { '^([6-9]|\d\d)' { 'crit'; break } '^[45]' { 'med'; break } default { 'info' } }
+            $null = $sb.AppendLine("<tr><td class='path'>$(ConvertTo-HtmlEsc $rs.StartUTC)</td><td class='$rsCls'>$(ConvertTo-HtmlEsc $rs.Minutes)</td><td>$(ConvertTo-HtmlEsc $rs.Events)</td><td>$(ConvertTo-HtmlEsc $rs.ToolCount)</td><td class='path'>$(ConvertTo-HtmlEsc $rs.Tools)</td><td class='path'>$(ConvertTo-HtmlEsc $rs.Sample)</td></tr>")
+        }
+        $null = $sb.AppendLine("</table><div class='meta'>Discovery tools (net/whoami/nltest/tasklist/...) clustered into 15-minute sessions from 4688 + Sysmon EID 1 + PowerShell 4104 evidence. 2-3 distinct tools is routine admin noise; a 4+ tool burst is hands-on recon (verdict signal at 4, floor-3 signal at 6). Source: csv\recon_sessions.csv</div>")
+    } else {
+        $null = $sb.AppendLine("<h3>Recon sessions</h3><div class='meta'>No discovery-tool bursts found (or the process-creation evidence 4688 command auditing / Sysmon EID 1 is absent - recon clustering runs blind without it, see the Coverage section).</div>")
+    }
+
+    # ---------- temporal execution correlation (v2.85 - the SANS-2017 t-corr view) ----------
+    if ($tcorrRows.Count -gt 0) {
+        $null = $sb.AppendLine("<h3>Temporal execution correlation (t-corr)</h3>")
+        $null = $sb.AppendLine("<table><tr><th>Seed (hunt finding)</th><th>Seed time</th><th>Executed nearby</th><th>Delta (min)</th><th>Weight</th><th>Bond</th><th>Path</th></tr>")
+        foreach ($tcR in ($tcorrRows | Select-Object -First 15)) {
+            $tcCls = if ("$($tcR.Bond)") { 'crit' } elseif ((ConvertTo-SafeDouble $tcR.Weight) -ge 0.5) { 'med' } else { 'info' }
+            $null = $sb.AppendLine("<tr><td class='path'>$(ConvertTo-HtmlEsc $tcR.Seed)</td><td>$(ConvertTo-HtmlEsc $tcR.SeedTime)</td><td>$(ConvertTo-HtmlEsc $tcR.Name)</td><td>$(ConvertTo-HtmlEsc $tcR.DeltaMinutes)</td><td class='$tcCls'>$(ConvertTo-HtmlEsc $tcR.Weight)</td><td>$(ConvertTo-HtmlEsc $tcR.Bond)</td><td class='path'>$(ConvertTo-HtmlEsc $tcR.Path)</td></tr>")
+        }
+        $null = $sb.AppendLine("</table><div class='meta'>For every medium/high hunt-finding binary: other executions within +-30 min (weight = exp(-delta/10 min), 0.1 floor). A <b>bidirectional</b> bond means both binaries strongly imply each other - look at those pairs first. Analytics view only (no verdict impact) - t-corr ranks leads, it does not judge them. Source: csv\exec_tcorr.csv</div>")
+    } else {
+        $null = $sb.AppendLine("<h3>Temporal execution correlation (t-corr)</h3><div class='meta'>No correlations - t-corr needs medium/high hunt findings (seeds) plus timestamped execution evidence (amcache FileKeyLastWriteTimestamp, prefetch run history, 4688/Sysmon process creation). Neither side is populated for this case.</div>")
+    }
+
     # ---------- hour-of-day execution histogram (v2.81 T3 - the R38 data, report-side) ----------
     # Recomputed from the same csvs hunt rule R38 reads: same column probes, same src|leaf
     # first-seen dedupe, hour from the first-seen timestamp. Inlined (not a helper) so report
@@ -7572,6 +7601,8 @@ tr.techrow{cursor:pointer}
     'exec_stacks_byname'              = 'Execution stacking: every executed name -> the distinct paths it ran from (a critical name running from two places is the classic recycle-bin svchost)'
     'exec_stacks_bypath'              = 'Execution stacking per folder: distinct names run from each directory (mass-staging view - temp dirs full of one-shot exes stand out)'
     'exec_window_ratio'              = 'Time-stacking: executions inside vs outside the investigation window (-After/-Before or the focus dossier window) - window-exclusive files bubble to the top'
+    'recon_sessions'                 = 'Recon-session clustering: discovery tools (net/whoami/nltest/...) grouped by execution time - a burst of distinct tools in one short session is hands-on recon'
+    'exec_tcorr'                     = 'Temporal execution correlation: other executions within +-30 min of each medium/high hunt finding, decay-weighted - bidirectional pairs are the interesting ones'
         'connections_dns'                 = 'Public connections resolved via the DNS cache (CNAME chains walked) - what each remote IP actually was'
         'arp_table'                       = 'ARP cache - hosts on the local segment'
         'logon_sessions'                  = 'Active logon sessions (who is on the box right now)'
@@ -7788,6 +7819,8 @@ tr.techrow{cursor:pointer}
     'exec_stacks_byname'              = 'no execution evidence to stack (no amcache/shimcache/prefetch parsed yet - run the parse modules or 5.4)'
     'exec_stacks_bypath'              = 'no execution evidence to stack (no amcache/shimcache/prefetch parsed yet - run the parse modules or 5.4)'
     'exec_window_ratio'              = 'no investigation window set - pass -After/-Before on a parse/regen run or set the focus dossier window, then regenerate'
+    'recon_sessions'                 = 'no discovery-tool activity clustered (4688 command auditing / Sysmon EID 1 absent, or genuinely no recon bursts)'
+    'exec_tcorr'                     = 'no t-corr seeds: medium/high hunt findings absent (t-corr correlates around them) or no timestamped execution evidence'
         'domain_info'                     = 'Win32_ComputerSystem returned nothing - the WMI repository may be damaged on this host (itself an IR-relevant condition; check collection.log for other WMI failures)'
         'entities_accounts'               = 'joins logons/RDP/console history per account - nothing to join when those sources are empty'
         'entities_binaries'               = 'joins execution/persistence/network/verdict evidence per binary - nothing to join when the underlying sources are empty'
@@ -8702,7 +8735,7 @@ function New-ExecStacks {
     Save-Rows -Name 'exec_stacks_bypath' -Rows ($outP | Sort-Object @{e='NameCount';Descending=$true}, @{e='ExecCount';Descending=$true} | Select-Object -First 4000)
     # time-stacking: window from -After/-Before, else the focus dossier's TimeWindow
     $wFrom = [datetime]::MinValue; $wTo = [datetime]::MinValue; $wSrc = ''
-    try { if ($After) { $wFrom = [datetime]::Parse($After, [Globalization.CultureInfo]::InvariantCulture); $wSrc = '-After/-Before params' } } catch { Write-Host "DBG-EXECSTACKS after-parse THREW: $($_.Exception.Message)" -ForegroundColor Magenta }
+    try { if ($After) { $wFrom = [datetime]::Parse($After, [Globalization.CultureInfo]::InvariantCulture); $wSrc = '-After/-Before params' } } catch { }
     try { if ($Before) { $wTo = [datetime]::Parse($Before, [Globalization.CultureInfo]::InvariantCulture); $wSrc = '-After/-Before params' } } catch { }
     if (-not ($wFrom -gt [datetime]::MinValue -and $wTo -gt [datetime]::MinValue)) {
         $wSrc = ''
@@ -8735,6 +8768,162 @@ function New-ExecStacks {
     } else {
         Write-CaseLog '    execution stacks: name/folder stacks built; window ratio skipped (no window - pass -After/-Before or set the focus dossier window)' 'DarkGray'
     }
+}
+
+function New-ReconSessions {
+    # v2.85: recon-session clustering (the SANS-2017 'recon-scan' adapted to one host) -
+    # discovery tools (net/whoami/nltest/...) clustered by execution time; a burst of
+    # DISTINCT tools inside one short session is hands-on-keyboard recon, not a stray whoami.
+    $reconRe = '^(whoami|net1?|nltest|quser|qwinsta|query|tasklist|systeminfo|ipconfig|nslookup|arp|netstat|nbtstat|route|wmic|klist|dsquery|dsget|csvde|ldifde|adfind|dsacls|vaultcmd|driverquery|reg|sc)$'
+    $reconPsRe = '(?i)\b(get-ad(user|computer|group|domain|forest|object)|get-local(group|user)|get-domaincomputer|nltest|net\s+(user|group|localgroup|domain|view|session|use))\b'
+    $ev = New-Object System.Collections.Generic.List[object]
+    $addEv = {
+        param([datetime]$t, [string]$name, [string]$cmd, [string]$src)
+        if ($t -le [datetime]::MinValue -or -not $name) { return }
+        $null = $ev.Add([pscustomobject]@{ T = $t; Name = $name.ToLower(); Cmd = $cmd; Src = $src })
+    }
+    foreach ($r in @(Import-CaseCsv 'security_proc_events')) {
+        $leaf = ("$($r.NewProcess)" -split '[\\/]')[-1]
+        $t = [datetime]::MinValue
+        try { if ("$($r.Time)") { $t = [datetime]::Parse("$($r.Time)", [Globalization.CultureInfo]::InvariantCulture) } } catch { }
+        & $addEv $t $leaf "$($r.CommandLine)" '4688'
+    }
+    foreach ($r in @(Import-CaseCsv 'sysmon_proc_create')) {
+        $leaf = ("$($r.Image)" -split '[\\/]')[-1]
+        $t = [datetime]::MinValue
+        try { if ("$($r.Time)") { $t = [datetime]::Parse("$($r.Time)", [Globalization.CultureInfo]::InvariantCulture) } } catch { }
+        & $addEv $t $leaf "$($r.CommandLine)" 'sysmon'
+    }
+    foreach ($r in @(Import-CaseCsv 'powershell_events')) {
+        if ("$($r.Id)" -ne '4104') { continue }
+        $m = "$($r.Message)"
+        if ($m -notmatch $reconPsRe -or $m -match '__cmdletization') { continue }
+        $t = [datetime]::MinValue
+        try { if ("$($r.TimeCreated)") { $t = [datetime]::Parse("$($r.TimeCreated)", [Globalization.CultureInfo]::InvariantCulture) } } catch { }
+        & $addEv $t 'powershell' $m '4104'
+    }
+    $recon = @($ev | Where-Object { $_.Name -eq 'powershell' -or (($_.Name -replace '\.exe$', '') -match $reconRe) })
+    $out = New-Object System.Collections.Generic.List[object]
+    $maxBurst = 0
+    $cur = $null
+    $flush = {
+        if (-not $cur) { return }
+        # 'powershell' is the 4104 event HOST, not a discovery tool - it adds events, not burst width
+        $tc = @($cur.Tools.Keys | Where-Object { $_ -ne 'powershell' }).Count
+        if ($tc -gt $maxBurst) { $maxBurst = $tc }
+        if ($tc -lt 2) { return }
+        $out.Add([pscustomobject]@{
+            StartUTC = $cur.Start.ToString('yyyy-MM-dd HH:mm'); EndUTC = $cur.End.ToString('yyyy-MM-dd HH:mm')
+            Minutes = [Math]::Round(($cur.End - $cur.Start).TotalMinutes, 1); Events = $cur.Events
+            ToolCount = $tc; Tools = ((@($cur.Tools.Keys) | Sort-Object | Select-Object -First 10) -join '; ')
+            Sample = ((@($cur.Sample) | ForEach-Object { if ($_.Length -gt 160) { $_.Substring(0, 160) } else { $_ } }) -join ' | ')
+        })
+    }
+    foreach ($e in ($recon | Sort-Object T)) {
+        if ($cur -and (($e.T - $cur.End).TotalMinutes -le 15)) {
+            $cur.End = $e.T; $cur.Events++
+            $cur.Tools[$e.Name] = $true
+            if (@($cur.Sample).Count -lt 4) { $null = $cur.Sample.Add($e.Cmd) }
+        } else {
+            & $flush
+            $cur = @{ Start = $e.T; End = $e.T; Events = 1; Tools = (@{ ($e.Name) = $true }); Sample = (New-Object System.Collections.Generic.List[string]) }
+            $null = $cur.Sample.Add($e.Cmd)
+        }
+    }
+    & $flush
+    Save-Rows -Name 'recon_sessions' -Rows $out.ToArray()
+    if ($out.Count -gt 0) {
+        Write-CaseLog "    recon sessions: $($out.Count) session(s) with 2+ distinct discovery tools (max burst $maxBurst) -> csv\recon_sessions.csv" $(if ($maxBurst -ge 4) { 'Yellow' } else { 'Gray' })
+    } else {
+        Write-CaseLog "    recon sessions: no discovery-tool bursts (recon events: $($recon.Count) of $($ev.Count) process/PS events)" 'DarkGray'
+    }
+}
+
+function New-TCorr {
+    # v2.85: temporal execution correlation (the SANS-2017 't-corr' adapted to one host) -
+    # for every medium/high hunt-finding binary, rank other executions within +-30 min
+    # (weight = exp(-dt/10 min)); pairs implying each other get flagged bidirectional.
+    $seeds = @()
+    foreach ($hf in @(Import-CaseCsv 'hunt_findings')) {
+        if ("$($hf.Severity)" -ne 'high' -and "$($hf.Severity)" -ne 'medium') { continue }
+        $leaf = ("$($hf.Entity)" -split '[\\/]')[-1].ToLower()
+        if (-not $leaf) { continue }
+        if ($leaf -notmatch '\.') { $leaf = "$leaf.exe" }
+        $seeds += $leaf
+    }
+    $seeds = @($seeds | Sort-Object -Unique)
+    if ($seeds.Count -eq 0) {
+        Write-CaseLog '    t-corr: no medium/high hunt findings to seed from - skipped' 'DarkGray'
+        return
+    }
+    $pool = New-Object System.Collections.Generic.List[object]
+    $addP = {
+        param([datetime]$t, [string]$name, [string]$path)
+        if ($t -gt [datetime]::MinValue -and $name) { $null = $pool.Add([pscustomobject]@{ T = $t; Name = $name; Path = $path }) }
+    }
+    foreach ($r in @(Import-CaseCsv 'amcache')) {
+        $t = [datetime]::MinValue
+        try { if ("$($r.FileKeyLastWriteTimestamp)") { $t = [datetime]::Parse("$($r.FileKeyLastWriteTimestamp)", [Globalization.CultureInfo]::InvariantCulture) } } catch { }
+        $fp = "$($r.FullPath)"; if (-not $fp -or $fp -eq 'Unassociated') { $fp = "$($r.Name)" }
+        & $addP $t ("$($r.Name)".ToLower()) $fp
+    }
+    foreach ($r in @(Import-CaseCsv 'prefetch_parsed')) {
+        $nm = "$($r.ExecutableName)".ToLower(); if (-not $nm) { continue }
+        if ($nm -notmatch '\.') { $nm = "$nm.exe" }
+        foreach ($tc2 in @('LastRun', 'PreviousRun0', 'PreviousRun1', 'PreviousRun2', 'PreviousRun3', 'PreviousRun4', 'PreviousRun5', 'PreviousRun6', 'PreviousRun7')) {
+            $v2 = $r.PSObject.Properties[$tc2]
+            if (-not $v2 -or -not $v2.Value) { continue }
+            $t = [datetime]::MinValue
+            try { $t = [datetime]::Parse("$($v2.Value)", [Globalization.CultureInfo]::InvariantCulture) } catch { continue }
+            & $addP $t $nm '(prefetch run)'
+        }
+    }
+    foreach ($r in @(Import-CaseCsv 'security_proc_events')) {
+        $t = [datetime]::MinValue
+        try { if ("$($r.Time)") { $t = [datetime]::Parse("$($r.Time)", [Globalization.CultureInfo]::InvariantCulture) } } catch { }
+        & $addP $t (("$($r.NewProcess)" -split '[\\/]')[-1].ToLower()) "$($r.NewProcess)"
+    }
+    foreach ($r in @(Import-CaseCsv 'sysmon_proc_create')) {
+        $t = [datetime]::MinValue
+        try { if ("$($r.Time)") { $t = [datetime]::Parse("$($r.Time)", [Globalization.CultureInfo]::InvariantCulture) } } catch { }
+        & $addP $t (("$($r.Image)" -split '[\\/]')[-1].ToLower()) "$($r.Image)"
+    }
+    $out = New-Object System.Collections.Generic.List[object]
+    $pairW = @{}
+    foreach ($sd in $seeds) {
+        $sTimes = @(($pool | Where-Object { $_.Name -eq $sd } | ForEach-Object { $_.T } | Sort-Object -Unique))
+        if ($sTimes.Count -eq 0) { continue }
+        $best = @{}
+        foreach ($st in $sTimes) {
+            foreach ($p in $pool) {
+                if ($p.Name -eq $sd) { continue }
+                $dt = [Math]::Abs(($p.T - $st).TotalSeconds)
+                if ($dt -gt 1800) { continue }
+                $w = [Math]::Exp(-$dt / 600.0)
+                if ($w -lt 0.1) { continue }
+                if (-not $best.ContainsKey($p.Name) -or $w -gt $best[$p.Name].W) {
+                    $best[$p.Name] = @{ W = $w; Dt = [int]$dt; Path = $p.Path; SeedT = $st }
+                }
+            }
+        }
+        foreach ($bk in @($best.Keys)) {
+            $e = $best[$bk]
+            $null = $out.Add([pscustomobject]@{
+                Seed = $sd; SeedTime = $e.SeedT.ToString('yyyy-MM-dd HH:mm'); Name = $bk; Path = $e.Path
+                DeltaMinutes = [Math]::Round($e.Dt / 60.0, 1); Weight = [Math]::Round($e.W, 3); Bond = ''
+            })
+            $pk = "$sd|$bk"
+            if (-not $pairW.ContainsKey($pk) -or $pairW[$pk] -lt $e.W) { $pairW[$pk] = $e.W }
+        }
+    }
+    $bondN = 0
+    foreach ($r in $out) {
+        $rk = "$($r.Name)|$($r.Seed)"
+        if ($pairW.ContainsKey($rk) -and $pairW[$rk] -ge 0.5 -and $r.Weight -ge 0.5) { $r.Bond = 'bidirectional'; $bondN++ }
+    }
+    $out2 = @($out | Sort-Object @{e = 'Weight'; Descending = $true} | Select-Object -First 2000)
+    Save-Rows -Name 'exec_tcorr' -Rows $out2
+    Write-CaseLog "    t-corr: $($seeds.Count) seed(s) over $($pool.Count) execution event(s) -> $($out2.Count) correlation pair(s) ($bondN bidirectional) -> csv\exec_tcorr.csv" 'Gray'
 }
 
 function New-ConnectionDns {
@@ -10021,6 +10210,20 @@ function New-HuntFindings {
     }
     & $trace 'R50' 'known-bad name patterns' "regex pack of $(@($r50Pack).Count) pattern(s): $r50N match(es)"
 
+    # ---------- R51: recon tool burst (v2.85 recon-scan) ----------
+    # 4+ DISTINCT discovery tools inside one 15-min session is hands-on recon - single stray
+    # whoami/net use stays report-only (recon_sessions.csv rows start at 2 tools).
+    $r51 = @(Import-CaseCsv 'recon_sessions')
+    $r51N = 0
+    foreach ($s51 in $r51) {
+        $tc51 = 0; try { $tc51 = [int]$s51.ToolCount } catch { }
+        if ($tc51 -lt 4) { continue }
+        $r51Sev = if ($tc51 -ge 6) { 'high' } else { 'medium' }
+        $r51N++
+        & $find 'Recon tool burst' $r51Sev "session $($s51.StartUTC)" "$tc51 distinct discovery tools ($($s51.Tools)); sample: $($s51.Sample)" 'T1087'
+    }
+    & $trace 'R51' 'recon tool burst' "recon_sessions: $($r51.Count) session(s) scanned -> $r51N burst finding(s)"
+
     Save-Rows -Name 'hunt_findings' -Rows $out.ToArray()
     $hi = @($out | Where-Object { $_.Severity -eq 'high' }).Count
     if ($out.Count -gt 0) {
@@ -10241,6 +10444,7 @@ function Get-CompromiseVerdict {
     # v2.83 (R45/R46): TaskCache tamper + ntds.dit access
     $taskCache = Import-CaseCsv 'scheduled_taskcache'
     $esentNtds = Import-CaseCsv 'esent_ntds'
+    $reconSessions = Import-CaseCsv 'recon_sessions'
 
     $levelNames = @{ 4 = 'COMPROMISED'; 3 = 'LIKELY COMPROMISED'; 2 = 'SUSPICIOUS'; 1 = 'NO EVIDENCE OF COMPROMISE'; 0 = 'INCONCLUSIVE' }
 
@@ -10439,6 +10643,11 @@ function Get-CompromiseVerdict {
     Add-Signal 'Orphaned TaskCache entries (no Tree link)' 2 $tcOrphan.Count (($tcOrphan | Select-Object -First 3 | ForEach-Object { "Tasks\$($_.Guid)" }) -join '; ')
     Add-Signal 'ntds.dit accessed - non-backup pattern (ESENT 325/326)' 3 $ntdsTheft.Count (($ntdsTheft | Select-Object -First 2 | ForEach-Object { "$($_.Time)" }) -join '; ')
     Add-Signal 'ntds.dit accessed - backup pattern (verify schedule)' 0 $ntdsBackup.Count "ESENT events matching backup engines - confirm the backup window covers them"
+    # v2.85 (R51): recon tool bursts - 4-5 distinct tools = suspicious, 6+ = strong
+    $r51Big = @($reconSessions | Where-Object { $tcV = 0; try { $tcV = [int]$_.ToolCount } catch { }; $tcV -ge 6 })
+    $r51Med = @($reconSessions | Where-Object { $tcV = 0; try { $tcV = [int]$_.ToolCount } catch { }; $tcV -ge 4 -and $tcV -lt 6 })
+    Add-Signal 'Recon tool burst - 6+ distinct discovery tools in one session' 3 $r51Big.Count (($r51Big | Select-Object -First 2 | ForEach-Object { "$($_.StartUTC) ($($_.Tools))" }) -join '; ')
+    Add-Signal 'Recon tool burst - 4-5 distinct discovery tools in one session' 2 $r51Med.Count (($r51Med | Select-Object -First 2 | ForEach-Object { "$($_.StartUTC) ($($_.Tools))" }) -join '; ')
     Add-Signal 'Process anomaly verdict MEDIUM' 1 $procMed "unsigned/user-path binaries worth review"
     Add-Signal 'Brute-force source(s) seen' 0 @($brute).Count "failed logon sources - check for follow-up success"
 
@@ -10911,7 +11120,9 @@ function Invoke-RegenerateOutputs {
     }
     & $rgStep 'sigma rule logs' 'New-SigmaRuleLogs' { New-SigmaRuleLogs }
     & $rgStep 'execution stacks' 'New-ExecStacks' { New-ExecStacks }
+    & $rgStep 'recon sessions' 'New-ReconSessions' { New-ReconSessions }
     & $rgStep 'hunt findings' 'New-HuntFindings' { New-HuntFindings }
+    & $rgStep 'temporal correlation' 'New-TCorr' { New-TCorr }
     & $rgStep 'IOC xref' 'New-IocHits' { New-IocHits }
     & $rgStep 'IOC export' 'New-CaseIocExport' { New-CaseIocExport }
     & $rgStep 'entity correlation' 'New-EntityCorrelation' { New-EntityCorrelation }
