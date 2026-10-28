@@ -1,4 +1,4 @@
-﻿$repoScript = Join-Path (Split-Path -Parent $PSScriptRoot) "Ophira.ps1"
+$repoScript = Join-Path (Split-Path -Parent $PSScriptRoot) "Ophira.ps1"
 # v2.29 - detection canary: consent-gated self-test (enable logging, plant labeled activity,
 # collect, score hunt rules). CI runs fixture/text checks only - no audit changes here.
 $ErrorActionPreference = 'Stop'
@@ -18,7 +18,9 @@ Check "param: Canary in ValidateSet" ($src -match [regex]::Escape("'Process', 'T
 Check "param: -KeepLogging switch exists" ($src -match '\[switch\]\$KeepLogging')
 Check "menu: [C] canary entry shown" ($src -match '\[C\]  Detection canary')
 Check "menu: C returns Canary" ($src -match [regex]::Escape("'^(?i)c$' { return 'Canary' }"))
-Check "dispatch: menu site wired" ($src -match [regex]::Escape("'Canary' { Invoke-CanaryMode -KeepLogging:`$KeepLogging -Target `$CanaryTarget -TargetUser `$CanaryTargetUser | Out-Null }`r`n                'Links'"))
+# v2.82: EOL-agnostic adjacency (explicit `r`n in the old pattern broke on LF checkouts -
+# repo blobs are LF, runner worktrees are CRLF under autocrlf)
+Check "dispatch: menu site wired" ([regex]::Match($src, "(?s)'Canary' \{ Invoke-CanaryMode -KeepLogging:\`$KeepLogging -Target \`$CanaryTarget -TargetUser \`$CanaryTargetUser \| Out-Null \}[ \t]*\r?\n\s*'Links'").Success)
 Check "dispatch: -Mode site wired" ($src -match [regex]::Escape("'Canary' { Invoke-CanaryMode -KeepLogging:`$KeepLogging -Target `$CanaryTarget -TargetUser `$CanaryTargetUser | Out-Null }"))
 
 # ============================================================================

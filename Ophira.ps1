@@ -1,5 +1,5 @@
-﻿<#
-Ophira v2.81  -  Windows Incident Response Triage Toolkit
+<#
+Ophira v2.82  -  Windows Incident Response Triage Toolkit
 READ-ONLY by design: never modifies the system, only reads and copies data
 into its own output folder. Intended to be handed to a system owner or run
 by a responder during early triage / threat hunting.
@@ -356,7 +356,7 @@ param(
     [switch]$ExitVerdict
 )
 
-$ScriptVersion = "2.81"
+$ScriptVersion = "2.82"
 $ErrorActionPreference = 'Continue'
 $ProgressPreference = 'SilentlyContinue'
 
@@ -401,6 +401,10 @@ function Get-HostRole {
     return 'Workstation'
 }
 $script:HostRole = Get-HostRole
+# Endpoint elevation is a LIVE fact during collection; Open-CaseSession replaces it with the
+# case.json tri-state on -Mode Parse (null stays unknown there). Without this init the verdict
+# rendered 'Endpoint elevation status unknown (parsed package)' on every fresh collect.
+$script:EndpointAdmin = Test-IsAdmin
 
 function Get-ArgString {
     $parts = @()
@@ -793,9 +797,13 @@ function Get-IpCloudClass {
     $b = $ip.GetAddressBytes()
     $o1 = [int]$b[0]; $o2 = [int]$b[1]
     # Microsoft (Azure/O365/Defender cloud) - major published ranges
+    # v2.82: Azure fills - 4.208.0.0/12, 13.64.0.0/11, 13.96.0.0/13 (a 4.213.x hit on a real
+    # case surfaced as "unknown provider" because no octet-1 rule existed for 4.x)
+    if ($o1 -eq 4 -and $o2 -ge 208 -and $o2 -le 223) { return 'microsoft' }
+    if ($o1 -eq 13 -and $o2 -ge 65 -and $o2 -le 95) { return 'microsoft' }
+    if ($o1 -eq 13 -and $o2 -ge 96 -and $o2 -le 106) { return 'microsoft' }
     if ($o1 -eq 13 -and $o2 -ge 107 -and $o2 -le 109) { return 'microsoft' }
     if ($o1 -eq 13 -and $o2 -eq 64) { return 'microsoft' }
-    if ($o1 -eq 13 -and $o2 -eq 72) { return 'microsoft' }
     if ($o1 -eq 20 -and $o2 -ge 36 -and $o2 -le 240) { return 'microsoft' }
     if ($o1 -eq 20 -and $o2 -ge 143 -and $o2 -le 190) { return 'microsoft' }
     if ($o1 -eq 40 -and $o2 -ge 64 -and $o2 -le 124) { return 'microsoft' }
@@ -878,6 +886,28 @@ function Get-IpCloudClass {
     if ($o1 -eq 184 -and $o2 -ge 84 -and $o2 -le 107) { return 'akamai' }
     if ($o1 -eq 193 -and $o2 -ge 108 -and $o2 -le 111) { return 'akamai' }
     if ($o1 -eq 205 -and $o2 -ge 185 -and $o2 -le 223) { return 'akamai' }
+    return ''
+}
+
+function Get-DomainProvider {
+    # v2.82: classify a hostname by domain suffix - complements Get-IpCloudClass (an IP-range
+    # miss is often still the provider's own domain, e.g. Azure front doors fronting
+    # microsoft.com). Ordered, deterministic, no network calls. Empty string = unrecognized.
+    param([string]$Hostname)
+    if (-not "$Hostname") { return '' }
+    $h = "$Hostname".TrimEnd('.').ToLower()
+    foreach ($e in @(
+        # ordered list 'provider suffix' - first suffix match wins
+        'microsoft microsoft.com','microsoft windows.com','microsoft windowsupdate.com','microsoft update.microsoft.com','microsoft msn.com','microsoft office.com','microsoft office.net','microsoft live.com','microsoft microsoftonline.com','microsoft msftconnecttest.com','microsoft msedge.net','microsoft azure.com','microsoft azureedge.net','microsoft windowsazure.com','microsoft onedrive.com','microsoft sharepoint.com','microsoft sharepointonline.com','microsoft bing.com','microsoft xbox.com','microsoft visualstudio.com','microsoft github.com','microsoft githubusercontent.com','microsoft github.io','microsoft msocsp.com','microsoft msocsp.net','microsoft msft.net',
+        'amazon amazonaws.com','amazon amazon.com','amazon awsstatic.com','amazon cloudfront.net','amazon primevideo.com',
+        'google google.com','google gstatic.com','google googleapis.com','google googleusercontent.com','google youtube.com','google ytimg.com','google googlevideo.com','google google-analytics.com','google doubleclick.net','google android.com','google googlemail.com',
+        'cloudflare cloudflare.com','cloudflare cloudflareclient.com','cloudflare cloudflareinsights.com','cloudflare pages.dev',
+        'akamai akamai.com','akamai akamaihd.net','akamai akamaized.net','akamai akamai.net','akamai edgekey.net','akamai edgesuite.net'
+    )) {
+        $sp = $e.IndexOf(' ')
+        $s = $e.Substring($sp + 1)
+        if ($h -eq $s -or $h -like "*.$s") { return $e.Substring(0, $sp) }
+    }
     return ''
 }
 
@@ -5625,6 +5655,7 @@ function New-HtmlReport {
     $execRows = @(Import-CaseCsv 'execution_timeline.csv')
     $brute = @(Import-CaseCsv 'security_bruteforce_candidates.csv')
     $pubConns = @(Import-CaseCsv 'flash_public_connections.csv')
+    $connDns = @(Import-CaseCsv 'connections_dns.csv')
     $amcHits = @(Import-CaseCsv 'ioc_hits_amcache.csv')
     $yaraHits = @(Import-CaseCsv 'yara_hits.csv')
     $beacons = @(Import-CaseCsv 'beacon_candidates.csv')
@@ -6628,11 +6659,20 @@ tr.techrow{cursor:pointer}
         # v2.56: one row per destination with connection count + every talking process
         $entLeaf = @{}
         foreach ($eb3 in $entB) { if ("$($eb3.Path)") { $entLeaf[(Split-Path "$($eb3.Path)" -Leaf).ToLower()] = $true } }
-        $null = $sb.AppendLine("<table><tr><th>Remote</th><th>Provider</th><th>Conns</th><th>Talking processes</th><th></th></tr>")
+        $null = $sb.AppendLine("<table><tr><th>Remote</th><th>Provider</th><th>Resolved (DNS)</th><th>Conns</th><th>Talking processes</th><th></th></tr>")
+        # v2.82: DNS-attributed connections - resolve column + provider upgrade from domain
+        $domByIp = @{}
+        foreach ($cd in $connDns) { if ("$($cd.RemoteAddress)" -and -not $domByIp.ContainsKey("$($cd.RemoteAddress)")) { $domByIp["$($cd.RemoteAddress)"] = $cd } }
         foreach ($cg in ($pubConns | Group-Object RemoteAddress, RemotePort | Sort-Object Count -Descending | Select-Object -First 25)) {
             $c = $cg.Group[0]
             $prov = Get-IpCloudClass "$($c.RemoteAddress)"
+            $dAtt = $domByIp["$($c.RemoteAddress)"]
+            $prov2 = if ($dAtt) { "$($dAtt.Provider)".Trim() } else { '' }
+        if (-not $prov -and @('', 'unknown') -notcontains $prov2) { $prov = "$($dAtt.Provider)" }
             if (-not $prov) { $prov = 'non-cloud' }
+            $domCell = ''
+            if ($dAtt -and "$($dAtt.ResolvedDomain)") { $domCell = "$(ConvertTo-HtmlEsc $dAtt.ResolvedDomain)"; if ("$($dAtt.DnsChain)") { $domCell = "<span title='$(ConvertTo-HtmlEsc $dAtt.DnsChain)'>$domCell</span>" } }
+            elseif ($dAtt) { $domCell = "<span class='meta'>no cache entry</span>" }
             $talkers = @($cg.Group | ForEach-Object { $leaf = if ("$($_.ProcessPath)") { Split-Path "$($_.ProcessPath)" -Leaf } else { "PID $($_.PID)" }; [pscustomobject]@{ Leaf = $leaf; Pid = "$($_.PID)" } } | Sort-Object Leaf -Unique)
             $talkerCells = @($talkers | ForEach-Object {
                 $t = "$(ConvertTo-HtmlEsc $_.Leaf)"
@@ -6640,9 +6680,9 @@ tr.techrow{cursor:pointer}
                 if ("$($_.Pid)") { $t += " (PID $($_.Pid))" }
                 $t
             })
-            $null = $sb.AppendLine("<tr><td>$(ConvertTo-HtmlEsc $c.RemoteAddress):$(ConvertTo-HtmlEsc $c.RemotePort)</td><td>$(ConvertTo-HtmlEsc $prov)</td><td><b>$($cg.Count)</b></td><td>$($talkerCells -join ', ')</td><td>$(New-VtLink $c.RemoteAddress)</td></tr>")
+            $null = $sb.AppendLine("<tr><td>$(ConvertTo-HtmlEsc $c.RemoteAddress):$(ConvertTo-HtmlEsc $c.RemotePort)</td><td>$(ConvertTo-HtmlEsc $prov)</td><td>$domCell</td><td><b>$($cg.Count)</b></td><td>$($talkerCells -join ', ')</td><td>$(New-VtLink $c.RemoteAddress)</td></tr>")
         }
-        $null = $sb.AppendLine("</table>")
+        $null = $sb.AppendLine("</table><div class='meta'>Provider source: IP range or resolved-domain suffix. 'no cache entry' = the resolver cache had expired by collection time (normal; Sysmon EID22 would give full coverage). Hover the resolved name for the full CNAME chain.</div>")
     } else {
         $null = $sb.AppendLine("<div class='meta'>No public IP connections at collection time.</div>")
     }
@@ -7083,12 +7123,17 @@ tr.techrow{cursor:pointer}
                 $null = $sb.AppendLine("<div class='lead lead-med' style='padding:6px 12px'><b>MASQUERADE WARNING:</b> the name appears at multiple paths - $(ConvertTo-HtmlEsc (@($ft.Masquerade) -join ', ')). Compare the entity groups below; only one of them is probably the real OS binary.</div>")
             }
             if (@($ft.Paths).Count -gt 0) {
-                $null = $sb.AppendLine("<h3>Entity groups (path + hash keyed - same-name binaries at different paths are separate groups)</h3><table><tr><th>Path</th><th>SHA256</th><th>Hits</th><th>First seen</th><th>Last seen</th></tr>")
+                $null = $sb.AppendLine("<h3>Entity groups (path + hash keyed - same-name binaries at different paths are separate groups)</h3><table><tr><th>Path</th><th>Hash</th><th>Hits</th><th>First seen</th><th>Last seen</th></tr>")
+                # v2.82: per-group hash from focus_terms.json EntityGroups - Hashes[0] on every
+                # row was the same-hash bug; algo label (SHA256:/SHA1:) is baked into the value
+                $egMap = @{}
+                foreach ($eg in @($ft.EntityGroups)) { if ($eg -and "$($eg.Path)") { $egMap["$($eg.Path)"] = "$($eg.Hash)" } }
                 foreach ($p in @($ft.Paths | Select-Object -First 20)) {
                     $g = @($fHits | Where-Object { "$($_.Detail)".ToLower().Contains("$p") })
                     $fs = ($g | Where-Object { "$($_.Time)" } | Sort-Object { "$($_.Time)" } | Select-Object -First 1).Time
                     $ls = ($g | Where-Object { "$($_.Time)" } | Sort-Object { "$($_.Time)" } | Select-Object -Last 1).Time
-                    $null = $sb.AppendLine("<tr><td class='path'>$(ConvertTo-HtmlEsc $p)</td><td class='path'>$(ConvertTo-HtmlEsc ($ft.Hashes | Select-Object -First 1))</td><td>$($g.Count)</td><td>$(ConvertTo-HtmlEsc $fs)</td><td>$(ConvertTo-HtmlEsc $ls)</td></tr>")
+                    $hCell = if ($egMap.ContainsKey("$p")) { $egMap["$p"] } else { '' }
+                    $null = $sb.AppendLine("<tr><td class='path'>$(ConvertTo-HtmlEsc $p)</td><td class='path'>$(ConvertTo-HtmlEsc $hCell)</td><td>$($g.Count)</td><td>$(ConvertTo-HtmlEsc $fs)</td><td>$(ConvertTo-HtmlEsc $ls)</td></tr>")
                 }
                 $null = $sb.AppendLine("</table>")
             }
@@ -7267,6 +7312,7 @@ tr.techrow{cursor:pointer}
         'connections'                     = 'Full connection table (netstat) at collection time'
         'connections_public_established'  = 'ESTABLISHED public-IP connections - C2 candidates'
         'dns_cache'                       = 'DNS resolver cache - look up domains malware resolved recently'
+        'connections_dns'                 = 'Public connections resolved via the DNS cache (CNAME chains walked) - what each remote IP actually was'
         'arp_table'                       = 'ARP cache - hosts on the local segment'
         'logon_sessions'                  = 'Active logon sessions (who is on the box right now)'
         'drivers'                          = 'Kernel drivers + paths'
@@ -7400,6 +7446,7 @@ tr.techrow{cursor:pointer}
     # v2.58: zero-row artifacts explain themselves - the honest-empty map (what condition
     # produced the empty, and whether empty is good, boring, or a blind spot to fix)
     $emptyWhy = @{
+        'connections_dns'                 = 'no public connection matched a DNS resolver-cache entry - resolver TTLs typically expire before collection, and full attribution needs Sysmon EID22 DNS events'
         'security_proc_events'            = 'no 4688 events in the Security log - process-creation auditing appears disabled (see the hardening recommendation); lineage and session attribution run thin'
         'process_chains'                  = 'built from 4688 events - with process auditing disabled almost no lineage is recoverable'
         'session_activity'                = 'joins 4688/5145 events - nothing to join when process/share auditing is disabled'
@@ -7714,6 +7761,10 @@ function New-SuperTimeline {
         $buf = New-Object System.Collections.Generic.List[object]
         foreach ($r in (Import-CaseCsv $name)) {
             if (-not $r.PSObject.Properties['TimeCreated']) { continue }
+            # v2.82: drop CDXML proxy boilerplate - EID 4104 'Creating Scriptblock text'
+            # fragments for $__cmdletization_* code (Get-NetTCPSetting etc.) auto-logged by
+            # CDXML cmdlets; hundreds of rows, zero investigative value in the timeline
+            if ("$($r.Message)" -match '__cmdletization') { continue }
             $buf.Add(@("$($r.TimeCreated)", "EID $($r.Id)", '', '', "$($r.Message)"))
         }
         foreach ($m in (& $keepNewest $buf 5000)) { & $add $m[0] $name $m[1] $m[2] $m[3] $m[4] }
@@ -8223,6 +8274,72 @@ function New-ProcessChains {
     } else {
         Write-CaseLog '    process lineage: flagged binaries have no parent edges in this case' 'DarkGray'
     }
+}
+
+function New-ConnectionDns {
+    # v2.82: attribute public connections to hostnames via the collected DNS cache
+    # (dns_cache.csv Entry/Data/Type). Walks CNAME chains alias -> target -> A record so an
+    # IP shows the real domain plus the alias path; the leftmost name is what the process
+    # actually queried. Rows keep ResolvedDomain empty when the cache holds nothing for the
+    # IP (TTLs expire fast - absence is normal, Sysmon EID22 would be the complete source).
+    # Derived csv - rebuilt on every regen, feeds the report network table + the lead builder.
+    $pub = @(Import-CaseCsv 'flash_public_connections')
+    foreach ($c2 in (Import-CaseCsv 'connections_public_established')) {
+        $k2 = "$($c2.RemoteAddress)|$($c2.RemotePort)|$($c2.PID)|$($c2.ProcessPath)"
+        if (-not (@($pub | Where-Object { "$($_.RemoteAddress)|$($_.RemotePort)|$($_.PID)|$($_.ProcessPath)" -eq $k2 }).Count)) { $pub += $c2 }
+    }
+    if ($pub.Count -eq 0) { Write-CaseLog '    connection attribution: no public connections in this case' 'DarkGray'; return }
+    $dns = @(Import-CaseCsv 'dns_cache')
+    $aByIp = @{}; $aliasOf = @{}
+    foreach ($r in $dns) {
+        $t = "$($r.Type)".Trim().ToUpper()
+        if ($t -eq '1') { $t = 'A' } elseif ($t -eq '5') { $t = 'CNAME' } elseif ($t -eq '28') { $t = 'AAAA' }
+        $e = ("$($r.Entry)" -replace '\\.$', '').Trim()
+        $d = ("$($r.Data)" -replace '\\.$', '').Trim()
+        if (-not $e -or -not $d) { continue }
+        if ($t -eq 'A' -or $t -eq 'AAAA') { if (-not $aByIp.ContainsKey($d)) { $aByIp[$d] = $e } }
+        elseif ($t -eq 'CNAME') { if (-not $aliasOf.ContainsKey($d)) { $aliasOf[$d] = $e } }
+    }
+    $byIp = @{}
+    foreach ($ip in @($aByIp.Keys)) {
+        $host1 = $aByIp[$ip]
+        $chain = New-Object System.Collections.Generic.List[string]
+        $chain.Add($host1)
+        # the A owner is the chain's END; the name the process queried sits UPSTREAM
+        # (target side of CNAME rows) - walk aliases backwards, leftmost = original query
+        $cur = $host1; $hops = 0
+        while ($aliasOf.ContainsKey($cur) -and $hops -lt 5) {
+            $cur = $aliasOf[$cur]
+            $chain.Insert(0, $cur)
+            $hops++
+        }
+        $prov = ''
+        foreach ($cn in $chain) { $prov = Get-DomainProvider $cn; if ($prov) { break } }
+        $byIp[$ip] = @{ Domain = $chain[0]; Chain = (@($chain) + $ip) -join ' -> '; DomainProvider = $prov }
+    }
+    $rows = New-Object System.Collections.Generic.List[object]
+    foreach ($c in $pub) {
+        $ip = "$($c.RemoteAddress)"; if (-not $ip) { continue }
+        $att = $byIp[$ip]
+        $prov = Get-IpCloudClass $ip
+        $chainTxt = ''
+        if ($att) {
+            $chainTxt = "$($att.Chain)"
+            if (-not $prov) { $prov = "$($att.DomainProvider)" }
+        }
+        if (-not $prov) { $prov = 'unknown' }
+        $pn = try { if ("$($c.ProcessPath)") { Split-Path "$($c.ProcessPath)" -Leaf } else { '' } } catch { '' }
+        if (-not $pn) { $pn = "PID $($c.PID)" }
+        $null = $rows.Add([pscustomobject]@{
+            Process = $pn; PID = "$($c.PID)"; RemoteAddress = $ip; RemotePort = "$($c.RemotePort)"; State = "$($c.State)"
+            ResolvedDomain = $(if ($att) { "$($att.Domain)" } else { '' })
+            DnsChain = $chainTxt
+            Provider = $prov
+        })
+    }
+    Save-Rows -Name 'connections_dns' -Rows $rows.ToArray()
+    $nDom = @($rows | Where-Object { "$($_.ResolvedDomain)" }).Count
+    Write-CaseLog "    connection attribution: $($rows.Count) public connection(s), $nDom resolved via DNS cache (CNAME chains walked) -> csv\connections_dns.csv" 'Gray'
 }
 
 function New-IocHits {
@@ -9209,14 +9326,19 @@ function New-HuntFindings {
     foreach ($h in $r36Hits.ToArray()) {
         if ($r36Emitted -ge 12) { break }
         $r36Path = "$($h.Path)"
+        # v2.82: deterministic probing - amcache/mft device paths resolve to their Windows
+        # form (focus-engine convention), and a bare name must NOT probe against the
+        # analyst's current directory (that CWD lottery flipped severities between runs)
+        if ($r36Path -match '(?i)^\\device\\harddiskvolume\d+(\\.*)$') { $r36Path = "C:$($Matches[1])" }
+        $r36Bare = ($r36Path -notmatch '[\\/]')
         $r36Sig = $null
-        if (Test-Path -LiteralPath $r36Path) {
+        if (-not $r36Bare -and (Test-Path -LiteralPath $r36Path)) {
             try { $r36Sig = Get-AuthenticodeSignature -LiteralPath $r36Path } catch { $r36Sig = $null }
         }
         $r36Sys = ($r36Path -match $r36SysRe)
         if ($r36Sys -and $r36Sig -and "$($r36Sig.Status)" -eq 'Valid') { continue } # signed copy in a system dir = the real binary
-        $r36SigTxt = if ($r36Sig) { "signature $($r36Sig.Status)" } else { 'signature uncheckable (file missing or no signature data)' }
-        $r36Sev = if ((Test-IsUserWritablePath $r36Path) -or -not $r36Sig) { 'high' } else { 'low' }
+        $r36SigTxt = if ($r36Bare) { 'no executable path in evidence (name-only match)' } elseif ($r36Sig) { "signature $($r36Sig.Status)" } else { 'signature uncheckable (file missing or no signature data)' }
+        $r36Sev = if ($r36Bare) { 'low' } elseif ((Test-IsUserWritablePath $r36Path) -or -not $r36Sig) { 'high' } else { 'low' }
         & $find 'Lookalike system binary (Levenshtein near-name)' $r36Sev $r36Path "near '$($h.Crit)' (distance $($h.Dist)), $r36Path, $r36SigTxt" 'T1036.005'
         $r36Emitted++
     }
@@ -9997,9 +10119,20 @@ function Get-TriageLeads {
     foreach ($pm in @(Import-CaseCsv 'flash_process_scored' | Where-Object { "$($_.Verdict)" -eq 'MEDIUM' -and "$($_.Name)" -and (ConvertTo-SafeInt $_.Score) -ge 4 } | Sort-Object { ConvertTo-SafeInt $_.Score } -Descending | Select-Object -First 2)) {
         $leads.Add([pscustomobject]@{ Rank = 'med'; Title = "$($pm.Name) (PID $($pm.PID))"; Class = "review: medium process score $($pm.Score)"; Why = "$($pm.Evidence)"; Ident = "$($pm.Path)"; Extra = "signer: $(if ("$($pm.Signer)") { $pm.Signer } else { 'NONE' })"; Anchor = 'processes' })
     }
+    # v2.82: the unknown-provider lead consults the DNS-attributed connections - an IP whose
+    # resolved domain belongs to a known provider is no longer "unknown"; a genuinely unknown
+    # IP keeps the lead and shows the resolved domain (if any) so the analyst has a start.
+    $domByIpL = @{}
+    foreach ($cd in @(Import-CaseCsv 'connections_dns')) {
+        if ("$($cd.RemoteAddress)" -and -not $domByIpL.ContainsKey("$($cd.RemoteAddress)")) { $domByIpL["$($cd.RemoteAddress)"] = $cd }
+    }
     foreach ($pc in @($pubConns | Where-Object { "$($_.RemoteAddress)" -and -not (Get-IpCloudClass "$($_.RemoteAddress)") } | Group-Object RemoteAddress, RemotePort | ForEach-Object { $_.Group[0] } | Select-Object -First 2)) {
+        $attr = $domByIpL["$($pc.RemoteAddress)"]
+        if ($attr -and " $($attr.Provider)".Trim() -ne 'unknown') { continue }
         $pn = if ("$($pc.ProcessPath)") { Split-Path "$($pc.ProcessPath)" -Leaf } else { "PID $($pc.PID)" }
-        $leads.Add([pscustomobject]@{ Rank = 'med'; Title = "$pn -> $($pc.RemoteAddress):$($pc.RemotePort)"; Class = "review: outbound to non-cloud public IP"; Why = "established connection to unknown provider (not Microsoft/AWS/Google/Cloudflare/Akamai) - verify destination ownership and purpose"; Ident = "$($pc.RemoteAddress)"; Extra = ''; Anchor = 'network' })
+        $why = 'established connection to unknown provider (not Microsoft/AWS/Google/Cloudflare/Akamai) - verify destination ownership and purpose'
+        if ($attr -and "$($attr.ResolvedDomain)") { $why += " - DNS cache resolved it to '$($attr.ResolvedDomain)' (ownership still unverified)" }
+        $leads.Add([pscustomobject]@{ Rank = 'med'; Title = "$pn -> $($pc.RemoteAddress):$($pc.RemotePort)"; Class = "review: outbound to non-cloud public IP"; Why = $why; Ident = "$($pc.RemoteAddress)"; Extra = ''; Anchor = 'network' })
     }
     # rank: crit-first, crits by corroboration desc then source priority then Title/Class
     # (deterministic); med leads by source priority only. Dedupe + cap as before.
@@ -10229,6 +10362,7 @@ function Invoke-RegenerateOutputs {
     & $rgStep 'entity correlation' 'New-EntityCorrelation' { New-EntityCorrelation }
     & $rgStep 'session attribution' 'New-SessionAttribution' { New-SessionAttribution }
     & $rgStep 'process lineage' 'New-ProcessChains' { New-ProcessChains }
+    & $rgStep 'connection attribution' 'New-ConnectionDns' { New-ConnectionDns }
     & $rgStep 'logging gaps' 'New-LoggingGaps' { New-LoggingGaps }
     & $rgStep 'parse-needed' 'Get-ParseNeeds' { Get-ParseNeeds }
     # v2.58: evidence-based 4688 check - the Security log is readable but zero 4688 rows were
@@ -10422,6 +10556,11 @@ function New-CaseManifest {
     # lines + SCRIPT self-hash + TOOLS AVAILABLE + one SHA256 line per file (the manifest
     # itself and *.zip excepted - the zip hash is appended by the caller after compression).
     param([string]$ForDir, [string[]]$HeaderLines)
+    # v2.82: canonicalize to the LONG path first - a caller may pass an 8.3 path (CI runners
+    # expose TEMP as C:\Users\RUNNER~1\... while Get-ChildItem FullName returns the long
+    # C:\Users\<name>\...), and the Substring below would then cut mid-path (root cause of
+    # the CI-only I3 manifest failure: rows like 'se\\evidence.csv').
+    try { $ForDir = (Get-Item -LiteralPath $ForDir).FullName } catch { }
     $manifest = @()
     foreach ($l in $HeaderLines) { $manifest += $l }
     $manifest += ""
@@ -11941,7 +12080,27 @@ function Invoke-FocusCore {
     if (Test-Path $phPath) {
         foreach ($r in @(Import-Csv -LiteralPath $phPath -ErrorAction SilentlyContinue)) {
             $pn = ("$($r.Path)" -replace '(?i)^\\device\\harddiskvolume\d+', 'C:').ToLower()
-            if ($pn -and -not $hashByPath[$pn]) { $hashByPath[$pn] = "$($r.SHA256)" }
+            if ($pn -and -not $hashByPath[$pn]) { $hashByPath[$pn] = "SHA256:$($r.SHA256)" }
+        }
+    }
+    # v2.82: hash sources beyond process_hashes.csv - yara_scanned.csv (File -> SHA256) and
+    # amcache.csv (FullPath -> SHA1). Without these the groups' hash cells came up empty and
+    # the report fell back to printing hashes[0] on EVERY group row (the same-hash bug); the
+    # algo label also fixes a SHA1 rendering under a SHA256 header (amcache stores SHA1).
+    $yaPath = Join-Path $script:CsvDir 'yara_scanned.csv'
+    if (-not (Test-Path -LiteralPath $yaPath)) { $yaPath = Join-Path $script:CsvDir (Get-CaseCsvPath 'yara_scanned') }
+    if (Test-Path $yaPath) {
+        foreach ($r in @(Import-Csv -LiteralPath $yaPath -ErrorAction SilentlyContinue)) {
+            $pn = ("$($r.File)" -replace '(?i)^\\device\\harddiskvolume\d+', 'C:').ToLower()
+            if ($pn -and "$($r.SHA256)" -and -not $hashByPath[$pn]) { $hashByPath[$pn] = "SHA256:$($r.SHA256)" }
+        }
+    }
+    $amPath = Join-Path $script:CsvDir 'amcache.csv'
+    if (-not (Test-Path -LiteralPath $amPath)) { $amPath = Join-Path $script:CsvDir (Get-CaseCsvPath 'amcache') }
+    if (Test-Path $amPath) {
+        foreach ($r in @(Import-Csv -LiteralPath $amPath -ErrorAction SilentlyContinue)) {
+            $pn = ("$($r.FullPath)" -replace '(?i)^\\device\\harddiskvolume\d+', 'C:').ToLower()
+            if ($pn -and "$($r.SHA1)" -and -not $hashByPath[$pn]) { $hashByPath[$pn] = "SHA1:$($r.SHA1)" }
         }
     }
     foreach ($pt in $paths) {
@@ -12033,7 +12192,15 @@ function Invoke-FocusCore {
     }
     $hits.ToArray() | Export-Csv -LiteralPath (Join-Path $focusDir 'focus_hits.csv') -NoTypeInformation -Encoding UTF8
     $chain.ToArray() | Export-Csv -LiteralPath (Join-Path $focusDir 'focus_chain.csv') -NoTypeInformation -Encoding UTF8
-    $instances.ToArray() | Export-Csv -LiteralPath (Join-Path $focusDir 'focus_instances.csv') -NoTypeInformation -Encoding UTF8
+    # v2.82: flatten Lineage ONLY for export - the raw array exported to CSV rendered as the
+    # literal 'System.String[]'; in-memory code still needs the array (nearest-parent reads).
+    $expInst = @()
+    foreach ($i in $instances) {
+        if ($i.PSObject.Properties['Lineage'] -and @($i.Lineage).Count -gt 0) {
+            $c9 = $i.PSObject.Copy(); $c9.Lineage = (@($i.Lineage) -join ' <- '); $expInst += $c9
+        } else { $expInst += $i }
+    }
+    $expInst | Export-Csv -LiteralPath (Join-Path $focusDir 'focus_instances.csv') -NoTypeInformation -Encoding UTF8
     @{
         Indicator = $Indicator
         GeneratedUTC = (Get-Date).ToUniversalTime().ToString('o')
@@ -12061,6 +12228,9 @@ function Invoke-FocusCore {
         VerdictHintCls = $hintCls
         VerdictHintTxt = $hintTxt
         Masquerade = @($masq)
+        # v2.82: per-group hash rides the JSON so the main-report embed can render each path's
+        # OWN hash (it used to print Hashes[0] on every row)
+        EntityGroups = @($groups.ToArray())
     } | ConvertTo-Json -Depth 5 | Set-Content -LiteralPath (Join-Path $focusDir 'focus_terms.json') -Encoding UTF8
 
     # ---- standalone dossier ------------------------------------------------
@@ -12224,7 +12394,7 @@ function Invoke-FocusCore {
             [void]$h.AppendLine("<div class='meta'>Left to right: parent processes -> the focused instances (red) -> child processes they spawned (amber) -> what each instance did (chips: TAMPER (Sysmon-detected hollowing) / INJECT<- remote threads into the instance / THREAD-> threads it created in others / PIPE / drops / network / DNS / DLL / file / registry / persistence / beacons). Red edges between instances = cross-process injection. Per-instance detail tables below the instance list. Degraded cases (no ProcessGuid) show fewer joins; execution artifacts (prefetch/amcache/BAM/shimcache) join on every case.</div>")
         }
         if ($groups.Count -gt 0) {
-            [void]$h.AppendLine("<h2>Entity groups (path + hash keyed)</h2><table><tr><th>Name</th><th>Path</th><th>SHA256</th><th>Hits</th><th>First seen</th><th>Last seen</th></tr>")
+            [void]$h.AppendLine("<h2>Entity groups (path + hash keyed)</h2><table><tr><th>Name</th><th>Path</th><th>Hash (algo-labeled)</th><th>Hits</th><th>First seen</th><th>Last seen</th></tr>")
             foreach ($g in $groups) {
                 [void]$h.AppendLine("<tr><td>$(& $esc $g.Name)</td><td class='path'>$(& $esc $g.Path)</td><td class='path'>$(& $esc $g.Hash)</td><td>$($g.HitCount)</td><td>$(& $esc $g.FirstSeen)</td><td>$(& $esc $g.LastSeen)</td></tr>")
             }

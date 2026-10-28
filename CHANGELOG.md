@@ -1,5 +1,35 @@
 ﻿# Changelog
 
+## v2.82
+- **DNS connection attribution (derived)**: `New-ConnectionDns` joins every public
+  connection to the collected DNS resolver cache (`dns_cache.csv`), walks CNAME chains
+  (alias -> target -> A record, up to 5 hops) so each remote IP shows the real domain plus
+  the full alias path; provider classification now ALSO consults the resolved domain suffix
+  (`Get-DomainProvider`, 60+ suffixes across microsoft/amazon/google/cloudflare/akamai).
+  Output: `csv\connections_dns.csv` (rebuilt on every regen/Parse), a `Resolved (DNS)`
+  column in the report network table (hover for the CNAME chain), and the triage lead no
+  longer fires for IPs whose resolved domain belongs to a known provider. Honest about
+  absence: rows with no cache entry say so (resolver TTLs expire; Sysmon EID22 gives full
+  coverage when deployed).
+- **Azure IP fills**: `Get-IpCloudClass` gains 4.208.0.0/12 (a 4.213.x svchost connection
+  surfaced as "unknown provider" on a real case), 13.64.0.0/11 and 13.96.0.0/13.
+- **Focus dossier fixes**: entity-group hash cells no longer repeat `Hashes[0]` on every
+  row (per-group hash now travels in `focus_terms.json` EntityGroups and renders per path);
+  hash cells are algo-labeled (`SHA256:`/`SHA1:` - amcache stores SHA1, which used to
+  render under a SHA256 header); group hashes now merge from `process_hashes.csv` AND
+  `yara_scanned.csv` AND `amcache.csv` (previously only process_hashes, empty on most
+  cases); `focus_instances.csv` Lineage exports as `a <- b <- c` instead of the literal
+  `System.String[]`.
+- **Master timeline noise**: EID 4104 scriptblock rows whose text is CDXML proxy
+  boilerplate (`__cmdletization_*`, auto-logged by Get-NetTCPSetting and friends) are
+  dropped from the supertimeline (185 of 439 powershell rows on a real case).
+- **CI fixes**: `New-CaseManifest` canonicalizes `ForDir` to its long path before the
+  relative-path substring (8.3 TEMP paths on GitHub runners - `C:\Users\RUNNER~1\...` vs
+  long `C:\Users\runneradmin\...` - cut mid-path; root cause of the runner-only I3
+  failure since v2.80); the release workflow is idempotent (re-runs update the existing
+  release instead of failing with "same tag name already exists").
+- Roadmap: dropped the offline/mounted-image triage item (not planned).
+
 ## v2.81
 - **Cache analytics pack** (ShimCache/AmCache temporal analytics): three new
   hunt rules + one report visual.

@@ -1,4 +1,4 @@
-$repoScript = Join-Path (Split-Path -Parent $PSScriptRoot) "Ophira.ps1"
+﻿$repoScript = Join-Path (Split-Path -Parent $PSScriptRoot) "Ophira.ps1"
 # v2.79 - tool debuggability:
 #   T12: per-rule hunt traces (inputs in -> findings out + gate decisions) and verdict
 #        signal-add / coverage-miss traces - always in collection.log, console at Verbose
@@ -140,8 +140,8 @@ Invoke-Expression $m.Value
 Invoke-RegenerateOutputs -Case $null
 
 $regLines = @($regCap | Where-Object { $_ -match '\[regen\]|regen summary:' })
-Check "T13: summary header with step count + total seconds" (($regCap | Where-Object { $_ -match '^  regen summary: 17 steps in [\d.]+s$' }).Count -eq 1)
-Check "T13: one summary line per derived artifact (17)" (@($regLines | Where-Object { $_ -match '\[regen\]' }).Count -eq 17)
+Check "T13: summary header with step count + total seconds" (($regCap | Where-Object { $_ -match '^  regen summary: 18 steps in [\d.]+s$' }).Count -eq 1)
+Check "T13: one summary line per derived artifact (18)" (@($regLines | Where-Object { $_ -match '\[regen\]' }).Count -eq 18)
 Check "T13: Save-Rows producer line carries producer + path + row count + elapsed" (($regCap | Where-Object { $_ -match [regex]::Escape('[regen] supertimeline') -and $_ -match [regex]::Escape('New-SuperTimeline -> csv\fake\supertimeline.csv 1234 rows in ') }).Count -eq 1)
 Check "T13: multi-artifact step aggregates counts (2 csv, 3 rows)" (($regCap | Where-Object { $_ -match [regex]::Escape('[regen] IOC xref') -and $_ -match [regex]::Escape('2 csv, 3 rows') }).Count -eq 1)
 Check "T13: step without csv output gets the (no csv) marker (plaso)" (($regCap | Where-Object { $_ -match [regex]::Escape('[regen] plaso import') -and $_ -match [regex]::Escape('Import-PlasoTimeline -> (no csv) in ') }).Count -eq 1)

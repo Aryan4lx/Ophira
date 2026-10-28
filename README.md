@@ -1,4 +1,4 @@
-﻿# Ophira
+# Ophira
 
 **One PowerShell script** (5.1+, zero dependencies) for Windows incident response: collect evidence on an endpoint, push it across a fleet, analyze the results, and fetch companion tools.
 
@@ -328,8 +328,6 @@ while ($true) { try { (New-Object Net.Sockets.TcpClient('1.1.1.1', 443)).Close()
 - [x] **Tool debuggability**: one trace line per hunt rule (input rows in -> findings out with severity split + gate decisions) and per verdict signal/coverage-miss in `collection.log`; `-Mode Parse` ends with a 17-step `[regen]` summary (producer -> output -> rows -> seconds); `-Mode Help` + README carry a "DEBUGGING A SUSPICIOUS NUMBER" cookbook (claim -> CSV -> producer -> log line); zero behavior change to any finding, verdict or coverage output (v2.79)
 - [x] **Verdict truth + report integrity**: the log-tamper check keys on `clear` only (a benign 6006 shutdown line no longer manufactures a weight-2 tamper signal on every host); `Admin-share` and R33 `Sysmon configuration changed` highs actually match the verdict high-precision regex (two-way drift test pins all 24 rule names); R29's seen-list caps split high/medium so a medium flood can't evict highs; Authenticode HashMismatch is decided signature-first (high outside user-writable paths, medium inside); CGNAT 100.64.0.0/10 no longer counts as public; LSASS-access rows require a non-system source process; mixed-schema CSV appends keep every column ever seen (Save-Rows union schema); report honesty - real counts, honest tail caps, `showing first 60 of N`, unknown endpoint-admin parses get a caveat instead of a silent elevation penalty, `case_manifest.txt` + analyst-repack custody line, same-named Sigma rules keep distinct drilldowns via key suffixes, invariant-date sorts everywhere, single-quote HTML escaping (v2.80)
 - [x] **Cache analytics pack**: R36 Levenshtein near-name masquerade (executed names vs 20 critical system binaries, edit distance 1-2, signed copy in a system dir skipped, user-writable/uncheckable = verdict-worthy high), R37 ShimCache cache-order violation (T1070.006) + scrub-survivor checks (report-only), R38 off-hours burst + mass-staging hour buckets with a pure-HTML 24-bar hour-of-day histogram in the report (report-only); E2E real case: verdict stable, hunt findings 23 -> 41 (v2.81)
-
-- [ ] Offline/mounted-image triage
 - [x] **Role presets + correlation spine**: auto-detected host role (DC/WebServer/Workstation) + `DC`/`WebServer` presets with auto role-pack; module 4.9 Kerberos/DS parses (4768/4769/4771/4776, 4662 DCSync GUIDs, 5136), module 8.12 IIS/HTTPERR raw + W3C parse; hunt rules R16-R21 (DCSync, Kerberoasting, AS-REP, password spray, webshell chains, web anomalies); session attribution (4624 LogonId x 4688/5145), process-lineage chains for flagged binaries, new sources in entity correlation; Win7/PS2.0 parse-compat sweep (friendly gate fires everywhere) (v2.21)
 
 ## Coverage vs Velociraptor (built-in Windows artifacts)
