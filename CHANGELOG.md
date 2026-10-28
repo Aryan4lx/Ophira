@@ -1,5 +1,20 @@
 ﻿# Changelog
 
+## v2.86
+- **Report shell overhaul (additive)**: the report renders in the approved redesign shell - fixed
+  sidebar nav (same anchors + counts, max-width fallback for narrow windows), fixed topbar with
+  Light/Dark theme toggle, Show-full-values toggle and Print button; all existing sections, class
+  names, filters, drill-downs and print behavior preserved.
+- **Activity picture section (new, after the verdict)**: 7x24 weekday-hour event-density heatmap
+  built from the master timeline (sqrt-scaled color levels, hover per-cell counts, honest empty
+  state when no timestamped rows); hunt-finding severity mix bar; top public talkers bar rows with
+  red fill when the DNS/provider attribution is unknown - the unknown-provider C2 pops before any
+  table is read.
+- **Light/dark themes + density**: CSS-variable palette with a light override; print CSS keeps the
+  full-value expansion and drops chrome (nav/topbar/buttons).
+- Verdict/E2E unchanged: same verdict, signals, coverage on the reference case (SUSPICIOUS 86%,
+  21/29, 6 signals, 3 caveats).
+
 ## v2.85
 - **Recon sessions (R51, derived)**: `New-ReconSessions` clusters discovery-tool executions
   (whoami/net/net1/nltest/quser/qwinsta/tasklist/systeminfo/ipconfig/nslookup/arp/netstat/nbtstat/route/wmic/klist/dsquery/csvde/ldifde/adfind/dsacls/vaultcmd/driverquery/reg/sc + AD PowerShell cmdlets) from 4688 + Sysmon EID 1 + PowerShell 4104 into 15-minute sessions

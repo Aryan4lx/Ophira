@@ -174,7 +174,7 @@ Check "wire: report stacking h3 present" ($src.Contains('Execution stacks - one 
 Check "wire: report window h3 present" ($src.Contains('Investigation-window time-stacking (what ran ONLY inside the window)'))
 Check "wire: report no-window note stays honest" ($src.Contains('a made-up window would fabricate signal'))
 Check "wire: report imports for the three artifacts" ($src.Contains("Import-CaseCsv 'exec_stacks_byname.csv'") -and $src.Contains("Import-CaseCsv 'exec_stacks_bypath.csv'") -and $src.Contains("Import-CaseCsv 'exec_window_ratio.csv'"))
-Check "wire: version bumped to 2.85" ($src.Contains('$ScriptVersion = "2.85"'))
+Check "wire: version bumped to 2.86" ($src.Contains('$ScriptVersion = "2.86"'))
 
 # ============================================================================
 Write-Host ""

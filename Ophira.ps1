@@ -1,5 +1,5 @@
 <#
-Ophira v2.85  -  Windows Incident Response Triage Toolkit
+Ophira v2.86  -  Windows Incident Response Triage Toolkit
 READ-ONLY by design: never modifies the system, only reads and copies data
 into its own output folder. Intended to be handed to a system owner or run
 by a responder during early triage / threat hunting.
@@ -356,7 +356,7 @@ param(
     [switch]$ExitVerdict
 )
 
-$ScriptVersion = "2.85"
+$ScriptVersion = "2.86"
 $ErrorActionPreference = 'Continue'
 $ProgressPreference = 'SilentlyContinue'
 
@@ -5860,59 +5860,85 @@ function New-HtmlReport {
 
     $css = @'
 <style>
-body{background:#0f1115;color:#d7dce3;font-family:Segoe UI,Arial,sans-serif;margin:0;padding:24px}
-h1{font-size:22px;margin:0 0 4px} h2{font-size:16px;margin:32px 0 10px;color:#8ab4f8;border-bottom:1px solid #2a2f3a;padding-bottom:6px}
-.meta{color:#7d8590;font-size:12px}
-.nav{position:sticky;top:0;background:#0f1115ee;border-bottom:1px solid #2a2f3a;padding:8px 0;z-index:9}
-.nav a{color:#8ab4f8;font-size:12px;text-decoration:none;margin-right:14px}
-.mkey{position:sticky;top:33px;z-index:5;background:#0f1115;border-bottom:1px solid #2a2f3a;padding:3px 0;font-size:11px;color:#7d8590}
+:root{--bg:#0d0f13;--bg2:#14171e;--bg3:#1a1e27;--line:#252b38;--line2:#313a4c;--tx:#e2e7f0;--tx2:#9aa4b8;--tx3:#697182;--acc:#7aa2f7;--ok:#4cc38a;--warn:#e0af68;--bad:#f7768e;--info:#7dcfff}
+[data-theme=light]{--bg:#f6f7fa;--bg2:#ffffff;--bg3:#eef1f6;--line:#dce1ea;--line2:#c7d0dd;--tx:#181e2c;--tx2:#525d76;--tx3:#8791a5;--acc:#2b6cb0;--ok:#1f8f5a;--warn:#a3671a;--bad:#c0392b;--info:#2278a0}
+body{background:var(--bg);color:var(--tx);font-family:'Segoe UI',Arial,sans-serif;margin:0;padding:58px 30px 90px 278px}
+h1{font-size:21px;margin:0 0 4px} h2{font-size:16px;margin:34px 0 10px;color:var(--acc);border-bottom:1px solid var(--line);padding-bottom:6px}
+.meta{color:var(--tx2);font-size:12px}
+a{color:var(--acc)}
+.topbar{position:fixed;top:0;left:250px;right:0;z-index:30;display:flex;align-items:center;gap:10px;padding:9px 30px;background:var(--bg);border-bottom:1px solid var(--line)}
+.topbar .brand{font-weight:700;font-size:14px}
+.tspacer{flex:1}
+.tbtn{background:var(--bg3);border:1px solid var(--line2);color:var(--tx2);border-radius:6px;font:inherit;font-size:12px;padding:4px 12px;cursor:pointer}
+.tbtn:hover{color:var(--tx);border-color:var(--acc)}
+.nav{position:fixed;top:0;left:0;bottom:0;width:250px;background:var(--bg2);border-right:1px solid var(--line);padding:16px 10px;overflow-y:auto;z-index:40;display:flex;flex-direction:column;gap:2px}
+.nav a{color:var(--tx2);font-size:12.5px;text-decoration:none;padding:5px 10px;border-radius:6px;border-left:2px solid transparent;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.nav a:hover{background:var(--bg3);color:var(--tx)}
+@media(max-width:1100px){.nav{position:static;width:auto;flex-direction:row;flex-wrap:wrap;border-bottom:1px solid var(--line)}body{padding-left:30px}.topbar{left:0}}
+.mkey{position:sticky;top:50px;z-index:5;background:var(--bg);border-bottom:1px solid var(--line);padding:3px 0;font-size:11px;color:var(--tx3)}
 .mkey i{display:inline-block;width:9px;height:9px;border-radius:2px;border:1px solid;margin:0 3px 0 10px;vertical-align:middle}
 .chips{margin:16px 0}.chip{display:inline-block;padding:6px 14px;border-radius:16px;margin-right:8px;font-size:14px;font-weight:600}
-.card{background:#181b21;border:1px solid #2a2f3a;border-radius:8px;padding:14px;margin:10px 0}
+.card{background:var(--bg2);border:1px solid var(--line);border-radius:10px;padding:14px;margin:10px 0}
 .badge{display:inline-block;padding:3px 10px;border-radius:10px;font-size:12px;font-weight:700;margin-right:8px}
-.HIGH{background:#5c1a1e;color:#ff8789}.MEDIUM{background:#5c470f;color:#ffce6b}.LOW{background:#1d3a26;color:#7ee2a8}.INFO{background:#243447;color:#9ec1f0}
-.ev{display:inline-block;background:#232833;border:1px solid #333b49;border-radius:4px;padding:2px 8px;margin:3px 4px 0 0;font-size:11px;color:#aab4c3}
-.path{font-family:Consolas,monospace;font-size:12px;color:#8ab4f8;word-break:break-all}
-table{border-collapse:collapse;width:100%;font-size:13px}th,td{border:1px solid #2a2f3a;padding:6px 10px;text-align:left}
-th{background:#1d222c;color:#8ab4f8}tr:nth-child(even){background:#151920}
-details{margin:10px 0;padding:6px 10px;background:#151920;border:1px solid #2a2f3a;border-radius:6px}summary{cursor:pointer;padding:4px 0}
-.crit{color:#ff8789;font-weight:700}.high{color:#ffb35c}.med{color:#ffce6b}.low{color:#9ec1f0}.info{color:#7d8590}
-a{color:#8ab4f8} .foot{margin-top:40px;color:#565e6b;font-size:11px}
-.vbanner{border-radius:10px;padding:18px 22px;margin:18px 0;border:2px solid}
-.v4{background:#2a0f12;border-color:#a33}.v3{background:#2a150f;border-color:#b33}.v2{background:#2a220f;border-color:#b93}.v1{background:#0f2418;border-color:#3a5}.v0{background:#1c1c22;border-color:#666}
-.vtitle{font-size:24px;font-weight:800;margin:0 0 4px}
-.vowner{font-size:14px;margin:6px 0 0}
-.confwrap{background:#1d222c;border-radius:8px;height:18px;margin-top:12px;position:relative;overflow:hidden}
+.HIGH{background:#3d1418;color:#ff8789}.MEDIUM{background:#3a2d0e;color:#ffce6b}.LOW{background:#12301e;color:#7ee2a8}.INFO{background:#1b2c42;color:#9ec1f0}
+[data-theme=light] .HIGH{background:#fbe4e5;color:#a12629}[data-theme=light] .MEDIUM{background:#faf0d7;color:#7a5a0a}[data-theme=light] .LOW{background:#ddf3e6;color:#136a3d}[data-theme=light] .INFO{background:#dde9f8;color:#1c4d86}
+.ev{display:inline-block;background:var(--bg3);border:1px solid var(--line2);border-radius:4px;padding:2px 8px;margin:3px 4px 0 0;font-size:11px;color:var(--tx2)}
+.path{font-family:Consolas,monospace;font-size:12px;color:var(--acc);word-break:break-all}
+table{border-collapse:collapse;width:100%;font-size:13px}th,td{border:1px solid var(--line);padding:6px 10px;text-align:left}
+th{background:var(--bg3);color:var(--acc);position:sticky;top:50px;z-index:2}tr:nth-child(even){background:var(--bg3)}
+details{margin:10px 0;padding:6px 10px;background:var(--bg2);border:1px solid var(--line);border-radius:8px}summary{cursor:pointer;padding:4px 0}
+.crit{color:var(--bad);font-weight:700}.high{color:#ffb35c}.med{color:var(--warn)}.low{color:var(--info)}.info{color:var(--tx3)}
+.foot{margin-top:40px;color:var(--tx3);font-size:11px}
+.vbanner{border-radius:12px;padding:20px 24px;margin:18px 0;border:2px solid}
+.v4{background:#2a0f12;border-color:#a33}.v3{background:#2a150f;border-color:#b33}.v2{background:#2a220f;border-color:#b93}.v1{background:#0f2418;border-color:#3a5}.v0{background:var(--bg3);border-color:var(--line2)}
+.vtitle{font-size:26px;font-weight:800;margin:0 0 4px}
+.vowner{font-size:14px;margin:6px 0 0;color:var(--tx2)}
+.confwrap{background:var(--bg3);border-radius:8px;height:18px;margin-top:12px;position:relative;overflow:hidden}
 .confbar{height:18px}
-.conftext{position:absolute;left:10px;top:1px;font-size:12px;font-weight:700;color:#d7dce3}
-.sig{display:inline-block;background:#232833;border:1px solid #333b49;border-radius:6px;padding:6px 10px;margin:3px 6px 3px 0;font-size:12px}
+.conftext{position:absolute;left:10px;top:1px;font-size:12px;font-weight:700;color:var(--tx)}
+.sig{display:inline-block;background:var(--bg3);border:1px solid var(--line2);border-radius:8px;padding:6px 10px;margin:3px 6px 3px 0;font-size:12px}
 .donow{background:#3a2a10;border:1px solid #b93;border-radius:8px;padding:10px 14px;margin-top:12px;font-size:13px;color:#ffd57a}
-.lead{background:#181b21;border:1px solid #2a2f3a;border-left:4px solid #666;border-radius:8px;padding:12px 16px;margin:10px 0}
-.lead-crit{border-left-color:#e05252;background:#221418}
-.lead-med{border-left-color:#c9a227;background:#211d12}
-.leadtitle{font-size:15px;font-weight:700;color:#e8ecf2}
-.leadclass{font-size:12px;font-weight:400;color:#9aa6b6;margin-left:8px}
-.chip{display:inline-block;background:#243447;color:#9ec1f0;border-radius:10px;padding:2px 10px;margin:2px 4px 2px 0;font-size:11px}
-.chip.chipdead{background:#232833;color:#7d8590;border:1px solid #333b49}
-.cov-ok{color:#7ee2a8}.cov-miss{color:#ff8789}
-.tac{display:inline-block;padding:5px 12px;border-radius:14px;margin:3px 6px 3px 0;font-size:12px;font-weight:600;background:#243447;color:#9ec1f0}
-.tac.hi{background:#5c1a1e;color:#ff8789}.tac.md{background:#5c470f;color:#ffce6b}
-pre.ioc{background:#181b21;border:1px solid #2a2f3a;border-radius:8px;padding:12px;font-family:Consolas,monospace;font-size:12px;white-space:pre-wrap;word-break:break-all}
-.rec{background:#181b21;border-left:4px solid #8ab4f8;border-radius:6px;padding:10px 14px;margin:8px 0}
-details{margin:6px 0}summary{cursor:pointer;color:#8ab4f8;font-size:13px}
+.lead{background:var(--bg2);border:1px solid var(--line);border-left:4px solid var(--tx3);border-radius:10px;padding:12px 16px;margin:10px 0}
+.lead-crit{border-left-color:#e05252}
+.lead-med{border-left-color:#c9a227}
+.leadtitle{font-size:15px;font-weight:700;color:var(--tx)}
+.leadclass{font-size:12px;font-weight:400;color:var(--tx2);margin-left:8px}
+.chip{display:inline-block;background:#1b2c42;color:#9ec1f0;border-radius:10px;padding:2px 10px;margin:2px 4px 2px 0;font-size:11px}
+.chip.chipdead{background:var(--bg3);color:var(--tx3);border:1px solid var(--line2)}
+.cov-ok{color:var(--ok)}.cov-miss{color:var(--bad)}
+.tac{display:inline-block;padding:5px 12px;border-radius:14px;margin:3px 6px 3px 0;font-size:12px;font-weight:600;background:#1b2c42;color:#9ec1f0}
+.tac.hi{background:#3d1418;color:#ff8789}.tac.md{background:#3a2d0e;color:#ffce6b}
+pre.ioc{background:var(--bg2);border:1px solid var(--line);border-radius:10px;padding:12px;font-family:Consolas,monospace;font-size:12px;white-space:pre-wrap;word-break:break-all}
+.rec{background:var(--bg2);border-left:4px solid var(--acc);border-radius:8px;padding:10px 14px;margin:8px 0}
 td.clip{cursor:copy}
 .clip.open{word-break:break-all}
-.swall{background:#232833;border:1px solid #333b49;color:#9ec1f0;border-radius:4px;padding:1px 8px;cursor:pointer;font-size:11px;margin-top:3px}
-#copied{position:fixed;bottom:14px;right:14px;background:#1d3a26;color:#7ee2a8;padding:8px 14px;border-radius:6px;display:none;z-index:99;font-size:12px;font-weight:700}
-.sbar{margin:8px 0}.sbar input,.sbar select{background:#181b21;border:1px solid #2a2f3a;color:#d7dce3;padding:4px 8px;border-radius:4px;font-size:12px}
-.pgr{margin:6px 0}.pgr button{background:#232833;border:1px solid #333b49;color:#9ec1f0;border-radius:4px;padding:2px 10px;cursor:pointer;margin-left:4px}
+.swall{background:var(--bg3);border:1px solid var(--line2);color:var(--info);border-radius:4px;padding:1px 8px;cursor:pointer;font-size:11px;margin-top:3px}
+#copied{position:fixed;bottom:14px;right:14px;background:#12301e;color:#7ee2a8;padding:8px 14px;border-radius:8px;display:none;z-index:99;font-size:12px;font-weight:700}
+.sbar{margin:8px 0}.sbar input,.sbar select{background:var(--bg2);border:1px solid var(--line2);color:var(--tx);padding:4px 8px;border-radius:6px;font-size:12px}
+.pgr{margin:6px 0}.pgr button{background:var(--bg3);border:1px solid var(--line2);color:var(--info);border-radius:4px;padding:2px 10px;cursor:pointer;margin-left:4px}
 tr.techrow{cursor:pointer}
-@media print{body{background:#fff;color:#111;font-size:11px}.nav,#copied,.sbar,.pgr,.mkey,button{display:none!important}h1,h2{color:#111;border-color:#999}pre.ioc{background:#f4f4f4;color:#111;border-color:#bbb}table{font-size:10px}th{background:#eee;color:#111}tr:nth-child(even){background:#fafafa}.vbanner,.lead,.rec{background:#fafafa}.meta,.foot{color:#444}a{color:#111;text-decoration:none}.swall{display:none!important}}
+.grid2{display:grid;grid-template-columns:1fr 1fr;gap:10px}
+@media(max-width:1100px){.grid2{grid-template-columns:1fr}}
+.heat{display:flex;flex-direction:column;gap:3px}
+.heatrow{display:grid;grid-template-columns:30px repeat(24,1fr);gap:3px;align-items:center}
+.heatlbl{font-size:9px;color:var(--tx3)}
+.heatcell{display:inline-block;aspect-ratio:1.3/1;min-height:9px;border-radius:2px}
+.barrow{display:flex;align-items:center;gap:8px;font-size:11.5px;margin:4px 0}
+.barrow .bn{flex:0 1 210px;min-width:96px;font-family:Consolas,monospace;font-size:11px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.bartr{flex:1 1 auto;height:12px;border-radius:3px;background:var(--bg3);position:relative;overflow:hidden;display:block}
+.barfill{position:absolute;top:0;bottom:0;left:0;border-radius:3px;background:var(--acc);display:block}
+.barfill.bad{background:var(--bad)}
+.barcnt{flex:0 0 auto;margin-left:auto;text-align:right;color:var(--tx2)}
+.sevbar{display:flex;height:14px;border-radius:4px;overflow:hidden;border:1px solid var(--line)}
+.sevbar div{height:100%}
+@media print{body{background:#fff;color:#111;font-size:11px;padding:6px}.nav,.topbar,#copied,.sbar,.pgr,.mkey,.tbtn,button{display:none!important}h1,h2{color:#111;border-color:#999}pre.ioc{background:#f4f4f4;color:#111;border-color:#bbb}table{font-size:10px}th{background:#eee;color:#111;position:static}tr:nth-child(even){background:#fafafa}.vbanner,.lead,.rec,.card{background:#fafafa;border-color:#bbb}.meta,.foot{color:#444}a{color:#111;text-decoration:none}.swall{display:none!important}.heatcell{outline:1px solid #ccc}.lead-crit{border-left-color:#c0392b}.lead-med{border-left-color:#a3671a}}
 </style>
 '@
 
     $sb = New-Object System.Text.StringBuilder
     $null = $sb.AppendLine("<!DOCTYPE html><html><head><meta charset='utf-8'><title>Ophira - $(ConvertTo-HtmlEsc $Computer)</title>$css</head><body>")
+    # v2.86: fixed top bar - case identity + light/dark + show-full-values + print toggles
+    $null = $sb.AppendLine("<div class='topbar'><span class='brand'>$(ConvertTo-HtmlEsc $Computer)</span><span class='meta'>OPHIRA COMPROMISE ASSESSMENT</span><span class='tspacer'></span><button class='tbtn' type='button' onclick='themeToggle()'>Light / Dark</button><button class='tbtn' type='button' onclick='showFullToggle(this)'>Show full values</button><button class='tbtn' type='button' onclick='window.print()'>Print report</button></div>")
     $null = $sb.AppendLine("<h1>OPHIRA COMPROMISE ASSESSMENT REPORT</h1>")
     # v2.77: ONE case.json read drives the elevation label AND the provenance line (collector
     # tool, preset, log window). Per-field fallback: an old case without case.json (or without
@@ -6018,6 +6044,7 @@ tr.techrow{cursor:pointer}
         @($entR | Where-Object { (ConvertTo-SafeInt $_.Connections) -gt 0 -or "$($_.Beacon)" -or (ConvertTo-SafeInt $_.FailedLogons) -gt 0 -or (ConvertTo-SafeInt $_.RdpOutCount) -gt 0 }).Count +
         $srumRows.Count + $chains.Count + $sessAct.Count
     $nCount = @{
+        activity = $tlRows.Count
         leads = $leads.Count
         coverage = $covNav + $gapRows.Count
         attack = $attkTech.Count
@@ -6039,7 +6066,7 @@ tr.techrow{cursor:pointer}
         focus = if ($ft) { ConvertTo-SafeInt "$($ft.HitCount)" } else { 0 }
     }
     $nLabel = [ordered]@{
-        verdict = 'Verdict'; leads = 'Leads'; coverage = 'Coverage'; attack = 'ATT&CK'; ioc = 'IOCs'
+        verdict = 'Verdict'; activity = 'Activity picture'; leads = 'Leads'; coverage = 'Coverage'; attack = 'ATT&CK'; ioc = 'IOCs'
         tactics = 'Findings by tactic'; yara = 'YARA'; processes = 'Processes'; sigma = 'Sigma'
         logons = 'Logons'; persistence = 'Persistence'; filesystem = 'File system'; beacons = 'Beaconing'
         network = 'Network'; drivers = 'Drivers'; hunt = 'Hunt'; entities = 'Connections'
@@ -6188,6 +6215,84 @@ tr.techrow{cursor:pointer}
     } else {
         $null = $sb.AppendLine("<div class='vbanner v0'><p class='vtitle'>VERDICT UNAVAILABLE</p><p class='vowner'>The verdict engine did not run - review the raw sections below.</p></div>")
     }
+
+    # ---------- activity picture (v2.86) ----------
+    # Shape-first charts rendered at build time as plain HTML/CSS (no JS, no external requests -
+    # the report must work airgapped). Charts summarize, the tables below carry the evidence -
+    # a chart never replaces its row list.
+    $null = $sb.AppendLine("<a name='activity'></a><h2>Activity picture</h2>")
+    $actB = New-Object System.Text.StringBuilder
+    # (a) weekday x hour density over the master timeline - the at-a-glance form of the R38 burst
+    $heatDays = @('Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun')
+    $heat = New-Object 'int[]' 168
+    $heatMax = 0
+    foreach ($t2 in $tlRows) {
+        $ts2 = "$($t2.Timestamp)"
+        if ($ts2.Length -lt 13 -or $ts2[4] -ne '-' -or $ts2[7] -ne '-') { continue }
+        $d2 = [datetime]::MinValue
+        if (-not [datetime]::TryParseExact($ts2.Substring(0, 10), 'yyyy-MM-dd', [Globalization.CultureInfo]::InvariantCulture, [Globalization.DateTimeStyles]::None, [ref]$d2)) { continue }
+        $h2n = 0
+        if (-not [int]::TryParse($ts2.Substring(11, 2), [ref]$h2n) -or $h2n -gt 23) { continue }
+        $ix2 = (([int]$d2.DayOfWeek + 6) % 7) * 24 + $h2n
+        $heat[$ix2]++
+        if ($heat[$ix2] -gt $heatMax) { $heatMax = $heat[$ix2] }
+    }
+    if ($heatMax -gt 0) {
+        $heatCols = @('#1a1e27', '#26314d', '#32456f', '#3f5a99', '#7aa2f7')
+        [void]$actB.Append("<div class='card'><div class='meta' style='margin-bottom:6px'><b>Event density by weekday and hour</b> - $($tlRows.Count) master-timeline events; brighter blue = busier. Hover a cell for its count.</div><div class='heat'>")
+        foreach ($r2 in 0..6) {
+            [void]$actB.Append("<div class='heatrow'><span class='heatlbl'>$($heatDays[$r2])</span>")
+            foreach ($c2 in 0..23) {
+                $v2 = $heat[$r2 * 24 + $c2]
+                $lv2 = if ($v2 -le 0) { 0 } else { 1 + [math]::Min(3, [int][math]::Floor(3.0 * [math]::Sqrt($v2) / [math]::Sqrt($heatMax))) }
+                [void]$actB.Append("<span class='heatcell' style='background:$($heatCols[$lv2])' title='$($heatDays[$r2]) $('{0:d2}' -f $c2):00 - $v2 event(s)'></span>")
+            }
+            [void]$actB.Append('</div>')
+        }
+        [void]$actB.Append('</div></div>')
+    } else {
+        [void]$actB.Append("<div class='card meta'>No timestamped master-timeline rows - the density chart needs csv\supertimeline.csv.</div>")
+    }
+    # (b) hunt-finding severity mix + (c) top public talkers (red = provider unknown/unresolved)
+    $sevCnt = @{ high = 0; medium = 0; low = 0; info = 0 }
+    foreach ($hr2 in $huntRows) { $k2 = "$($hr2.Severity)".ToLower(); if ($sevCnt.ContainsKey($k2)) { $sevCnt[$k2]++ } }
+    $sevTot = $sevCnt['high'] + $sevCnt['medium'] + $sevCnt['low'] + $sevCnt['info']
+    $provByIp = @{}
+    foreach ($cd2 in $connDns) { if ("$($cd2.RemoteAddress)" -and "$($cd2.Provider)") { $provByIp["$($cd2.RemoteAddress)"] = "$($cd2.Provider)" } }
+    $talk2 = @($pubConns | Where-Object { "$($_.RemoteAddress)" } | Group-Object RemoteAddress | Sort-Object Count -Descending | Select-Object -First 8)
+    $talkMax = 0
+    foreach ($g2 in $talk2) { if ($g2.Count -gt $talkMax) { $talkMax = $g2.Count } }
+    [void]$actB.Append("<div class='grid2' style='margin-top:10px'>")
+    [void]$actB.Append("<div class='card'><div class='meta' style='margin-bottom:8px'><b>Hunt-finding severity mix</b> - $sevTot finding(s)</div>")
+    if ($sevTot -gt 0) {
+        [void]$actB.Append("<div class='sevbar'>")
+        foreach ($sv2 in @(@('high', $sevCnt['high'], 'var(--bad)'), @('medium', $sevCnt['medium'], 'var(--warn)'), @('low', $sevCnt['low'], 'var(--info)'), @('info', $sevCnt['info'], 'var(--tx3)'))) {
+            if ($sv2[1] -le 0) { continue }
+            $wp2 = [int][math]::Round(100.0 * $sv2[1] / $sevTot)
+            [void]$actB.Append("<div style='width:$wp2%;background:$($sv2[2])' title='$($sv2[0]): $($sv2[1])'></div>")
+        }
+        [void]$actB.Append("</div><div class='meta' style='margin-top:6px'>$($sevCnt['high']) high / $($sevCnt['medium']) medium / $($sevCnt['low']) low / $($sevCnt['info']) info - full list in the Hunt section</div>")
+    } else {
+        [void]$actB.Append("<div class='meta'>No hunt findings recorded.</div>")
+    }
+    [void]$actB.Append('</div>')
+    [void]$actB.Append("<div class='card'><div class='meta' style='margin-bottom:8px'><b>Top public talkers</b> - connections per remote IP (red = provider unknown or unresolved)</div>")
+    if ($talk2.Count -gt 0 -and $talkMax -gt 0) {
+        foreach ($g2 in $talk2) {
+            $ip2 = "$($g2.Name)"
+            $pv2 = $provByIp[$ip2]
+            $unk2 = (-not $pv2) -or $pv2 -eq 'unknown'
+            $wp2 = [int][math]::Round(100.0 * $g2.Count / $talkMax)
+            $pr2 = if ($unk2) { 'bad' } else { '' }
+            $pt2 = if ($pv2 -and $pv2 -ne 'unknown') { " - $(ConvertTo-HtmlEsc $pv2)" } else { '' }
+            [void]$actB.Append("<div class='barrow'><span class='bn' title='$(ConvertTo-HtmlEsc $ip2)'>$(ConvertTo-HtmlEsc $ip2)</span><span class='bartr'><span class='barfill $pr2' style='width:$wp2%'></span></span><span class='barcnt'>$($g2.Count) conn$pt2</span></div>")
+        }
+        [void]$actB.Append("<div class='meta' style='margin-top:6px'>DNS attribution per IP lives in the Network section (endpoint DNS cache; a miss there is a follow-up, not proof of malice).</div>")
+    } else {
+        [void]$actB.Append("<div class='meta'>No public connections recorded.</div>")
+    }
+    [void]$actB.Append('</div></div>')
+    $null = $sb.AppendLine($actB.ToString())
 
     # v2.66 (B6/B7): which Sigma rules got a per-rule drill-down (top 12 by hit count). The
     # ATT&CK expansion and the sigma lead deep-link into those drill-downs, so the set is
@@ -8000,15 +8105,37 @@ tr.techrow{cursor:pointer}
           t.appendChild(br);t.appendChild(b);
         }
       });
+      // v2.86: top-bar toggles. themeToggle flips the light/dark variable set; showFullToggle
+      // expands every truncated cell (server-side preview + full text in data-full) in place
+      // and remembers the originals - also used to expand/restore around printing so paper
+      // always carries the full text, never the preview.
+      function themeToggle(){var b=document.body;if(b.getAttribute('data-theme')==='light'){b.removeAttribute('data-theme');}else{b.setAttribute('data-theme','light');}}
+      var fullSaved=[];
+      function showFullToggle(btn){
+        if(fullSaved.length>0){
+          fullSaved.forEach(function(p){p.el.textContent=p.txt;p.el.classList.remove('open');});
+          fullSaved=[];document.body.removeAttribute('data-full');
+          if(btn)btn.textContent='Show full values';return;
+        }
+        document.querySelectorAll('td.clip[data-full]').forEach(function(t){
+          var f=t.getAttribute('data-full')||'';
+          if(f&&f.length>t.textContent.length){fullSaved.push({el:t,txt:t.textContent});t.textContent=f;t.classList.add('open');}
+        });
+        document.body.setAttribute('data-full','on');
+        if(btn)btn.textContent='Collapse full values';
+      }
       // v2.63: printing shows collapsed <details> content - open them for print, restore after
+      // v2.86: printing also expands every truncated clip cell the same way
       var printClosed=[];
       window.addEventListener('beforeprint',function(){
         printClosed=[];
         document.querySelectorAll('details:not([open])').forEach(function(d){d.setAttribute('open','open');printClosed.push(d);});
+        if(fullSaved.length===0)showFullToggle(null);
       });
       window.addEventListener('afterprint',function(){
         printClosed.forEach(function(d){d.removeAttribute('open');});
         printClosed=[];
+        if(fullSaved.length>0)showFullToggle(null);
       });
       </script>
 "@)

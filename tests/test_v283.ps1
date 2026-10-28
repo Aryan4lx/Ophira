@@ -206,7 +206,7 @@ Check "wire: report radar h3 present" ($src.Contains('RADAR diagnosed applicatio
 Check "wire: report appswitched h3 present" ($src.Contains('App focus switches (taskbar FeatureUsage)'))
 Check "wire: report shimcache exec h3 present" ($src.Contains('Shimcache executed-flag (Win10+ records'))
 Check "wire: report imports for the six artifacts" ($src.Contains("Import-CaseCsv 'scheduled_taskcache.csv'") -and $src.Contains("Import-CaseCsv 'task_deletions.csv'") -and $src.Contains("Import-CaseCsv 'esent_ntds.csv'") -and $src.Contains("Import-CaseCsv 'shimcache_exec.csv'") -and $src.Contains("Import-CaseCsv 'radar_exec.csv'") -and $src.Contains("Import-CaseCsv 'appswitched.csv'"))
-Check "wire: version bumped to 2.85" ($src.Contains('$ScriptVersion = "2.85"'))
+Check "wire: version bumped to 2.86" ($src.Contains('$ScriptVersion = "2.86"'))
 
 # ============================================================================
 Write-Host ""

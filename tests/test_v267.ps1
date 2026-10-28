@@ -236,9 +236,9 @@ if ($lines4.Count -ge 6100) {
     # -> 6259..6842 (v2.81 T1: Get-LevenshteinDistance helper added +22 lines upstream)
     # window shifted 6297..6897 -> 6340..6939 (v2.82: Get-DomainProvider + Azure IP rules
     # + connections_dns emptyWhy added upstream; same report region)
-    # -> 6505..7150 (v2.85 recon/t-corr h3 blocks added ~46 lines inside the hunt section -
-    #    markers now: a2.Failed 7103, FailedLogons 7112, srum 7123, Steps 7135; same report region)
-    $region4 = ($lines4[6505..7150] -join "`n")
+    # -> 6610..7255 (v2.86 activity-picture block added ~105 lines before the entities region -
+    #    markers now: Score 6629, rcCol 6898, a2.Failed 7208, Steps 7240; same report region)
+    $region4 = ($lines4[6610..7255] -join "`n")
     Check "B5: no bare [int]quoted casts left in the report region" (-not $region4.Contains('[int]"$('))
     Check "B5: no bare [double]quoted casts left in the report region" (-not $region4.Contains('[double]"$('))
     Check "B5: no bare [long]quoted casts left in the report region" (-not $region4.Contains('[long]"$('))
