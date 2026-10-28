@@ -36,6 +36,7 @@ $CaseLog = Join-Path $env:TEMP "ophira_v281c_$stamp.log"
 $Computer = 'V281HOST'
 function Save-Rows { param([string]$Name, $Rows) if ($Name -eq 'hunt_findings') { $script:saved = @($Rows) } }
 function Write-CaseLog { param([string]$Message, [string]$Color = 'Gray') }
+function Get-KnownBadRegexes { return @() }
 function Import-CaseCsv { param([string]$Name) $k = "$Name" -replace '\.csv$', ''; if ($script:caseCsv.ContainsKey($k)) { return $script:caseCsv[$k] }; return @() }
 function Get-AuthenticodeSignature { param([string]$LiteralPath) return $null }
 function Test-Path { [CmdletBinding()] param([string]$LiteralPath, [string]$PathType) return $false }

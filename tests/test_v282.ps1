@@ -31,6 +31,7 @@ Invoke-Expression $defs
 $ScriptVersion = '9.99'
 
 function Write-CaseLog { param([string]$Message, [string]$Color = 'Gray') }
+function Get-KnownBadRegexes { return @() }
 function QuietLog { param($Message) }
 
 # ============================================================================

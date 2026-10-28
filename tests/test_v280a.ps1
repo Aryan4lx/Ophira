@@ -50,6 +50,7 @@ $expectedHi = @(
     'DLL side-load - planted system DLL name in user path',
     'DLL side-load - proxy DLL in user-writable path',
     'LSASS access - non-system process opened lsass.exe',
+    'Misplaced system binary (stack view)',
     'Office app spawned interpreter',
     'Password spray - many accounts from one source',
     'Process image tampering (hollowing)',
@@ -70,7 +71,7 @@ $expectedHi = @(
 Check "hunt rules: found $totalFinds &find call sites (extraction sane)" ($totalFinds -ge 40)
 $litHiUniq = @($litHi | Sort-Object -Unique)
 $dedicatedHi = @('Hidden scheduled task (TaskCache SD value stripped)', 'ntds.dit accessed (ESENT 325/326)')
-Check "literal-high rules: 22 distinct (got $($litHiUniq.Count))" ($litHiUniq.Count -eq 22)
+Check "literal-high rules: 23 distinct (got $($litHiUniq.Count))" ($litHiUniq.Count -eq 23)
 $misses = @($expectedHi | Where-Object { $_ -notin $dedicatedHi -and $_ -notmatch $verdictRe })
 Check "dedicated verdict-door highs are wired as signals" ($src.Contains("Add-Signal 'Hidden scheduled task (TaskCache SD stripped)' 3") -and $src.Contains("Add-Signal 'ntds.dit accessed - non-backup pattern (ESENT 325/326)' 3"))
 Check "every literal-high rule name matches the verdict high-precision regex$(if ($misses.Count) { ' - misses: ' + ($misses -join '; ') })" ($misses.Count -eq 0)
@@ -81,11 +82,11 @@ $gotHi = (@($litHiUniq | Sort-Object) -join "`n")
 $wantHi = (@($expectedHi | Sort-Object) -join "`n")
 Check "two-way drift pin: literal-high names extracted from source == hardcoded list" ($gotHi -eq $wantHi)
 
-# ---- the 5 variable-severity rules (can emit high) must match the verdict regex too ----
-$expectedVar = @('Downloaded then executed', 'LOLBin proxy-execution - $hit', 'Svchost masquerade indicator', 'Cross-process injection (remote thread)', 'Lookalike system binary (Levenshtein near-name)')
+# ---- the 6 variable-severity rules (can emit high) must match the verdict regex too ----
+$expectedVar = @('Downloaded then executed', 'LOLBin proxy-execution - $hit', 'Svchost masquerade indicator', 'Cross-process injection (remote thread)', 'Lookalike system binary (Levenshtein near-name)', 'Known-bad name pattern')
 $varUniq = @($varSev | Sort-Object -Unique)
 $varMiss = @($expectedVar | Where-Object { $_ -notmatch $verdictRe })
-Check "variable-severity rules: 5 distinct (got $($varUniq.Count))" ($varUniq.Count -eq 5)
+Check "variable-severity rules: 6 distinct (got $($varUniq.Count))" ($varUniq.Count -eq 6)
 Check "two-way drift pin: variable-severity names == hardcoded list" ((@($varUniq | Sort-Object) -join "`n") -eq (@($expectedVar | Sort-Object) -join "`n"))
 Check "every variable-severity rule name matches the verdict regex$(if ($varMiss.Count) { ' - misses: ' + ($varMiss -join '; ') })" ($varMiss.Count -eq 0)
 

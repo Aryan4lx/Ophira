@@ -54,6 +54,7 @@ function Get-ItemProperty { param($Path, $Name, $ErrorAction) [pscustomobject]@{
 function Save-Rows { param([string]$Name, $Rows) $script:saved816[$Name] = $Rows }
 function Out-RawText { param([string]$SubDir, [string]$Name, [string[]]$Text) $script:rawFiles[$Name] = "$SubDir\$Name" }
 function Write-CaseLog { param([string]$Message, [string]$Color = 'Gray') }
+function Get-KnownBadRegexes { return @() }
 $saved816 = @{}
 $rawFiles = @{}
 $mod816 = [pscustomobject]@{ Id = '8.16'; Name = 'Remote access sweep'; Run = [scriptblock]::Create($m816.Groups[1].Value) }

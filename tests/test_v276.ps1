@@ -32,6 +32,7 @@ New-Item -ItemType Directory -Path $CsvDir -Force | Out-Null
 $saved = @{}
 function Save-Rows { param([string]$Name, $Rows) $script:saved[$Name] = $Rows }
 function Write-CaseLog { param([string]$Message, [string]$Color = 'Gray') }
+function Get-KnownBadRegexes { return @() }
 $Computer = 'W1'
 
 # real signed binary staged in a real Downloads-shaped dir (R4 signed-in-Downloads -> medium)

@@ -1,5 +1,39 @@
 ﻿# Changelog
 
+## v2.84
+- **Execution stacks (R49, derived)**: `New-ExecStacks` builds two stack views from
+  amcache + shimcache_exec + prefetch: one name -> every path it executed from
+  (`csv\derived\exec_stacks_byname.csv`) and one folder -> every name executed from it
+  (`exec_stacks_bypath.csv`). Device paths (`\device\harddiskvolumeN`) normalize to `C:`,
+  prefetch (no reliable path) buckets under `(unknown path)`. New hunt rule R49 flags
+  system binaries (svchost/lsass/csrss/services/winlogon/smss/wininit/taskhost/dwm)
+  executing from anywhere outside `Windows\System32*` as HIGH (T1036, verdict catch-all)
+  - the SANS-talk misplaced-svchost case. The by-path view surfaces staging folders
+  (3+ executables from one user-writable dir) in the report.
+- **Known-bad name pattern pack (R50)**: 24 curated regex patterns (mimikatz family,
+  tunnelers, webshell names, RAT families, double extensions, `svchost.exe.NNN` suffixes,
+  Cyrillic/fullwidth homoglyphs, hex-blob names, ...) scanned over every execution
+  artifact name/path column. Findings carry per-pattern severity + why; deduped per
+  name across sources so amcache + prefetch hits collapse into one row.
+- **Investigation-window time-stacking**: with `-After`/`-Before` (or the focus dossier's
+  TimeWindow), `New-ExecStacks` also emits `exec_window_ratio.csv`: executions inside vs
+  outside the window per file - files that ONLY ran inside the window bubble to the top
+  (the SANS talk's investigation-mode trick). Without a window the step logs honestly
+  that it skipped (a made-up window would fabricate signal).
+- Report: new timeline-section blocks for the stack views + window ratio (stack view
+  cards, suspicious-path crit classing, honest no-window note); hunt-section wiring for
+  R49/R50; regen pipeline now 20 steps (stacks run before hunt findings so R49 reads
+  fresh CSVs).
+- **Fixes from the v2.84 E2E**: (1) R49 no longer treats prefetch's path-less
+  `(unknown path)` bucket as misplacement evidence (it false-high'd every prefetch-only
+  system binary on the reference case) and accepts `C:\Windows` root as explorer.exe's
+  real home; (2) `Invoke-ParseMode`'s local `$before`/`$after` CSV counters renamed to
+  `$csvBefore`/`$csvAfter` - PS variables are case-insensitive, so `$before` shadowed
+  the script's `-Before` window parameter for the whole analyst-parse subtree (any
+  `-Before` passed with `-Mode Parse` silently became the CSV row count);
+  (3) `New-HuntFindings` R1/R36 `Test-Path` probes got `-ErrorAction SilentlyContinue`
+  so non-admin parses no longer wrap access-denied stderr into a fake exit code.
+
 ## v2.83
 - **ShimCache executed-flag decode (R44, derived)**: `New-ShimcacheExec` decodes the
   trailing 4-byte execution flag chainsaw leaves null on Win10+ records (data\[-4..-1]

@@ -29,6 +29,7 @@ New-Item -ItemType Directory -Path $CsvDir -Force | Out-Null
 $saved = @{}
 function Save-Rows { param([string]$Name, $Rows) $script:saved[$Name] = $Rows }
 function Write-CaseLog { param([string]$Message, [string]$Color = 'Gray') }
+function Get-KnownBadRegexes { return @() }
 $Computer = 'TESTHOST'
 
 # R8: non-system process opened lsass.exe (high) vs allowlisted svchost (nothing)
@@ -139,7 +140,7 @@ Check "helper: real event keeps Time+EventId and maps missing field to empty" ($
 # PART 4 - structural wiring: SIEM, fleet lateral chain, whitelist, huntHi regex
 # ============================================================================
 Check "whitelist: Get-EventDataRows in SharedFunctions" ($src -match "'Get-EventDataRows'")
-Check "verdict: huntHi regex covers new high rules" ($src -match "LSASS access\|Office app spawned\|proxy-execution\|Admin-share\|" -and $src -match "WMI event subscription\|Sysmon configuration changed\|Lookalike system binary'")
+Check "verdict: huntHi regex covers new high rules" ($src -match "LSASS access\|Office app spawned\|proxy-execution\|Admin-share\|" -and $src -match "WMI event subscription\|Sysmon configuration changed\|Lookalike system binary")
 Check "siem: hunt_finding kind exported" ($src -match "kind'\] = 'hunt_finding'")
 Check "fleet: lateral chain output + join sources present" ($src -match 'fleet_lateral_chain\.csv' -and $src -match 'security_share_access\.csv' -and $src -match 'net_interfaces\.csv')
 Check "fleet: HuntHit finding type mapped" ($src -match "'hunt_findings\.csv'\s+= 'HuntHit'")

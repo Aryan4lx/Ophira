@@ -1,5 +1,5 @@
 <#
-Ophira v2.83  -  Windows Incident Response Triage Toolkit
+Ophira v2.84  -  Windows Incident Response Triage Toolkit
 READ-ONLY by design: never modifies the system, only reads and copies data
 into its own output folder. Intended to be handed to a system owner or run
 by a responder during early triage / threat hunting.
@@ -356,7 +356,7 @@ param(
     [switch]$ExitVerdict
 )
 
-$ScriptVersion = "2.83"
+$ScriptVersion = "2.84"
 $ErrorActionPreference = 'Continue'
 $ProgressPreference = 'SilentlyContinue'
 
@@ -605,6 +605,7 @@ $script:CsvCatMap = @{
     'ioc_hits_amcache' = 'derived'; 'ioc_hits_browser' = 'derived'; 'ioc_hits_dns' = 'derived'
     'ioc_hits_network' = 'derived'; 'ioc_hits_mft' = 'derived'; 'ioc_hits_hash' = 'derived'
     'ioc_export' = 'derived'; 'process_pivot' = 'derived'; 'leads' = 'derived'
+    'exec_stacks_byname' = 'derived'; 'exec_stacks_bypath' = 'derived'; 'exec_window_ratio' = 'derived'
 }
 
 function Get-LocalAdminMembers {
@@ -5543,7 +5544,7 @@ function Get-SectionAnchorForSource {
         '^(hayabusa|sigma)'                            { 'sigma'; break }
         '^yara'                                        { 'yara'; break }
         '^(beacon_candidates|dns_beacon_candidates)'   { 'beacons'; break }
-        '^(hunt_findings)'                             { 'hunt'; break }
+        '^(hunt_findings|exec_stacks|exec_window)'      { 'hunt'; break }
         '^(ioc_hits|flash_ioc_hits)'                   { 'ioc'; break }
         '^(flash_process_scored|processes|process_hashes|sysmon_proc_create|sysmon_proc_tamper)' { 'processes'; break }
         '^(security_auth|bruteforce|rdp_|logon)'       { 'logons'; break }
@@ -5826,6 +5827,10 @@ function New-HtmlReport {
     $taskDel = @(Import-CaseCsv 'task_deletions.csv')
     $esentRows = @(Import-CaseCsv 'esent_ntds.csv')
     $scExec = @(Import-CaseCsv 'shimcache_exec.csv')
+    # v2.84: execution stacking views + investigation-window ratio
+    $stacksName = @(Import-CaseCsv 'exec_stacks_byname.csv')
+    $stacksPath = @(Import-CaseCsv 'exec_stacks_bypath.csv')
+    $winRatio = @(Import-CaseCsv 'exec_window_ratio.csv')
     $radarRows = @(Import-CaseCsv 'radar_exec.csv')
     $aswRows = @(Import-CaseCsv 'appswitched.csv')
     $svcFlag = @(Import-CaseCsv 'services_flagged.csv')
@@ -7225,6 +7230,44 @@ tr.techrow{cursor:pointer}
             $null = $sb.AppendLine("</table></details>")
         }
     }
+    # ---------- execution stacking + time-stacking views (v2.84, additive) ----------
+    if ($stacksName.Count -gt 0) {
+        $stkSuspRe = '(?i)\\(recycle|temp|downloads|programdata|perflogs|public|appdata)\\'
+        $stkNameInt = @($stacksName | Where-Object { [int]$_.PathCount -ge 2 -or ("$($_.Paths)" -match $stkSuspRe) })
+        $null = $sb.AppendLine("<h3>Execution stacks - one name, many paths (stack view)</h3>")
+        $null = $sb.AppendLine("<div class='meta'>Every executed name ($($stacksName.Count) stacked) mapped to the locations it ran from; showing $($stkNameInt.Count) with multiple paths or user-writable paths (top 25). A critical binary running from a second location is the classic recycling-bin svchost catch. Single-path system names are normal - use the filter to hunt specific names. Source: csv\exec_stacks_byname.csv</div>")
+        if ($stkNameInt.Count -gt 0) {
+            $null = $sb.AppendLine("<table data-secfilter='execstacks'><tr><th>Name</th><th>Exec count</th><th>Paths</th><th>Distinct locations</th></tr>")
+            foreach ($st1 in ($stkNameInt | Sort-Object @{e={[int]$_.PathCount};Descending=$true}, @{e={[int]$_.ExecCount};Descending=$true} | Select-Object -First 25)) {
+                $stkCls1 = if ("$($st1.Paths)" -match $stkSuspRe) { 'crit' } else { '' }
+                $null = $sb.AppendLine("<tr><td>$(ConvertTo-HtmlEsc $st1.Name)</td><td>$(ConvertTo-HtmlEsc $st1.ExecCount)</td><td class='path $stkCls1'>$(ConvertTo-HtmlEsc $st1.Paths)</td><td>$(ConvertTo-HtmlEsc $st1.PathCount)</td></tr>")
+            }
+            $null = $sb.AppendLine('</table>')
+        } else {
+            $null = $sb.AppendLine("<div class='meta'>No name ran from more than one location - no stacking anomalies.</div>")
+        }
+        $stkPathInt = @($stacksPath | Where-Object { "$($_.Folder)" -match $stkSuspRe -and [int]$_.NameCount -ge 3 })
+        if ($stkPathInt.Count -gt 0) {
+            $null = $sb.AppendLine("<div class='card'><b>Staging-folder view</b> <span class='meta'>- folders with 3+ distinct executed names in user-writable locations (top 15 by distinct names). Many one-shot executables from one folder = staging or install storm. Source: csv\exec_stacks_bypath.csv</span></div>")
+            $null = $sb.AppendLine("<table data-secfilter='execstacks'><tr><th>Folder</th><th>Distinct names</th><th>Executions</th><th>Names</th></tr>")
+            foreach ($st2 in ($stkPathInt | Sort-Object @{e={[int]$_.NameCount};Descending=$true} | Select-Object -First 15)) {
+                $null = $sb.AppendLine("<tr><td class='path'>$(ConvertTo-HtmlEsc $st2.Folder)</td><td>$(ConvertTo-HtmlEsc $st2.NameCount)</td><td>$(ConvertTo-HtmlEsc $st2.ExecCount)</td><td class='path'>$(ConvertTo-HtmlEsc $st2.Names)</td></tr>")
+            }
+            $null = $sb.AppendLine('</table>')
+        }
+    }
+    $null = $sb.AppendLine("<h3>Investigation-window time-stacking (what ran ONLY inside the window)</h3>")
+    if ($winRatio.Count -gt 0) {
+        $null = $sb.AppendLine("<div class='meta'>With a known attacker window, files whose executions happened INSIDE it (and rarely/never outside) bubble to the top - attacker-brought tooling deviates from the host's baseline. Ratio = in-window / out-window executions. Source: csv\exec_window_ratio.csv</div>")
+        $null = $sb.AppendLine("<table data-secfilter='execstacks'><tr><th>Name</th><th>In window</th><th>Out window</th><th>Ratio</th><th>Paths</th></tr>")
+        foreach ($st3 in ($winRatio | Select-Object -First 20)) {
+            $stkCls3 = if ([int]$st3.OutWindow -eq 0) { 'crit' } else { 'med' }
+            $null = $sb.AppendLine("<tr><td>$(ConvertTo-HtmlEsc $st3.Name)</td><td>$(ConvertTo-HtmlEsc $st3.InWindow)</td><td class='$stkCls3'>$(ConvertTo-HtmlEsc $st3.OutWindow)</td><td>$(ConvertTo-HtmlEsc $st3.Ratio)</td><td class='path'>$(ConvertTo-HtmlEsc $st3.Paths)</td></tr>")
+        }
+        $null = $sb.AppendLine('</table>')
+    } else {
+        $null = $sb.AppendLine("<div class='meta'>No investigation window set for this case - pass <b>-After 'yyyy-MM-dd HH:mm' -Before 'yyyy-MM-dd HH:mm'</b> on a parse/regen run (or set the focus dossier window), then regenerate, and files that executed only inside the window are ranked here. Without a window this stays empty by design - a made-up window would fabricate signal.</div>")
+    }
     if ($tlAll.Count -gt 0) {
         # v2.59: per-day activity sparkline - the case's shape at a glance before the newest-150 table
         # task 10: bars only for days inside the clamped display window ($tlCut from the banner
@@ -7526,6 +7569,9 @@ tr.techrow{cursor:pointer}
     'shimcache_exec'                  = 'Shimcache entries with the Win10+ executed-flag decoded (last 4 record bytes) - flag=0 is context, never proof of non-execution'
     'radar_exec'                      = 'RADAR heap-leak DiagnosedApplications - key LastWriteTime = executed on or before that time (server-friendly execution evidence)'
     'appswitched'                     = 'Explorer FeatureUsage AppSwitched counters - taskbar focus-switch counts per app (no timestamps; user-behavior context)'
+    'exec_stacks_byname'              = 'Execution stacking: every executed name -> the distinct paths it ran from (a critical name running from two places is the classic recycle-bin svchost)'
+    'exec_stacks_bypath'              = 'Execution stacking per folder: distinct names run from each directory (mass-staging view - temp dirs full of one-shot exes stand out)'
+    'exec_window_ratio'              = 'Time-stacking: executions inside vs outside the investigation window (-After/-Before or the focus dossier window) - window-exclusive files bubble to the top'
         'connections_dns'                 = 'Public connections resolved via the DNS cache (CNAME chains walked) - what each remote IP actually was'
         'arp_table'                       = 'ARP cache - hosts on the local segment'
         'logon_sessions'                  = 'Active logon sessions (who is on the box right now)'
@@ -7739,6 +7785,9 @@ tr.techrow{cursor:pointer}
     'shimcache_exec'                  = 'shimcache parse pending (module 5.4 / chainsaw) or no Win10+ entries to decode - see parse_needed.csv'
     'radar_exec'                      = 'RADAR has no diagnosed apps - common on workstations (memory diagnostics mostly fire on servers)'
     'appswitched'                     = 'no AppSwitched counters - FeatureUsage absent for the profiles or no interactive GUI session history'
+    'exec_stacks_byname'              = 'no execution evidence to stack (no amcache/shimcache/prefetch parsed yet - run the parse modules or 5.4)'
+    'exec_stacks_bypath'              = 'no execution evidence to stack (no amcache/shimcache/prefetch parsed yet - run the parse modules or 5.4)'
+    'exec_window_ratio'              = 'no investigation window set - pass -After/-Before on a parse/regen run or set the focus dossier window, then regenerate'
         'domain_info'                     = 'Win32_ComputerSystem returned nothing - the WMI repository may be damaged on this host (itself an IR-relevant condition; check collection.log for other WMI failures)'
         'entities_accounts'               = 'joins logons/RDP/console history per account - nothing to join when those sources are empty'
         'entities_binaries'               = 'joins execution/persistence/network/verdict evidence per binary - nothing to join when the underlying sources are empty'
@@ -8540,6 +8589,152 @@ function New-ShimcacheExec {
     $yes = @($out | Where-Object { $_.Executed -eq 'yes' }).Count
     $no = @($out | Where-Object { $_.Executed -eq 'no' }).Count
     Write-CaseLog "    shimcache exec flags: $($out.Count) Win10+ entries ($yes executed-flag, $no not-executed-flag) -> csv\shimcache_exec.csv" 'DarkGray'
+}
+
+function Get-KnownBadRegexes {
+    # v2.84 (R50): curated known-bad NAME pattern pack (community-list style, run as
+    # leaf-name regexes over every execution source). High-precision families only - the
+    # talk's 'known-bad regex file' idea: thousands of community regexes beat grep at fleet
+    # scale, but a single host needs ~25 surgical ones. Each: Pat (regex), Sev, Why.
+    # Names only - path-context rules live in the stacking/Levenshtein rules, not here.
+    @(
+        [pscustomobject]@{ Pat = '(?i)(mimikatz|mimilib|mkatz|secretsdump|gsecdump|pwdump|wce\.exe|lazagne)'; Sev = 'high'; Why = 'credential-dump tooling (mimikatz family)' }
+        [pscustomobject]@{ Pat = '(?i)procdump(64)?\.exe$'; Sev = 'medium'; Why = 'LSASS-dump-capable Sysinternals utility (dual-use)' }
+        [pscustomobject]@{ Pat = '(?i)^(nc|ncat|netcat)\d*\.exe$'; Sev = 'high'; Why = 'classic reverse-shell/tunnel binary' }
+        [pscustomobject]@{ Pat = '(?i)^plink(\d+)?\.exe$'; Sev = 'high'; Why = 'SSH tunnel binary (plink)' }
+        [pscustomobject]@{ Pat = '(?i)^(psexec|psexesvc)(64)?\.exe$'; Sev = 'medium'; Why = 'PsExec lateral-movement tooling' }
+        [pscustomobject]@{ Pat = '(?i)(chopper|weevely|behinder|godzilla|wso\.php)'; Sev = 'high'; Why = 'webshell/toolkit name' }
+        [pscustomobject]@{ Pat = '(?i)(darkcomet|quasar\.exe|njrat|njw0rm|remcos|asyncrat|venomrat|dcrat)'; Sev = 'high'; Why = 'known RAT family name' }
+        [pscustomobject]@{ Pat = '(?i)(keylog|keystroke)'; Sev = 'high'; Why = 'keylogger naming' }
+        [pscustomobject]@{ Pat = '(?i)(xmrig|cpuminer|minergate|cryptominer)'; Sev = 'high'; Why = 'crypto-miner naming' }
+        [pscustomobject]@{ Pat = '(?i)\.(jpe?g|png|gif|pdf|txt|docx?|xlsx?|pptx?|mp3|mp4)\.(exe|scr|pif|bat|cmd|com|js|vbs|wsf|jar)$'; Sev = 'high'; Why = 'double-extension disguise (document.exe)' }
+        [pscustomobject]@{ Pat = '(?i)\.(exe|scr|pif)\.(jpe?g|png|gif|pdf|txt|docx?|xlsx?)$'; Sev = 'high'; Why = 'reversed double extension (executable tailing a media name)' }
+        [pscustomobject]@{ Pat = '(?i)^[0-9a-f]{16,}(\.exe|\.dll|\.tmp|\.dat)$'; Sev = 'medium'; Why = 'hex-blob filename (auto-generated dropper naming)' }
+        [pscustomobject]@{ Pat = '(?i)^\{?[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\}?\.exe$'; Sev = 'medium'; Why = 'GUID-named executable' }
+        [pscustomobject]@{ Pat = '(?i)^(svch0st|scvhost|svchosts|svhcost|svchost\.ex|1svchost|svchostt)\.exe$'; Sev = 'high'; Why = 'misspelled svchost masquerade' }
+        [pscustomobject]@{ Pat = '(?i)^svchost\.exe\.[a-z0-9]+$'; Sev = 'high'; Why = 'svchost.exe.NNN suffix (SANS talk recycle-bin case)' }
+        [pscustomobject]@{ Pat = '(?i)^(rundll|regsvr|cmd|ftp|tftp|debug)\.exe\.[a-z0-9]+$'; Sev = 'high'; Why = 'system tool name with appended suffix' }
+        [pscustomobject]@{ Pat = '(?i)^(readme|how_to|help_decrypt|restore_files|recover_files|decrypt_files?)'; Sev = 'medium'; Why = 'ransom-note naming' }
+        [pscustomobject]@{ Pat = '(?i)(locked|encrypted|ransomed)\.(txt|html|hta)$'; Sev = 'medium'; Why = 'ransom-note naming' }
+        [pscustomobject]@{ Pat = '(?i)\.(old|bak|tmp|sav|backup)\.exe$'; Sev = 'medium'; Why = 'renamed executable (extension suffix)' }
+        [pscustomobject]@{ Pat = '[\u0400-\u04FF]'; Sev = 'high'; Why = 'Cyrillic character in binary name (homoglyph masquerade)' }
+        [pscustomobject]@{ Pat = '[\uFF21-\uFF3A\uFF41-\uFF5A]'; Sev = 'high'; Why = 'fullwidth letter in binary name (homoglyph masquerade)' }
+        [pscustomobject]@{ Pat = '(?i)^(beacon|payload|agent|implant|dropper|loader|stub|inject)\.exe$'; Sev = 'medium'; Why = 'generic toolchain name' }
+        [pscustomobject]@{ Pat = '(?i)\.scr$'; Sev = 'medium'; Why = 'screensaver executable (classic disguise, rare legit on Win11)' }
+        [pscustomobject]@{ Pat = '(?i)^(windowsupdate|msupdate|update32)\.exe$'; Sev = 'medium'; Why = 'fake updater name' }
+    )
+}
+
+function New-ExecStacks {
+    # v2.84: execution stacking (the SANS-2017 'stack module' adapted to one host) plus
+    # time-stacking. byName: every executed leaf name -> the distinct parent dirs it ran
+    # from (a critical name running from a second place is the talk's recycle-bin svchost).
+    # byPath: every parent dir -> the distinct names run from it (mass-staging view).
+    # exec_window_ratio: per-file executions inside vs outside an investigation window
+    # (-After/-Before, else the focus dossier's TimeWindow) - attacker-brought files that
+    # ONLY ran inside the window bubble to the top. Views, not verdicts.
+    $byName = @{}; $byPath = @{}
+    $norm = {
+        param([string]$p)
+        $x = "$p".Trim()
+        if (-not $x) { return '' }
+        $x = $x -replace '(?i)^\\\\\?\\', ''
+        $x = $x -replace '(?i)^\\device\\harddiskvolume\d+', 'C:'
+        $x = $x -replace '(?i)\\volume\{[a-z0-9-]+\}', ''
+        $x = $x -replace '/', '\'
+        return $x
+    }
+    $addExec = {
+        param([string]$rawPath, [string]$leafName, [datetime]$ts)
+        $disp = & $norm $rawPath
+        if ($disp -and -not $leafName) { $leafName = Split-Path $disp -Leaf }
+        if (-not $leafName) { return }
+        $leafName = $leafName.ToLower()
+        if ($leafName -notmatch '\.') { $leafName = "$leafName.exe" }
+        $dir = if ($disp -and $disp -match '\\') { Split-Path $disp -Parent } elseif ($disp -and $disp -match '^[a-z]:$') { $disp } else { '(unknown path)' }
+        if (-not $dir) { $dir = '(unknown path)' }
+        if (-not $byName.ContainsKey($leafName)) { $byName[$leafName] = @{ Name = $leafName; N = 0; Dirs = @{}; Ts = New-Object System.Collections.Generic.List[datetime] } }
+        $e1 = $byName[$leafName]; $e1.N++
+        $dk = $dir.ToLower()
+        if (-not $e1.Dirs.ContainsKey($dk)) { $e1.Dirs[$dk] = $dir }
+        if ($ts -gt [datetime]::MinValue) { $e1.Ts.Add($ts) }
+        if (-not $byPath.ContainsKey($dk)) { $byPath[$dk] = @{ Folder = $dir; N = 0; Names = @{}; Ts = New-Object System.Collections.Generic.List[datetime] } }
+        $e2 = $byPath[$dk]; $e2.N++
+        if (-not $e2.Names.ContainsKey($leafName)) { $e2.Names[$leafName] = $true }
+        if ($ts -gt [datetime]::MinValue) { $e2.Ts.Add($ts) }
+    }
+    $parseTs = {
+        param([string]$s)
+        try { $d = Get-InvariantDate $s; if ($d -gt [datetime]::MinValue) { return $d } } catch { }
+        return [datetime]::MinValue
+    }
+    foreach ($r in (Import-CaseCsv 'amcache')) {
+        if (-not $r.FullPath) { continue }
+        & $addExec $r.FullPath '' (& $parseTs "$($r.FileKeyLastWriteTimestamp)")
+    }
+    foreach ($r in (Import-CaseCsv 'shimcache_exec')) {
+        if (-not $r.Path) { continue }
+        & $addExec $r.Path '' (& $parseTs "$($r.LastModified)")
+    }
+    foreach ($r in (Import-CaseCsv 'prefetch_parsed')) {
+        # prefetch carries the leaf name + run times but no reliable full path - count the
+        # executions under '(unknown path)' so run counts still stack
+        $t0 = & $parseTs "$($r.LastRun)"
+        & $addExec '' "$($r.ExecutableName)" $t0
+        foreach ($pn in 0..6) {
+            $pt = & $parseTs "$($r."PreviousRun$pn")"
+            if ($pt -gt [datetime]::MinValue) { & $addExec '' "$($r.ExecutableName)" $pt }
+        }
+    }
+    if ($byName.Count -eq 0) { Write-CaseLog '    execution stacks: no execution evidence to stack' 'DarkGray'; return }
+    $outN = New-Object System.Collections.Generic.List[object]
+    foreach ($k in @($byName.Keys)) {
+        $e = $byName[$k]
+        $dirs = @($e.Dirs.Values)
+        $outN.Add([pscustomobject]@{ Name = $e.Name; ExecCount = $e.N; PathCount = $dirs.Count; Paths = (($dirs | Sort-Object -Unique | Select-Object -First 6) -join '; '); Sources = '' })
+    }
+    Save-Rows -Name 'exec_stacks_byname' -Rows ($outN | Sort-Object @{e='PathCount';Descending=$true}, @{e='ExecCount';Descending=$true} | Select-Object -First 4000)
+    $outP = New-Object System.Collections.Generic.List[object]
+    foreach ($k in @($byPath.Keys)) {
+        $e = $byPath[$k]
+        $outP.Add([pscustomobject]@{ Folder = $e.Folder; ExecCount = $e.N; NameCount = @($e.Names.Keys).Count; Names = ((@($e.Names.Keys) | Sort-Object | Select-Object -First 8) -join '; '); Sources = '' })
+    }
+    Save-Rows -Name 'exec_stacks_bypath' -Rows ($outP | Sort-Object @{e='NameCount';Descending=$true}, @{e='ExecCount';Descending=$true} | Select-Object -First 4000)
+    # time-stacking: window from -After/-Before, else the focus dossier's TimeWindow
+    $wFrom = [datetime]::MinValue; $wTo = [datetime]::MinValue; $wSrc = ''
+    try { if ($After) { $wFrom = [datetime]::Parse($After, [Globalization.CultureInfo]::InvariantCulture); $wSrc = '-After/-Before params' } } catch { Write-Host "DBG-EXECSTACKS after-parse THREW: $($_.Exception.Message)" -ForegroundColor Magenta }
+    try { if ($Before) { $wTo = [datetime]::Parse($Before, [Globalization.CultureInfo]::InvariantCulture); $wSrc = '-After/-Before params' } } catch { }
+    if (-not ($wFrom -gt [datetime]::MinValue -and $wTo -gt [datetime]::MinValue)) {
+        $wSrc = ''
+        $ftPath = Join-Path $script:CaseDir 'focus\focus_terms.json'
+        if (Test-Path -LiteralPath $ftPath) {
+            try {
+                $ftj = Get-Content -LiteralPath $ftPath -Raw | ConvertFrom-Json
+                if ($ftj.TimeWindow -and "$($ftj.TimeWindow.From)" -and "$($ftj.TimeWindow.To)") {
+                    $wFrom = [datetime]::Parse("$($ftj.TimeWindow.From)", [Globalization.CultureInfo]::InvariantCulture)
+                    $wTo = [datetime]::Parse("$($ftj.TimeWindow.To)", [Globalization.CultureInfo]::InvariantCulture)
+                    $wSrc = 'focus dossier window'
+                }
+            } catch { }
+        }
+    }
+    if ($wFrom -gt [datetime]::MinValue -and $wTo -gt [datetime]::MinValue) {
+        $outW = New-Object System.Collections.Generic.List[object]
+        foreach ($k in @($byName.Keys)) {
+            $e = $byName[$k]
+            if ($e.Ts.Count -eq 0) { continue }
+            $inW = 0; $outWn = 0
+            foreach ($t in $e.Ts) { if ($t -ge $wFrom -and $t -le $wTo) { $inW++ } else { $outWn++ } }
+            if ($inW -eq 0) { continue }
+            $dirs = @($e.Dirs.Values)
+            $ratio = if ($outWn -gt 0) { [Math]::Round($inW / $outWn, 1) } else { $inW }
+            $outW.Add([pscustomobject]@{ Name = $e.Name; InWindow = $inW; OutWindow = $outWn; Ratio = $ratio; Paths = (($dirs | Sort-Object -Unique | Select-Object -First 4) -join '; ') })
+        }
+        Save-Rows -Name 'exec_window_ratio' -Rows ($outW | Sort-Object @{e='InWindow';Descending=$true}, @{e='Ratio';Descending=$true} | Select-Object -First 4000)
+        Write-CaseLog "    execution stacks: $($byName.Keys.Count) name(s) / $($byPath.Keys.Count) folder(s); window ratio ($wSrc): $($outW.Count) file(s) ran inside the window" 'Gray'
+    } else {
+        Write-CaseLog '    execution stacks: name/folder stacks built; window ratio skipped (no window - pass -After/-Before or set the focus dossier window)' 'DarkGray'
+    }
 }
 
 function New-ConnectionDns {
@@ -9773,6 +9968,59 @@ function New-HuntFindings {
     }
     & $trace 'R46' 'ESENT ntds.dit access' "esent_ntds: $($r46In.Count) rows"
 
+    # ---------- R49: misplaced system binary via execution stacking (v2.84) ----------
+    # The talk's stack-module catch: a critical name executing from a second location
+    # (their case: svchost.exe straight out of the recycle-bin ROOT with identical
+    # timestamps). Reads exec_stacks_byname.csv produced by New-ExecStacks (regen runs it
+    # before hunt findings); empty when regen has not run yet.
+    $r49In = @(Import-CaseCsv 'exec_stacks_byname')
+    if ($r49In.Count -gt 0) {
+        $r49SysRe = '(?i)^[a-z]:\\windows\\(system32|syswow64|sysnative)(\\|$)'
+        # explorer.exe's real home is the C:\Windows ROOT (not system32) - and the prefetch
+        # '(unknown path)' bucket carries no path evidence at all, so it can never prove
+        # misplacement (E2E: it false-high'd every prefetch-only system binary)
+        $r49WinRootRe = '(?i)^[a-z]:\\windows\\?$'
+        foreach ($r in $r49In) {
+            if ($r36Crit -notcontains ("$($r.Name)".ToLower())) { continue }
+            $r49Paths = @(("$($r.Paths)" -split '; ') | Where-Object {
+                $_ -and $_ -ne '(unknown path)' -and $_ -notmatch $r49SysRe -and
+                -not ("$($r.Name)" -match '(?i)^explorer\.exe$' -and $_ -match $r49WinRootRe)
+            })
+            if ($r49Paths.Count -eq 0) { continue }
+            & $find 'Misplaced system binary (stack view)' 'high' "$($r.Name)" "critical system binary executed from non-system32 location(s): $($r49Paths -join '; ')" 'T1036'
+        }
+    }
+    & $trace 'R49' 'misplaced system binary (stacks)' "exec_stacks_byname: $($r49In.Count) stacked name(s)"
+
+    # ---------- R50: known-bad name patterns (v2.84 regex pack) ----------
+    $r50Pack = Get-KnownBadRegexes
+    $r50Seen = @{}
+    $r50N = 0
+    foreach ($r50Src in @('processes', 'amcache', 'prefetch_parsed', 'shimcache_exec')) {
+        foreach ($r50Row in @(Import-CaseCsv $r50Src)) {
+            foreach ($r50Col in @('Path', 'Executable', 'FullPath', 'Name', 'ApplicationName')) {
+                $r50P = $r50Row.PSObject.Properties[$r50Col]
+                if (-not $r50P -or -not $r50P.Value) { continue }
+                $r50Raw = "$($r50P.Value)".Trim()
+                if (-not $r50Raw -or $r50Raw -eq 'Unassociated') { continue }
+                $r50Leaf = (Split-Path $r50Raw -Leaf).ToLower()
+                if ($r50Src -eq 'prefetch_parsed' -and $r50Leaf -notmatch '\.') { $r50Leaf = "$r50Leaf.exe" }
+                if (-not $r50Leaf) { continue }
+                foreach ($r50Pat in $r50Pack) {
+                    if ($r50Leaf -notmatch $r50Pat.Pat) { continue }
+                    $r50Key = "$($r50Pat.Why)|$r50Leaf"
+                    if (-not $r50Seen.ContainsKey($r50Key)) {
+                        $r50Seen[$r50Key] = $true
+                        $r50N++
+                        & $find 'Known-bad name pattern' $r50Pat.Sev $r50Leaf "name matches pack pattern ($($r50Pat.Why)) (source: $r50Src)" 'T1036'
+                    }
+                    break
+                }
+            }
+        }
+    }
+    & $trace 'R50' 'known-bad name patterns' "regex pack of $(@($r50Pack).Count) pattern(s): $r50N match(es)"
+
     Save-Rows -Name 'hunt_findings' -Rows $out.ToArray()
     $hi = @($out | Where-Object { $_.Severity -eq 'high' }).Count
     if ($out.Count -gt 0) {
@@ -10061,7 +10309,7 @@ function Get-CompromiseVerdict {
     $postureBad = @($posture | Where-Object { "$($_.Status)" -eq 'BAD' })
     $credSweep = Import-CaseCsv 'credential_sweep'
     $hunt = Import-CaseCsv 'hunt_findings'
-    $huntHi = @($hunt | Where-Object { "$($_.Severity)" -eq 'high' -and "$($_.Rule)" -match 'Renamed LOLBin|side-load|Downloaded then executed|LSASS access|Office app spawned|proxy-execution|Admin-share|Defender (real-time|exclusion)|DCSync|Password spray|Web server spawned|Remote-access tunnel|ServiceDll tamper|authorized_keys|Svchost masquerade|Cross-process injection|C2-style named pipe|image tampering|Direct volume access|WMI event subscription|Sysmon configuration changed|Lookalike system binary' })
+    $huntHi = @($hunt | Where-Object { "$($_.Severity)" -eq 'high' -and "$($_.Rule)" -match 'Renamed LOLBin|side-load|Downloaded then executed|LSASS access|Office app spawned|proxy-execution|Admin-share|Defender (real-time|exclusion)|DCSync|Password spray|Web server spawned|Remote-access tunnel|ServiceDll tamper|authorized_keys|Svchost masquerade|Cross-process injection|C2-style named pipe|image tampering|Direct volume access|WMI event subscription|Sysmon configuration changed|Lookalike system binary|Misplaced system binary|Known-bad name pattern' })
     # v2.64: EcsConfigs-only 5007 exclusion - Features\EcsConfigs is Defender's tamper-protected,
     # platform-managed cloud-config key (rewritten on every engine sync), NOT a user-set exclusion.
     # A 'Defender exclusion configuration changed' finding that only touches EcsConfigs paths is
@@ -10662,6 +10910,7 @@ function Invoke-RegenerateOutputs {
         if ($plasoN -ge 0) { $rgInfo['note'] = "$plasoN row(s) merged"; Write-CaseLog "    plaso import: $plasoN row(s) merged into the master timeline (Source 'plaso')" 'Cyan' }
     }
     & $rgStep 'sigma rule logs' 'New-SigmaRuleLogs' { New-SigmaRuleLogs }
+    & $rgStep 'execution stacks' 'New-ExecStacks' { New-ExecStacks }
     & $rgStep 'hunt findings' 'New-HuntFindings' { New-HuntFindings }
     & $rgStep 'IOC xref' 'New-IocHits' { New-IocHits }
     & $rgStep 'IOC export' 'New-CaseIocExport' { New-CaseIocExport }
@@ -11361,7 +11610,10 @@ function Invoke-ParseMode {
     $cj = Join-Path $caseDirP 'case.json'
     Add-Content -LiteralPath $script:CaseLog -Encoding UTF8 -Value ("[{0}] === analyst parse session (Ophira v{1}) ===" -f (Get-Date -Format 'HH:mm:ss'), $ScriptVersion)
     Write-Host "  Case: $($meta.Computer)  collected $($meta.StartedUTC)  ($($meta.Tool))" -ForegroundColor Gray
-    $before = @(Get-ChildItem -LiteralPath $script:CsvDir -Filter '*.csv' -File -ErrorAction SilentlyContinue).Count
+    # csvBefore/csvAfter: NOT $before/$after - PS vars are case-insensitive, and a local
+    # '$before' here shadowed the script's -Before window param for the whole regen subtree
+    # (focus -Before and exec-stacking window silently became the CSV count)
+    $csvBefore = @(Get-ChildItem -LiteralPath $script:CsvDir -Filter '*.csv' -File -ErrorAction SilentlyContinue).Count
 
     # 1) modules that read ONLY raw\ evidence - reuse the real module code verbatim
     foreach ($id in @('4.6', '5.4', '8.4')) {
@@ -11513,9 +11765,9 @@ function Invoke-ParseMode {
         $meta | ConvertTo-Json -Depth 5 | Set-Content -LiteralPath $cj -Encoding UTF8
     } catch { }
 
-    $after = @(Get-ChildItem -LiteralPath $script:CsvDir -Filter '*.csv' -File -ErrorAction SilentlyContinue).Count
+    $csvAfter = @(Get-ChildItem -LiteralPath $script:CsvDir -Filter '*.csv' -File -ErrorAction SilentlyContinue).Count
     Write-Host ""
-    Write-Host "Done: $before -> $after CSVs. Regenerated report.html / verdict.json / supertimeline.csv / siem_export.ndjson." -ForegroundColor Green
+    Write-Host "Done: $csvBefore -> $csvAfter CSVs. Regenerated report.html / verdict.json / supertimeline.csv / siem_export.ndjson." -ForegroundColor Green
     Write-Host "csv\parse_needed.csv lists anything that still needs the ORIGINAL endpoint (live-only sources)." -ForegroundColor Gray
     # v2.57: the analyst TODO next to the generated results - don't forget the plaso deep-timeline pass
     $plasoCsvP = Join-Path (Split-Path -Parent $script:CsvDir) 'plaso.csv'

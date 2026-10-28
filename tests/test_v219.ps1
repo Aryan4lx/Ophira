@@ -28,6 +28,7 @@ New-Item -ItemType Directory -Path $CsvDir -Force | Out-Null
 $saved = @{}
 function Save-Rows { param([string]$Name, $Rows) $script:saved[$Name] = $Rows }
 function Write-CaseLog { param([string]$Message, [string]$Color = 'Gray') }
+function Get-KnownBadRegexes { return @() }
 
 # R1 fixture: copy a real LOLBin (cmd.exe) under a decoy name so VersionInfo says "cmd"
 $decoy = Join-Path $case1 'svcst.exe'

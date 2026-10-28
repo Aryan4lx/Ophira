@@ -69,6 +69,7 @@ function Import-CaseCsv { param([string]$Name) if ($script:caseCsv.ContainsKey($
 $savedHF = @()
 function Save-Rows { param([string]$Name, $Rows) if ($Name -eq 'hunt_findings') { $script:savedHF = @($Rows) } }
 function Write-CaseLog { param([string]$Message, [string]$Color = 'Gray') }
+function Get-KnownBadRegexes { return @() }
 Invoke-Expression ($muwp.Value + "`r`n" + $mhf.Value)
 New-HuntFindings
 $hf = $script:savedHF

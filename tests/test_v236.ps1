@@ -52,6 +52,7 @@ function Test-Path { param($LiteralPath) "$LiteralPath" -notmatch 'nsistub' }
 $saved17 = @{}
 function Save-Rows { param([string]$Name, $Rows) $script:saved17[$Name] = $Rows }
 function Write-CaseLog { param([string]$Message, [string]$Color = 'Gray') }
+function Get-KnownBadRegexes { return @() }
 $RawDir = "$env:TEMP\v36_raw_$stamp"; $CsvDir = "$env:TEMP\v36_csv_$stamp"
 $mod17 = [pscustomobject]@{ Id = '1.7'; Name = 'Svchost masquerade audit'; Run = [scriptblock]::Create($m17.Groups[1].Value) }
 & $mod17.Run

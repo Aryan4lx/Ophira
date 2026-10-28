@@ -48,6 +48,7 @@ Invoke-Expression $defs
 $savedHF = @()
 function Save-Rows { param([string]$Name, $Rows) if ($Name -eq 'hunt_findings') { $script:savedHF = @($Rows) } }
 function Write-CaseLog { param([string]$Message, [string]$Color = 'Gray') }
+function Get-KnownBadRegexes { return @() }
 function Import-CaseCsv { param([string]$Name) if ($script:caseCsv.ContainsKey($Name)) { return $script:caseCsv[$Name] }; return @() }
 # F5: controllable Authenticode verdicts by exact path
 $script:sigByPath = @{}
