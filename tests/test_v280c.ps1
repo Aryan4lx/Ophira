@@ -143,7 +143,11 @@ $mfDir = Join-Path $tmp 'mfcase'; New-Item -ItemType Directory -Path $mfDir -For
 Set-Content -LiteralPath (Join-Path $mfDir 'evidence.csv') -Value 'a,b' -Encoding UTF8
 New-CaseManifest -ForDir $mfDir -HeaderLines @('Ophira v9.99 evidence manifest + chain of custody', 'CaseID: CASE-T4  Analyst: fixture')
 $mf = @(Get-Content -LiteralPath (Join-Path $mfDir 'manifest.txt'))
-Check "I3: shared helper writes header + SCRIPT line + per-file SHA256 table" (($mf -contains 'Ophira v9.99 evidence manifest + chain of custody') -and (@($mf | Where-Object { $_ -like 'SCRIPT: Ophira v9.99*' }).Count -eq 1) -and (@($mf | Where-Object { $_ -match '^evidence\.csv\s+\d+\s+[0-9A-F]{64}$' }).Count -eq 1))
+$i3a = $mf -contains 'Ophira v9.99 evidence manifest + chain of custody'
+$i3b = @($mf | Where-Object { $_ -like 'SCRIPT: Ophira v9.99*' }).Count -eq 1
+$i3c = @($mf | Where-Object { $_ -match '^evidence\.csv\s+\d+\s+[0-9A-F]{64}$' }).Count -eq 1
+Check "I3: shared helper writes header + SCRIPT line + per-file SHA256 table" ($i3a -and $i3b -and $i3c)
+if (-not ($i3a -and $i3b -and $i3c)) { Write-Host "  [I3 debug] a=$i3a b=$i3b c=$i3c lines=$($mf.Count)"; $mf | ForEach-Object { Write-Host "    |$_" } }
 Check "I3: manifest itself excluded from its own hash table" (@($mf | Where-Object { $_ -like '*manifest.txt*' }).Count -eq 0)
 Check "I3: New-Package routes through the shared helper" ($src -match [regex]::Escape('New-CaseManifest -ForDir $CaseDir -HeaderLines $manifest'))
 Check "I3: repack keeps endpoint header lines + adds ANALYST-PARSED + refreshes hashes before re-zip" (($src -match [regex]::Escape('ANALYST-PARSED: Ophira v$ScriptVersion re-processed this package')) -and ($src -match [regex]::Escape('New-CaseManifest -ForDir $caseDirP -HeaderLines $mfHdr')) -and ($src -match [regex]::Escape('$rpZipHash')))
