@@ -149,7 +149,7 @@ Check "I4: escaper double-escape safe (&amp; stays &amp;)" ((ConvertTo-HtmlEsc '
 # ============================================================================
 Check "static F8: no C:-only windows regex remains" (-not ($src -match [regex]::Escape('^c:\\windows')))
 $hits = [regex]::Matches($src, [regex]::Escape('(?i)^[a-z]:\\windows\\(system32|syswow64|sysnative)\\')).Count
-Check "static F8+F7: drive-agnostic windows regex present at both sites (R3 + R8)" ($hits -eq 2)
+Check "static F8+F7: drive-agnostic windows regex present at all sites (R3 + R8 + R36)" ($hits -eq 3)
 Check "static F4: R29 uses separate dedupe tables" (($src.Contains('$r29SeenHi')) -and ($src.Contains('$r29SeenMed')) -and (-not ($src.Contains('$r29Seen ')))) 
 
 Write-Host ""

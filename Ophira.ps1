@@ -1,5 +1,5 @@
 ﻿<#
-Ophira v2.80  -  Windows Incident Response Triage Toolkit
+Ophira v2.81  -  Windows Incident Response Triage Toolkit
 READ-ONLY by design: never modifies the system, only reads and copies data
 into its own output folder. Intended to be handed to a system owner or run
 by a responder during early triage / threat hunting.
@@ -291,7 +291,7 @@ by a responder during early triage / threat hunting.
       <source> (weight W)". The percent is weighted-collected over total
       possible, minus 15 when the run was not elevated.
     - Hunt findings count (report Hunt section): csv\hunt_findings.csv, built
-      by New-HuntFindings. Each rule R1-R35 logs one line "Rxx <rule>: <inputs
+      by New-HuntFindings. Each rule R1-R38 logs one line "Rxx <rule>: <inputs
       in> -> <N> findings (<severities>)"; a skipped rule logs its gate (e.g.
       "gate: usb_devices empty or missing - skipped"). 0 rows in = the source
       CSV was empty or absent, not that the technique passed.
@@ -356,7 +356,7 @@ param(
     [switch]$ExitVerdict
 )
 
-$ScriptVersion = "2.80"
+$ScriptVersion = "2.81"
 $ErrorActionPreference = 'Continue'
 $ProgressPreference = 'SilentlyContinue'
 
@@ -2155,6 +2155,28 @@ function ConvertTo-Rot13 {
     }) -join ''
 }
 
+function Get-LevenshteinDistance {
+    # v2.81: classic edit distance (two-row DP, no transposition op) - caller lowercases
+    param([string]$A, [string]$B)
+    if ($a.Length -eq 0) { return $b.Length }
+    if ($b.Length -eq 0) { return $a.Length }
+    $prev = New-Object 'int[]' ($b.Length + 1)
+    $cur  = New-Object 'int[]' ($b.Length + 1)
+    for ($j = 0; $j -le $b.Length; $j++) { $prev[$j] = $j }
+    for ($i = 1; $i -le $a.Length; $i++) {
+        $cur[0] = $i
+        for ($j = 1; $j -le $b.Length; $j++) {
+            $cost = if ($a[$i-1] -ceq $b[$j-1]) { 0 } else { 1 }
+            $m = $prev[$j] + 1                                        # deletion
+            if ($cur[$j-1] + 1 -lt $m) { $m = $cur[$j-1] + 1 }        # insertion
+            if ($prev[$j-1] + $cost -lt $m) { $m = $prev[$j-1] + $cost } # substitution
+            $cur[$j] = $m
+        }
+        $tmp = $prev; $prev = $cur; $cur = $tmp
+    }
+    return $prev[$b.Length]
+}
+
 function Get-UserAssistRows {
     # v2.54: enumerate the UserAssist GUID subkeys dynamically - the old hardcoded Win7-era
     # GUID list was brace-less and never matched the real {guid} keys, so this was always empty
@@ -2385,7 +2407,7 @@ $script:SharedFunctions = @(
     'Test-IsPublicIp', 'Test-IsUserWritablePath', 'Get-SignatureInfo', 'Get-SysmonState',
     'Get-UserProfileList', 'Get-UserAssistRows', 'ConvertTo-Rot13', 'Get-FilteredEvents', 'Export-Evtx',
     'Import-CaseCsv', 'Invoke-BrowserIocXref', 'Get-EventDataRows', 'Get-IisW3cRows', 'Get-StartupInfoRows', 'Get-WerReportRows', 'Test-SigmaSelfNoise', 'Remove-SigmaDuplicateEvents', 'Get-IpCloudClass', 'Get-LocalAdminMembers',
-    'Find-AdsOnPe', 'Test-WebshellContent', 'Test-IsAdmin', 'Out-Flash', 'Get-DotNetRelease'
+    'Find-AdsOnPe', 'Test-WebshellContent', 'Test-IsAdmin', 'Out-Flash', 'Get-DotNetRelease', 'Get-LevenshteinDistance'
 )
 
 $script:ModuleWorkerText = @'
@@ -6682,6 +6704,61 @@ tr.techrow{cursor:pointer}
     } else {
         $null = $sb.AppendLine("<div class='meta'>No hunt findings - all techniques clean.</div>")
     }
+
+    # ---------- hour-of-day execution histogram (v2.81 T3 - the R38 data, report-side) ----------
+    # Recomputed from the same csvs hunt rule R38 reads: same column probes, same src|leaf
+    # first-seen dedupe, hour from the first-seen timestamp. Inlined (not a helper) so report
+    # renders stay self-contained; locals all $h38-prefixed to keep this huge function's scope
+    # clean. Pure div bars - no JS/canvas - chrome via existing classes (card/meta), geometry
+    # inline (same class+inline split as the coverage bar), so dark theme + print both hold.
+    $h38Seen = @{}
+    $h38Counts = @{}   # hour 0-23 -> distinct first-seen binary count
+    $h38Leaves = @{}   # hour 0-23 -> List[string] of the leaf names (tooltip evidence)
+    foreach ($h38Src in @('amcache', 'prefetch_parsed', 'security_proc_events', 'sysmon_proc_create')) {
+        foreach ($h38Row in @(Import-CaseCsv $h38Src)) {
+            try {
+                $h38Raw = $null
+                foreach ($h38Col in @('Path', 'Executable', 'FullPath', 'Name', 'ApplicationName')) {
+                    $h38P = $h38Row.PSObject.Properties[$h38Col]
+                    if ($h38P -and $h38P.Value) { $h38Raw = "$($h38P.Value)".Trim(); break }
+                }
+                if (-not $h38Raw) { continue }
+                $h38Leaf = (Split-Path $h38Raw -Leaf).ToLower()
+                if (-not $h38Leaf) { continue }
+                $h38Ts = $null
+                foreach ($h38Pn in (@($h38Row.PSObject.Properties.Name) | Where-Object { $_ -match '(?i)timestamp|time$|lastrun|^time' })) {
+                    $h38Dt = Get-InvariantDate "$($h38Row.$h38Pn)"
+                    if ($h38Dt -gt [datetime]::MinValue) { $h38Ts = $h38Dt; break }
+                }
+                if (-not $h38Ts) { continue }
+                $h38Key = "$h38Src|$h38Leaf"
+                if ($h38Seen.ContainsKey($h38Key)) { continue }
+                $h38Seen[$h38Key] = $true
+                $h38H = $h38Ts.Hour
+                if (-not $h38Counts.ContainsKey($h38H)) { $h38Counts[$h38H] = 0; $h38Leaves[$h38H] = New-Object System.Collections.Generic.List[string] }
+                # same leaf first-seen by a second source in the same hour = one distinct binary
+                if (-not $h38Leaves[$h38H].Contains($h38Leaf)) { $h38Counts[$h38H]++; $null = $h38Leaves[$h38H].Add($h38Leaf) }
+            } catch { }
+        }
+    }
+    $h38Total = 0
+    foreach ($h38N in $h38Counts.Values) { $h38Total += $h38N }
+    if ($h38Total -gt 0) {
+        $h38Max = 1
+        foreach ($h38N in $h38Counts.Values) { if ($h38N -gt $h38Max) { $h38Max = $h38N } }
+        $h38Cells = New-Object System.Text.StringBuilder
+        for ($h38H = 0; $h38H -le 23; $h38H++) {
+            $h38N = 0
+            if ($h38Counts.ContainsKey($h38H)) { $h38N = $h38Counts[$h38H] }
+            $h38Bar = [Math]::Max(1, [int][Math]::Round(64 * $h38N / $h38Max))
+            $h38Names = ''
+            if ($h38Leaves.ContainsKey($h38H)) { $h38Names = ': ' + (@($h38Leaves[$h38H].ToArray()) -join ', ') }
+            $h38Tip = ConvertTo-HtmlEsc ("{0:00}:00 - {1} first-seen{2}" -f $h38H, $h38N, $h38Names)
+            $null = $h38Cells.Append("<div style='display:inline-block;margin-right:2px;text-align:center'><div style='height:64px;width:18px;position:relative'><div style='position:absolute;bottom:0;left:0;width:18px;height:${h38Bar}px;background:#4d8fd1' title='$h38Tip'></div></div><div style='font-size:10px;color:#7d8590'>$('{0:00}' -f $h38H)</div></div>")
+        }
+        $null = $sb.AppendLine("<div class='card'><b>Execution first-seen by hour of day</b> <span class='meta'>(sources: amcache + prefetch_parsed + 4688 + Sysmon EID1; first-seen per binary, deduped across sources - hour is local time; hover a bar for its binaries; tallest bar = $h38Max)</span><div style='margin-top:8px'>$($h38Cells.ToString())</div></div>")
+    }
+
     if ($liveScan.Count -gt 0) {
         $null = $sb.AppendLine("<h3>Live memory triage (flagged-process minidumps)</h3><table><tr><th>Process</th><th>PID</th><th>Verdict</th><th>Dump</th><th>MB</th><th>YARA hits in memory</th></tr>")
         foreach ($l in $liveScan) {
@@ -8299,11 +8376,11 @@ function New-HuntFindings {
 
     # v2.79 trace: one line per rule - inputs in / findings out - plus the gate decision on
     # skipped rules. The case log ALWAYS carries these; the console shows them at -LogLevel
-    # Verbose only (33 lines per hunt run is too chatty for Normal). Written straight to the
+    # Verbose only (36 lines per hunt run is too chatty for Normal). Written straight to the
     # log on the quiet path instead of Write-CaseLog -NoConsole: harnesses stub Write-CaseLog
     # without that switch. Controller-side only (Invoke-RegenerateOutputs), so $CaseLog exists.
     # Placement hazard: call $trace LAST in each rule block - a $find placed after a rule's
-    # $trace rolls its findings into the NEXT rule's count (the 33-block test cannot catch it).
+    # $trace rolls its findings into the NEXT rule's count (the 34-block test cannot catch it).
     $trState = @{ Base = 0 }
     $trace = {
         param([string]$Id, [string]$Label, [string]$Inputs)
@@ -9092,6 +9169,195 @@ function New-HuntFindings {
     }
     & $trace 'R35' 'webshell content heuristics' "webshell_candidates: $($r35In.Count) rows"
 
+    # ---------- R36: Levenshtein masquerade (v2.81 - lookalike names of system binaries) ----------
+    $r36Crit = @('svchost.exe', 'csrss.exe', 'lsass.exe', 'winlogon.exe', 'wininit.exe', 'smss.exe', 'explorer.exe', 'rundll32.exe', 'regsvr32.exe', 'dllhost.exe', 'conhost.exe', 'taskhostw.exe', 'spoolsv.exe', 'mshta.exe', 'msiexec.exe', 'powershell.exe', 'cmd.exe', 'wscript.exe', 'cscript.exe', 'dwm.exe')
+    $r36Hits = New-Object System.Collections.Generic.List[object]
+    $r36Seen = @{}
+    $r36In = 0
+    $r36SysRe = '(?i)^[a-z]:\\windows\\(system32|syswow64|sysnative)\\'
+    foreach ($r36Src in @('amcache', 'prefetch_parsed', 'processes', 'bam_lastexec')) {
+        $r36Rows = @(Import-CaseCsv $r36Src)
+        $r36In += $r36Rows.Count
+        foreach ($r in $r36Rows) {
+            try {
+                $r36Raw = $null
+                foreach ($r36Col in @('Path', 'Executable', 'FullPath', 'Name', 'App', 'ApplicationName')) {
+                    $r36P = $r.PSObject.Properties[$r36Col]
+                    if ($r36P -and $r36P.Value) { $r36Raw = "$($r36P.Value)".Trim(); break }
+                }
+                if (-not $r36Raw) { continue }
+                $r36Leaf = (Split-Path $r36Raw -Leaf).ToLower()
+                if ($r36Leaf -match '\.dll$') { continue }
+                if ($r36Leaf -notmatch '\.[a-z0-9]+$') { continue }
+                $r36Key = "$r36Src|$r36Leaf"
+                if ($r36Seen.ContainsKey($r36Key)) { continue }
+                $r36Seen[$r36Key] = $true
+                if ($r36Crit -contains $r36Leaf) { continue }
+                $r36Best = 99; $r36Near = $null
+                foreach ($c in $r36Crit) {
+                    $d = Get-LevenshteinDistance $r36Leaf $c
+                    if ($d -lt $r36Best) { $r36Best = $d; $r36Near = $c }
+                    if ($r36Best -le 1) { break }
+                }
+                if ($r36Best -ge 1 -and $r36Best -le 2) {
+                    $null = $r36Hits.Add(@{ Src = $r36Src; Leaf = $r36Leaf; Path = $r36Raw; Crit = $r36Near; Dist = $r36Best })
+                }
+            } catch { }
+        }
+    }
+    $r36Emitted = 0
+    foreach ($h in $r36Hits.ToArray()) {
+        if ($r36Emitted -ge 12) { break }
+        $r36Path = "$($h.Path)"
+        $r36Sig = $null
+        if (Test-Path -LiteralPath $r36Path) {
+            try { $r36Sig = Get-AuthenticodeSignature -LiteralPath $r36Path } catch { $r36Sig = $null }
+        }
+        $r36Sys = ($r36Path -match $r36SysRe)
+        if ($r36Sys -and $r36Sig -and "$($r36Sig.Status)" -eq 'Valid') { continue } # signed copy in a system dir = the real binary
+        $r36SigTxt = if ($r36Sig) { "signature $($r36Sig.Status)" } else { 'signature uncheckable (file missing or no signature data)' }
+        $r36Sev = if ((Test-IsUserWritablePath $r36Path) -or -not $r36Sig) { 'high' } else { 'low' }
+        & $find 'Lookalike system binary (Levenshtein near-name)' $r36Sev $r36Path "near '$($h.Crit)' (distance $($h.Dist)), $r36Path, $r36SigTxt" 'T1036.005'
+        $r36Emitted++
+    }
+    & $trace 'R36' 'lookalike system binary (Levenshtein near-name)' "amcache+prefetch_parsed+processes+bam_lastexec: $r36In rows -> $($r36Hits.Count) near-name hits -> $r36Emitted emitted"
+
+    # ---------- R37: ShimCache temporal correlation (v2.81 - report-only, NO verdict signal) ----------
+    # Module 5.4 exports chainsaw's shimcache as execution_timeline: 0-numbered summary row(s)
+    # plus 1..N cache entries in insertion order. (a) A cache entry whose last_modified_ts is
+    # OLDER than the previous entry's = order violation (timestomping or cache manipulation).
+    # (b) An entry executed from a user-writable path that no other execution source
+    # (amcache/prefetch/BAM) ever saw = scrub survivor - possible cache scrubbing around it.
+    # Both report-only by design: temporal order noise is real but low-precision.
+    $r37In = @(Import-CaseCsv 'execution_timeline')
+    $r37Entries = New-Object System.Collections.Generic.List[object]
+    foreach ($r in $r37In) {
+        if ("$($r.'Entry Type')" -ne 'ShimcacheFileEntry') { continue }
+        $r37Path = "$($r.'File Path')".Trim()
+        if (-not $r37Path) { continue }
+        # sanity guard: rows without a usable position are summary/malformed - unusable by either sub-rule
+        $r37Ten = 0
+        if (-not [int]::TryParse("$($r.'Timeline Entry Number')", [ref]$r37Ten)) { continue }
+        # last_modified_ts lives only inside the Raw Entry JSON - regex beats per-row ConvertFrom-Json on 5.1
+        $r37Ts = $null
+        $r37M = [regex]::Match("$($r.'Raw Entry')", '(?i)"last_modified_ts"\s*:\s*"([^"]+)"')
+        if ($r37M.Success) {
+            $r37Dt = [datetime]::MinValue
+            if ([datetime]::TryParse($r37M.Groups[1].Value, [Globalization.CultureInfo]::InvariantCulture, [Globalization.DateTimeStyles]::None, [ref]$r37Dt)) { $r37Ts = $r37Dt }
+        }
+        $null = $r37Entries.Add(@{ Path = $r37Path; Ts = $r37Ts })
+    }
+    # (a) unparseable timestamps are skipped WITHOUT updating the baseline (a broken row must not
+    # become the comparison point - the chain simply bridges over it to the last good entry)
+    $r37Viol = 0
+    $r37Prev = $null
+    foreach ($e in $r37Entries.ToArray()) {
+        if ($null -eq $e.Ts) { continue }
+        if ($null -ne $r37Prev -and $e.Ts -lt $r37Prev) { $r37Viol++ }
+        $r37Prev = $e.Ts
+    }
+    if ($r37Viol -gt 0) {
+        & $find 'ShimCache order violation' 'low' 'execution_timeline' "ShimCache order violation: $r37Viol out-of-order entries (timestomping or cache manipulation)" 'T1070.006'
+    }
+    & $trace 'R37' 'ShimCache order violation' "execution_timeline: $($r37In.Count) rows -> $($r37Entries.Count) entries -> $r37Viol out-of-order"
+    # (b) distinct paths (first occurrence keeps original case for the report entity); a path is
+    # corroborated when its FULL path or its LEAF name appears in any other execution source
+    $r37Seen = @{}
+    $r37Paths = New-Object System.Collections.Generic.List[string]
+    foreach ($e in $r37Entries.ToArray()) {
+        $r37Key = "$($e.Path)".ToLower()
+        if ($r37Seen.ContainsKey($r37Key)) { continue }
+        $r37Seen[$r37Key] = $true
+        $null = $r37Paths.Add($e.Path)
+    }
+    $r37Full = @{}
+    $r37Leaf = @{}
+    foreach ($r37Src in @('amcache', 'prefetch_parsed', 'bam_lastexec')) {
+        foreach ($r in @(Import-CaseCsv $r37Src)) {
+            foreach ($pn in @($r.PSObject.Properties.Name)) {
+                if ($pn -notmatch '(?i)path|executable|app|fullname|application') { continue }
+                $r37Val = "$($r.$pn)".Trim()
+                if (-not $r37Val) { continue }
+                $r37Full[$r37Val.ToLower()] = $true
+                try { $r37Leaf[(Split-Path $r37Val -Leaf).ToLower()] = $true } catch { }
+            }
+        }
+    }
+    $r37Surv = New-Object System.Collections.Generic.List[string]
+    foreach ($p in $r37Paths.ToArray()) {
+        if (-not (Test-IsUserWritablePath $p)) { continue }
+        if ($r37Full.ContainsKey($p.ToLower())) { continue }
+        $pLeaf = ''
+        try { $pLeaf = (Split-Path $p -Leaf).ToLower() } catch { }
+        if ($pLeaf -and $r37Leaf.ContainsKey($pLeaf)) { continue }
+        $null = $r37Surv.Add($p)
+    }
+    $r37Emit = [Math]::Min(6, $r37Surv.Count)
+    for ($i = 0; $i -lt $r37Emit; $i++) {
+        & $find 'ShimCache scrub survivor' 'medium' $r37Surv[$i] 'executed (ShimCache) but absent from all execution corroboration sources - possible cache scrubbing' 'T1070.006'
+    }
+    & $trace 'R37' 'ShimCache scrub survivor' "corroboration amcache+prefetch_parsed+bam_lastexec: $($r37Paths.Count) paths -> $($r37Surv.Count) survivors -> $r37Emit emitted"
+
+    # ---------- R38: execution hour-of-day stacking (v2.81 - report-only, NO verdict signal) ----------
+    # First-seen hour-of-day per distinct binary (deduped on src|leaf; a src|leaf only becomes
+    # seen once a row with a usable timestamp carries it, so broken timestamps never poison the
+    # slot). Off-hours bursts (20:00-06:59) and mass .exe staging inside one hour are timing
+    # tells for hands-on-keyboard / staging activity - timing alone is low-precision, so both
+    # stay low / report-only. The report's hour histogram recomputes the same buckets itself.
+    $r38Seen = @{}
+    $r38All = @{}   # hour -> @{ leaf = $true } - every first-seen binary (burst counter)
+    $r38Exe = @{}   # hour -> @{ leaf = $true } - .exe only (mass-staging counter)
+    $r38In = 0
+    foreach ($r38Src in @('amcache', 'prefetch_parsed', 'security_proc_events', 'sysmon_proc_create')) {
+        $r38Rows = @(Import-CaseCsv $r38Src)
+        $r38In += $r38Rows.Count
+        foreach ($r in $r38Rows) {
+            try {
+                $r38Raw = $null
+                foreach ($r38Col in @('Path', 'Executable', 'FullPath', 'Name', 'ApplicationName')) {
+                    $r38P = $r.PSObject.Properties[$r38Col]
+                    if ($r38P -and $r38P.Value) { $r38Raw = "$($r38P.Value)".Trim(); break }
+                }
+                if (-not $r38Raw) { continue }
+                $r38Leaf = (Split-Path $r38Raw -Leaf).ToLower()
+                if (-not $r38Leaf) { continue }
+                $r38Ts = $null
+                foreach ($pn in (@($r.PSObject.Properties.Name) | Where-Object { $_ -match '(?i)timestamp|time$|lastrun|^time' })) {
+                    $r38Dt = Get-InvariantDate "$($r.$pn)"
+                    if ($r38Dt -gt [datetime]::MinValue) { $r38Ts = $r38Dt; break }
+                }
+                if (-not $r38Ts) { continue }
+                $r38Key = "$r38Src|$r38Leaf"
+                if ($r38Seen.ContainsKey($r38Key)) { continue }
+                $r38Seen[$r38Key] = $true
+                $r38H = $r38Ts.Hour
+                if (-not $r38All.ContainsKey($r38H)) { $r38All[$r38H] = @{}; $r38Exe[$r38H] = @{} }
+                $r38All[$r38H][$r38Leaf] = $true
+                if ($r38Leaf.EndsWith('.exe')) { $r38Exe[$r38H][$r38Leaf] = $true }
+            } catch { }
+        }
+    }
+    $r38Burst = 0
+    foreach ($r38H in @(0..23)) {
+        if (-not $r38All.ContainsKey($r38H)) { continue }
+        if ($r38H -lt 20 -and $r38H -ge 7) { continue }
+        $r38N = $r38All[$r38H].Count
+        if ($r38N -lt 8) { continue }
+        $r38Win = '{0:00}:00-{0:00}:59' -f $r38H
+        & $find 'Off-hours execution burst' 'low' $r38Win "$r38N distinct binaries first seen $r38Win (off-hours window 20:00-06:59)" ''
+        $r38Burst++
+    }
+    $r38Stage = 0
+    foreach ($r38H in @(0..23)) {
+        if (-not $r38Exe.ContainsKey($r38H)) { continue }
+        $r38N = $r38Exe[$r38H].Count
+        if ($r38N -lt 10) { continue }
+        $r38Win = '{0:00}:00-{0:00}:59' -f $r38H
+        & $find 'Mass binary staging' 'low' $r38Win "$r38N first-seen .exe binaries staged $r38Win" ''
+        $r38Stage++
+    }
+    & $trace 'R38' 'execution hour-of-day stacking' "amcache+prefetch_parsed+security_proc_events+sysmon_proc_create: $r38In rows -> $($r38Seen.Count) first-seen binaries -> $r38Burst off-hours burst + $r38Stage staging findings"
+
     Save-Rows -Name 'hunt_findings' -Rows $out.ToArray()
     $hi = @($out | Where-Object { $_.Severity -eq 'high' }).Count
     if ($out.Count -gt 0) {
@@ -9371,7 +9637,7 @@ function Get-CompromiseVerdict {
     $postureBad = @($posture | Where-Object { "$($_.Status)" -eq 'BAD' })
     $credSweep = Import-CaseCsv 'credential_sweep'
     $hunt = Import-CaseCsv 'hunt_findings'
-    $huntHi = @($hunt | Where-Object { "$($_.Severity)" -eq 'high' -and "$($_.Rule)" -match 'Renamed LOLBin|side-load|Downloaded then executed|LSASS access|Office app spawned|proxy-execution|Admin-share|Defender (real-time|exclusion)|DCSync|Password spray|Web server spawned|Remote-access tunnel|ServiceDll tamper|authorized_keys|Svchost masquerade|Cross-process injection|C2-style named pipe|image tampering|Direct volume access|WMI event subscription|Sysmon configuration changed' })
+    $huntHi = @($hunt | Where-Object { "$($_.Severity)" -eq 'high' -and "$($_.Rule)" -match 'Renamed LOLBin|side-load|Downloaded then executed|LSASS access|Office app spawned|proxy-execution|Admin-share|Defender (real-time|exclusion)|DCSync|Password spray|Web server spawned|Remote-access tunnel|ServiceDll tamper|authorized_keys|Svchost masquerade|Cross-process injection|C2-style named pipe|image tampering|Direct volume access|WMI event subscription|Sysmon configuration changed|Lookalike system binary' })
     # v2.64: EcsConfigs-only 5007 exclusion - Features\EcsConfigs is Defender's tamper-protected,
     # platform-managed cloud-config key (rewritten on every engine sync), NOT a user-set exclusion.
     # A 'Defender exclusion configuration changed' finding that only touches EcsConfigs paths is

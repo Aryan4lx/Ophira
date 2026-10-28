@@ -1,4 +1,35 @@
-# Changelog
+﻿# Changelog
+
+## v2.81
+- **Cache analytics pack** (ShimCache/AmCache temporal analytics): three new
+  hunt rules + one report visual.
+  - **R36 Lookalike system binary (Levenshtein near-name)**: executed names
+    from amcache / prefetch_parsed / processes / bam_lastexec are matched
+    against 20 critical system binaries (svchost.exe, lsass.exe, ...) at
+    edit distance 1-2 (classic DP helper, registered in SharedFunctions so
+    pool workers have it). A signed copy in a system dir is skipped;
+    user-writable path or uncheckable signature = high (verdict-worthy,
+    strong signal); anything else low. Cap 12.
+  - **R37 ShimCache order violation + scrub survivor** (report-only,
+    T1070.006): out-of-order last-modified times in the ShimCache cache
+    order flag timestomping/cache manipulation (one aggregated row); an
+    executed user-writable path with zero corroboration in amcache /
+    prefetch / bam flags possible cache scrubbing (cap 6).
+  - **R38 Off-hours execution burst + Mass binary staging** (report-only,
+    low): hour-of-day buckets over first-seen binaries across amcache,
+    prefetch, 4688 and Sysmon EID 1 (first-seen per binary, deduped across
+    sources); >= 8 distinct binaries in one off-hours bucket (20:00-06:59)
+    or >= 10 first-seen .exe in any hour fires a context row. The report's
+    hunt section gains a pure-HTML 24-bar hour-of-day histogram (no JS,
+    same dedupe rule, dark/print-safe via existing classes).
+- E2E (real WIN11 case): verdict SUSPICIOUS rank 2 (92%) stable; hunt
+  findings 23 -> 41 - R36 emits 3 high (LECmd/PECmd/RBCmd forensic parsers
+  in user-writable paths, distance-1 near-names of cmd.exe) + 1 low (csc.exe
+  signed, correctly downgraded), R37 finds a 152-entry cache-order violation
+  and 6 scrub survivors, R38 fires 2 off-hours bursts + 5 staging hours;
+  hunt signal 3 -> 4 fired rules.
+- Tests: new test_v281a/b/c (76 checks) + retargets (v267 window, v279
+  trace count, v280a/v280d list pins), full suite green.
 
 ## v2.80
 - **Verdict truth + report integrity** (executed as four reviewed worker batches + controller; E2E on the real WIN11 case: verdict SUSPICIOUS rank 2 held with 4 signals, down from 5 - the phantom tamper signal is gone, coverage 24/29 (92%))
@@ -310,7 +341,7 @@
 - Tests: `tests\test_v241.ps1` (15 checks - FP gating through the real `Get-CompromiseVerdict` with three synthetic timelines: lone Defender crit = SUSPICIOUS, multi-rule crit storm = LIKELY COMPROMISED, single-rule crit pair = SUSPICIOUS; shipped tuning + parser wiring); `tests\test_focus.ps1` extended to 29 checks (per-instance guid joins + SVG graph assertions)
 
 ## v2.40
-- **Focus engine** (`-Mode Focus`, menu option 9; replaces the flat `-Mode Process` pivot, which remains as an alias): seed with a process **name, PID, path fragment or hash** and the engine iteratively expands the entity set across every collected CSV - name → path → hash → parent/child processes → DLLs → network, plus **remote-IP pivots** so beacon/connection evidence that never carries the process name (e.g. `beacon_candidates.csv` keyed by IP) is pulled into the chain. Hard caps keep it sane: 4 rounds, ~60 path/name terms, 12 hashes, 20 IPs, and an **OS-infra expansion guard** (explorer/cmd/svchost/lsass/... are matched as evidence but never become seeds). Hash seeds auto-resolve to path/name via process_hashes/entities/amcache; PID seeds resolve via the live snapshot + 4688/Sysmon history (hex `0x...` and decimal both handled)
+- **Focus engine** (`-Mode Focus`, menu option 9; replaces the flat `-Mode Process` pivot, which remains as an alias): seed with a process **name, PID, path fragment or hash** and the engine iteratively expands the entity set across every collected CSV - name â†’ path â†’ hash â†’ parent/child processes â†’ DLLs â†’ network, plus **remote-IP pivots** so beacon/connection evidence that never carries the process name (e.g. `beacon_candidates.csv` keyed by IP) is pulled into the chain. Hard caps keep it sane: 4 rounds, ~60 path/name terms, 12 hashes, 20 IPs, and an **OS-infra expansion guard** (explorer/cmd/svchost/lsass/... are matched as evidence but never become seeds). Hash seeds auto-resolve to path/name via process_hashes/entities/amcache; PID seeds resolve via the live snapshot + 4688/Sysmon history (hex `0x...` and decimal both handled)
 - **Multi-instance + masquerade handling**: entity groups are keyed by normalized path + hash, so N instances of one binary group together while a same-name binary at a different path (`C:\Windows\System32\malware.exe` vs `C:\Users\...\malware.exe`) splits into its own group with an explicit MASQUERADE WARNING. Instances are listed once each (deduped across sources, enriched from whichever source carries more: PID, ProcessGuid, start time, parent, user) - the live snapshot contributes PID/PPID, Sysmon EID 1 contributes GUID/parent/user, 4688 contributes account/history
 - **Instance-identity collectors (A0)**: Sysmon EID 1 now captures `ProcessId/ProcessGuid/ParentImage/ParentProcessGuid`, EID 3 and EID 7 capture `ProcessGuid`, EID 22 adds `ProcessGuid`, and 4688 adds `NewProcessId` + creator `ProcessId`. These are the join keys that let a dossier attribute network/DLL/file/registry events to a *specific instance* instead of just a name. Cases collected before v2.40 (or without Sysmon) run in a **flagged degraded mode** - the dossier and console say instance attribution is limited instead of pretending
 - **Outputs**: `focus\` inside the case folder - `focus_report.html` (standalone dark-theme dossier: identity groups, instances, activity chain filtered from the master timeline, per-section evidence with a detection-surface verdict hint CORROBORATED/SUSPICIOUS/REVIEW), `focus_hits.csv`, `focus_chain.csv` (timeline filtered to the entity, oldest-first, 500 cap), `focus_instances.csv`, `focus_terms.json` (seeds, expansion state, degraded flag). `report.html` gains a **Focus nav section** rendering the summary whenever a focus dossier exists in the case
@@ -457,33 +488,33 @@
     - `security_task_install.csv` - 4698 task installs with the action command; `security_share_access.csv` - 5140/5145 (share, target name, source IP, access list; capped 8000)
     - `sysmon_process_access.csv` - EID 10 (LSASS-access data source); `sysmon_registry.csv` - EID 13 (UAC-bypass/persistence); `sysmon_file_time.csv` - EID 2 (timestomping)
     - `defender_config_events.csv` - 5001 real-time-protection off / 5007 config changes
-  - **Hunt rules**: R8 **LSASS access** - non-system process opens lsass.exe w/ core-process allowlist (high); R9 **Office→interpreter chain** - WINWORD/EXCEL/OUTLOOK parent spawning cmd/powershell/wscript/mshta/rundll32... (high); R10 **proxy-execution LOLBin command lines** - encoded commands, certutil download/decode, mshta remote, comsvcs minidump, regsvr32 scriptlet (high) + bitsadmin/msiexec-remote/wmic-create (medium); R11 **UAC bypass** - ms-settings shell\open\command registry hijack (medium); R12 **admin-share executable staging** - 5145 WriteData of exe/dll/ps1... on ADMIN$/x$ (high); R13 **discovery command storms** - per-account recon-tool bursts (medium); R14 **Defender tamper** - RT disabled / exclusion changed (high); R15 **timestomping** - EID 2 creation-time changes (medium)
+  - **Hunt rules**: R8 **LSASS access** - non-system process opens lsass.exe w/ core-process allowlist (high); R9 **Officeâ†’interpreter chain** - WINWORD/EXCEL/OUTLOOK parent spawning cmd/powershell/wscript/mshta/rundll32... (high); R10 **proxy-execution LOLBin command lines** - encoded commands, certutil download/decode, mshta remote, comsvcs minidump, regsvr32 scriptlet (high) + bitsadmin/msiexec-remote/wmic-create (medium); R11 **UAC bypass** - ms-settings shell\open\command registry hijack (medium); R12 **admin-share executable staging** - 5145 WriteData of exe/dll/ps1... on ADMIN$/x$ (high); R13 **discovery command storms** - per-account recon-tool bursts (medium); R14 **Defender tamper** - RT disabled / exclusion changed (high); R15 **timestomping** - EID 2 creation-time changes (medium)
   - R8/R9/R10/R12/R14 join R1-R4 as **floor-2 verdict signals** (signal text updated); R11/R13/R15 are report-only leads
   - SIEM export gains `hunt_finding` records (high+medium); evidence index documents all 7 new CSVs; new coverage row "Structured telemetry (4688 / Sysmon 10-13)"
-- **Fleet lateral-chain stitching**: each host's `security_share_access.csv` source IPs joined against every other host's `net_interfaces.csv` → `fleet_lateral_chain.csv` + console summary + fleet-report "Lateral movement chains" table (host A → share → host B); hunt hits now surface as fleet HuntHit high-priority findings
+- **Fleet lateral-chain stitching**: each host's `security_share_access.csv` source IPs joined against every other host's `net_interfaces.csv` â†’ `fleet_lateral_chain.csv` + console summary + fleet-report "Lateral movement chains" table (host A â†’ share â†’ host B); hunt hits now surface as fleet HuntHit high-priority findings
 - Hygiene: removed stray `Ophira_dbg.ps1` / `SQLite.Interop.dll` from repo root; `tests\test_v220.ps1` (26 checks)
 
 ## v2.19
-- **Hunt pack** (`New-HuntFindings`, R1-R7) - technique-based detections ported from Velociraptor-style logic → `hunt_findings.csv` (Rule/Severity/Entity/ATT&CK/Evidence) + report "Hunt findings" section:
+- **Hunt pack** (`New-HuntFindings`, R1-R7) - technique-based detections ported from Velociraptor-style logic â†’ `hunt_findings.csv` (Rule/Severity/Entity/ATT&CK/Evidence) + report "Hunt findings" section:
   - R1 **renamed LOLBin** (T1036.003): embedded version-info identity vs filename against the BinaryRename LOLBin table (cmd/powershell/mshta/regsvr32/rundll32/certutil/...)
   - R2 **DLL side-load live** (T1574.002): Sysmon EID 7 proxy-DLLs (version.dll, winmm.dll, dbghelp.dll...) loaded from user-writable paths + unsigned-outside-Windows variant
   - R3 **DLL side-load static** (T1574.002): system-DLL name planted in a user-writable path (amcache/MFT/EID 7 union)
-  - R4 **downloaded-then-executed** (T1105/T1204.002): browser downloads × execution evidence
+  - R4 **downloaded-then-executed** (T1105/T1204.002): browser downloads Ã— execution evidence
   - R5 USB execution trail, R6 account-created + group-change, R7 RDP-in from public IP (report-only)
-  - R1-R4 are high-precision → **floor-2 verdict signals**; all findings feed entity correlation as a `hunt` category
-- **New artifacts**: Sysmon EID 7 parse (`sysmon_image_load.csv`), BAM/DAM last-exec (`bam_lastexec.csv`), USB device history (`usb_devices.csv` + setupapi.dev.log raw), Office File MRU (`office_mru.csv`), local admins (`local_admins.csv`), audit policy → posture rows, UAL .mts raw copy
-- **Module 7.2 live memory triage** (opt-in, admin): minidumps of flagged processes only (cap 10, >1.5GB skipped, LSASS/security-critical excluded, 2GB/10GB-disk budgets) via `MiniDumpWriteDump` → YARA over the dumps → `memory_live_scan.csv` + report section (catches injected/unpacked code disk scans miss; dumps are Volatility-readable)
+  - R1-R4 are high-precision â†’ **floor-2 verdict signals**; all findings feed entity correlation as a `hunt` category
+- **New artifacts**: Sysmon EID 7 parse (`sysmon_image_load.csv`), BAM/DAM last-exec (`bam_lastexec.csv`), USB device history (`usb_devices.csv` + setupapi.dev.log raw), Office File MRU (`office_mru.csv`), local admins (`local_admins.csv`), audit policy â†’ posture rows, UAL .mts raw copy
+- **Module 7.2 live memory triage** (opt-in, admin): minidumps of flagged processes only (cap 10, >1.5GB skipped, LSASS/security-critical excluded, 2GB/10GB-disk budgets) via `MiniDumpWriteDump` â†’ YARA over the dumps â†’ `memory_live_scan.csv` + report section (catches injected/unpacked code disk scans miss; dumps are Volatility-readable)
 - Coverage doc: README now maps Ophira vs Velociraptor's built-in Windows artifacts (full/partial/live-only/niche)
 - Fixed: `@($list)` around generic lists in hunt emit (PS 5.1 "Argument types do not match")
 
 ## v2.18
 - **Connections: cross-source entity correlation** (`New-EntityCorrelation`, runs at packaging + in `-Mode Parse`):
-  - **Binaries** joined across ~16 artifacts (flash verdict, running processes, hashes, amcache+IOC, prefetch, services/tasks/autoruns/ASEP persistence, connections, beacons, SRUM usage, YARA, LOLDrivers, MFT created, sigma alerts) → `entities_binaries.csv` with evidence-category counts, first/last seen, hashes, SRUM bytes
-  - **Accounts** joined across logon events (types/failures/sources), RDP sessions, RDP-out MRU targets, console history, brute-force → `entities_accounts.csv`
-  - **Remote endpoints** joined across connections, beacon flags, brute-force sources, RDP targets → `entities_remotes.csv`
+  - **Binaries** joined across ~16 artifacts (flash verdict, running processes, hashes, amcache+IOC, prefetch, services/tasks/autoruns/ASEP persistence, connections, beacons, SRUM usage, YARA, LOLDrivers, MFT created, sigma alerts) â†’ `entities_binaries.csv` with evidence-category counts, first/last seen, hashes, SRUM bytes
+  - **Accounts** joined across logon events (types/failures/sources), RDP sessions, RDP-out MRU targets, console history, brute-force â†’ `entities_accounts.csv`
+  - **Remote endpoints** joined across connections, beacon flags, brute-force sources, RDP targets â†’ `entities_remotes.csv`
   - Report "**Connections - correlated entities**" section: top multi-source binaries as expandable story cards, account-activity + remote-endpoint tables, and a "**Top network consumers (SRUM)**" table finally surfacing the ~30-day per-app byte history
   - Report-only (no verdict changes); graceful when sources are missing
-- **Repo trim**: removed upstream test fixtures/docs from bundled rule packs (~21 MB / 883 files; deepest path 229→211 chars - GitHub ZIP no longer hits MAX_PATH when extracted with `tar -xf` or 7-Zip)
+- **Repo trim**: removed upstream test fixtures/docs from bundled rule packs (~21 MB / 883 files; deepest path 229â†’211 chars - GitHub ZIP no longer hits MAX_PATH when extracted with `tar -xf` or 7-Zip)
 - **`\\?\` long-path hardening** in push packaging + remote tool extraction
 - README: "Get the kit" (git clone / `tar -xf` / 7-Zip) + "Testing on a VM" guide (MalwareBazaar sample recipe, iocs.txt hash prep, beacon + ransomware simulators)
 - Real-case fix: empty `Image`/`ProcessPath` values no longer abort correlation; SRUM device-style paths (`\device\harddiskvolumeN\`) normalize to drive letters
@@ -495,77 +526,77 @@
 ## v2.16
 - **Sigma rule logs**: one CSV per matched rule under `csv\sigma_rules\` (time, host, event ID, RecordID, details) + `index.csv`; `report.html` Sigma section now has per-rule drill-down - expand a rule to read its matched events inline
 - **`-Mode Tune` gains `[V]`iew / `[ED]`it**: locates the rule's .yml in the bundled rules by RuleID and opens it in Notepad (ED waits for close); edits apply on the next run
-- **`-Mode Process`** (new mode + menu item 9): single-process pivot over a collected case - name, path fragment or hash; auto-pivots hash → path → name; groups evidence by artifact type → `csv\process_pivot.csv`
-- **`tools\` split**: `tools\endpoint\` (shipped via Deploy `-PushTools`: hayabusa/chainsaw/yara/EZ parsers/loldrivers/winpmem, ~72 MB zip) vs `tools\analyst\` (vol3, SQLECmd — never shipped); Setup downloads into the right folder; tool discovery is recursive so existing layouts keep working
-- **AV-resilient push packaging**: Defender flags some bundled Sigma `.yml` files and blocks `Compress-Archive` entirely — `-PushTools` now zips per-entry, skipping AV-blocked files with a visible skip count; remote extraction does the same
+- **`-Mode Process`** (new mode + menu item 9): single-process pivot over a collected case - name, path fragment or hash; auto-pivots hash â†’ path â†’ name; groups evidence by artifact type â†’ `csv\process_pivot.csv`
+- **`tools\` split**: `tools\endpoint\` (shipped via Deploy `-PushTools`: hayabusa/chainsaw/yara/EZ parsers/loldrivers/winpmem, ~72 MB zip) vs `tools\analyst\` (vol3, SQLECmd â€” never shipped); Setup downloads into the right folder; tool discovery is recursive so existing layouts keep working
+- **AV-resilient push packaging**: Defender flags some bundled Sigma `.yml` files and blocks `Compress-Archive` entirely â€” `-PushTools` now zips per-entry, skipping AV-blocked files with a visible skip count; remote extraction does the same
 - Parse mode refactored onto shared `Open-CaseSession` (also used by Process mode)
 
 ## v2.15
-- **`-Mode Parse`** (new mode + menu item 8): analyst-side completion of a collected case — re-runs the raw-driven parsers from your kit (AmcacheParser/RBCmd/PECmd/LECmd/JLECmd/SQLECmd, chainsaw execution history, hayabusa detection pack) against the case's `raw\` evidence, then regenerates supertimeline, verdict, SIEM export and `report.html`; zip inputs are repacked in place. Closes the contractor flow: endpoint does what it can, one command finishes the rest
-- **`csv\parse_needed.csv`**: for every missing artifact — parser, .NET requirement, whether the raw evidence shipped, and the exact way to finish it (endpoint-only vs `-Mode Parse`); shown in the report evidence index
-- **`case.json` records the endpoint's .NET inventory** (`DotNet`: Framework 4.x release + .NET 9 desktop runtime presence) — EZ parsers need 4.x, SQLECmd needs .NET 9
+- **`-Mode Parse`** (new mode + menu item 8): analyst-side completion of a collected case â€” re-runs the raw-driven parsers from your kit (AmcacheParser/RBCmd/PECmd/LECmd/JLECmd/SQLECmd, chainsaw execution history, hayabusa detection pack) against the case's `raw\` evidence, then regenerates supertimeline, verdict, SIEM export and `report.html`; zip inputs are repacked in place. Closes the contractor flow: endpoint does what it can, one command finishes the rest
+- **`csv\parse_needed.csv`**: for every missing artifact â€” parser, .NET requirement, whether the raw evidence shipped, and the exact way to finish it (endpoint-only vs `-Mode Parse`); shown in the report evidence index
+- **`case.json` records the endpoint's .NET inventory** (`DotNet`: Framework 4.x release + .NET 9 desktop runtime presence) â€” EZ parsers need 4.x, SQLECmd needs .NET 9
 - **Full-preset full-NTFS preservation**: module 5.5 keeps unfiltered `mft_full_<drive>.csv` / `usn_full_<drive>.csv` under `raw\analysis\` for analyst-side work; auto-skipped when the endpoint has <10 GB free (Standard/Quick stay lean)
 - Verdict confidence in Parse mode now uses the **endpoint's** recorded elevation (not the analyst PC's)
 - Shared `Invoke-RegenerateOutputs` (New-Package + Parse mode) and `Invoke-BrowserIocXref` (module 8.7 + Parse mode)
 
 ## v2.14
-- **DNS beaconing** (module 4.8 + 4.3): Sysmon EID 22 DNS queries parsed → `sysmon_dns.csv`; same periodicity engine applied per process+domain → `dns_beacon_candidates.csv`; verdict signals (high=floor 3, medium=floor 2), report section, domains+resolved IPs in IOC block, SIEM kind `dns_beacon`
-- **`-Mode Tune`** (new mode + menu item 6): shows top-hit Sigma rules from the newest case, exclude (`exclude_rules.txt`) or demote (`level_tuning.txt`) — hayabusa-native formats that travel with Deploy `-PushTools`
-- **LOLDrivers hash check** (module 8.10): all drivers SHA256-hashed and cross-checked against keyless LOLDrivers datasets (`tools\loldrivers\`, bundled) → `loldrivers_hits.csv`; malicious driver = verdict signal floor 2; Setup catalog entry (raw GitHub download); report "Driver check" section; SIEM kind `loldriver`
-- **hayabusa 4.1 wins**: `extract-base64` over exported evtx → `ps_decoded_commands.csv` (decoded attacker PowerShell commands, report section); `logon-summary` now aggregates RDP sessions (4778/4779/1149/25); `sort-csv` dedupe applied to the supertimeline and the fleet Analyze timeline (overlapping/backup evtx no longer double-count)
-- Fixed: `Import-CaseCsv` was missing from the worker function whitelist — module 8.7's browser IOC cross-check silently did nothing in parallel (Phase B) runs
+- **DNS beaconing** (module 4.8 + 4.3): Sysmon EID 22 DNS queries parsed â†’ `sysmon_dns.csv`; same periodicity engine applied per process+domain â†’ `dns_beacon_candidates.csv`; verdict signals (high=floor 3, medium=floor 2), report section, domains+resolved IPs in IOC block, SIEM kind `dns_beacon`
+- **`-Mode Tune`** (new mode + menu item 6): shows top-hit Sigma rules from the newest case, exclude (`exclude_rules.txt`) or demote (`level_tuning.txt`) â€” hayabusa-native formats that travel with Deploy `-PushTools`
+- **LOLDrivers hash check** (module 8.10): all drivers SHA256-hashed and cross-checked against keyless LOLDrivers datasets (`tools\loldrivers\`, bundled) â†’ `loldrivers_hits.csv`; malicious driver = verdict signal floor 2; Setup catalog entry (raw GitHub download); report "Driver check" section; SIEM kind `loldriver`
+- **hayabusa 4.1 wins**: `extract-base64` over exported evtx â†’ `ps_decoded_commands.csv` (decoded attacker PowerShell commands, report section); `logon-summary` now aggregates RDP sessions (4778/4779/1149/25); `sort-csv` dedupe applied to the supertimeline and the fleet Analyze timeline (overlapping/backup evtx no longer double-count)
+- Fixed: `Import-CaseCsv` was missing from the worker function whitelist â€” module 8.7's browser IOC cross-check silently did nothing in parallel (Phase B) runs
 - Fixed: driver `PathName` normalization handles both `\??\` and `\\??\` NT path prefixes
 
 ## v2.13
-- **Security posture audit** (module 8.9): LSA Protection, NTLM level, SMBv1, RDP+NLA, PowerShell script-block logging, UAC, Defender exclusions/real-time/service, BitLocker, WinRM TrustedHosts → `posture.csv`; BAD findings become hardening actions in the report recommendations
-- **ShellBags** (module 8.8): folder-browsing history via SBECmd → `shellbags.csv` (attacker folder traversal incl. deleted/USB locations)
-- **Browser parse** (module 8.7): SQLECmd on raw-copied Chrome/Edge DBs → `browser_history.csv` / `browser_downloads.csv` / `browser_searches.csv` + **IOC domain cross-check** → `ioc_hits_browser.csv` (verdict signal floor 2)
-- **USN ransomware extensions** (module 5.5): suspicious new extensions (`.locked`, `.enc`, `.crypt*`, …) during mass-modification bursts enrich the Impact signal
+- **Security posture audit** (module 8.9): LSA Protection, NTLM level, SMBv1, RDP+NLA, PowerShell script-block logging, UAC, Defender exclusions/real-time/service, BitLocker, WinRM TrustedHosts â†’ `posture.csv`; BAD findings become hardening actions in the report recommendations
+- **ShellBags** (module 8.8): folder-browsing history via SBECmd â†’ `shellbags.csv` (attacker folder traversal incl. deleted/USB locations)
+- **Browser parse** (module 8.7): SQLECmd on raw-copied Chrome/Edge DBs â†’ `browser_history.csv` / `browser_downloads.csv` / `browser_searches.csv` + **IOC domain cross-check** â†’ `ioc_hits_browser.csv` (verdict signal floor 2)
+- **USN ransomware extensions** (module 5.5): suspicious new extensions (`.locked`, `.enc`, `.crypt*`, â€¦) during mass-modification bursts enrich the Impact signal
 - **Multi-drive NTFS forensics** (module 5.5): $MFT + USN now parsed on every fixed NTFS volume (Drive column added)
-- **Memory quick-pass** (module 7.1): volatility malfind → `memory_malfind.csv` (verdict signal floor 2) + netscan on hits
-- Tools bundled: SBECmd, SQLECmd (.NET 9 required for SQLECmd — degrades gracefully); new SIEM kinds `malfind`, `browser_ioc`
+- **Memory quick-pass** (module 7.1): volatility malfind â†’ `memory_malfind.csv` (verdict signal floor 2) + netscan on hits
+- Tools bundled: SBECmd, SQLECmd (.NET 9 required for SQLECmd â€” degrades gracefully); new SIEM kinds `malfind`, `browser_ioc`
 
 ## v2.12
-- Report completeness: **evidence index** — every CSV with row counts + "what to look for" guidance + pointers to supertimeline/SIEM/verdict/layer files
+- Report completeness: **evidence index** â€” every CSV with row counts + "what to look for" guidance + pointers to supertimeline/SIEM/verdict/layer files
 - Host snapshot section: Defender state + detection history, stored credentials, outbound RDP targets, BITS jobs
 - **MITRE ATT&CK Navigator layer export** (`attack_layer.json`, per case; `attack_layer_fleet.json` in Analyze mode) + fleet ATT&CK roll-up table in `fleet_report.html`
 - SIEM export: new record kinds `beacon`, `mass_modification`, `verdict`; export now runs after the verdict is computed
 - Codified test suite (`tests/run-tests.ps1`), GitHub Actions CI, CHANGELOG, AGENTS.md
 
 ## v2.11
-- ASEP persistence deep sweep (module 2.6): IFEO debuggers (incl. sticky-keys), AppInit_DLLs, Winlogon Shell/Userinit/Notify, HKCU COM hijack suspects, netsh helpers, LSA packages, StartupApproved stamps → `asep_sweep.csv` + verdict signal (floor 2)
-- Certificate store inventory (T1553): LocalMachine/CurrentUser Root + CA + TrustedPublisher, recent/self-signed flags → `certificates.csv`
+- ASEP persistence deep sweep (module 2.6): IFEO debuggers (incl. sticky-keys), AppInit_DLLs, Winlogon Shell/Userinit/Notify, HKCU COM hijack suspects, netsh helpers, LSA packages, StartupApproved stamps â†’ `asep_sweep.csv` + verdict signal (floor 2)
+- Certificate store inventory (T1553): LocalMachine/CurrentUser Root + CA + TrustedPublisher, recent/self-signed flags â†’ `certificates.csv`
 - Firewall profiles (`firewall_profiles.csv`) + `pfirewall.log` copy to `raw\firewall\`
-- Browser artifacts raw save: Chrome/Edge History/Downloads/Preferences/Bookmarks per profile, `esentutl /vss` fallback → `raw\browser\` + `browser_files.csv`
+- Browser artifacts raw save: Chrome/Edge History/Downloads/Preferences/Bookmarks per profile, `esentutl /vss` fallback â†’ `raw\browser\` + `browser_files.csv`
 - Report: uncommon-persistence table (with Target column), recent self-signed cert table; coverage sources for ASEP/browser
 
 ## v2.10
-- NTFS forensics (module 5.5): live `$MFT` parse via MFTECmd (filtered executable/user-path/recent inventory → `mft_recent.csv`), USN journal write-burst detection (ransomware-style mass modification → `usn_write_bursts.csv`, verdict signal floor 3)
-- Prefetch parsing via PECmd → `prefetch_parsed.csv` (run counts + times)
+- NTFS forensics (module 5.5): live `$MFT` parse via MFTECmd (filtered executable/user-path/recent inventory â†’ `mft_recent.csv`), USN journal write-burst detection (ransomware-style mass modification â†’ `usn_write_bursts.csv`, verdict signal floor 3)
+- Prefetch parsing via PECmd â†’ `prefetch_parsed.csv` (run counts + times)
 - LNK + Jump Lists: raw save + LECmd/JLECmd parse (modules 8.5)
 - Setup catalog: MFTECmd/PECmd/LECmd/JLECmd (direct URLs) + `Unblock-File` after extraction; tools bundled in repo
 - Report: "File-system evidence" section (USN windows, most-run prefetch, MFT user-path executables); coverage sources USN/MFT
 
 ## v2.9
-- C2 beaconing detection (module 4.8): periodicity/jitter/regularity on Sysmon network events → `beacon_candidates.csv`; verdict signals (high=floor 3, medium=floor 2); report section + beacon IPs in IOC block
+- C2 beaconing detection (module 4.8): periodicity/jitter/regularity on Sysmon network events â†’ `beacon_candidates.csv`; verdict signals (high=floor 3, medium=floor 2); report section + beacon IPs in IOC block
 - PowerShell < 5.0 fail-fast gate with remote-collection guidance
 - Deploy wizard advanced options (Full depth, log window via new `-LogHours` passthrough, host parallelism)
 
 ## v2.8
-- Fleet verdict inheritance: per-host verdicts from `verdict.json` in Analyze mode — verdict chips, worst-first host matrix, ATTENTION FIRST list, `fleet_hosts.csv`
+- Fleet verdict inheritance: per-host verdicts from `verdict.json` in Analyze mode â€” verdict chips, worst-first host matrix, ATTENTION FIRST list, `fleet_hosts.csv`
 
 ## v2.7
 - Report v2: verdict banner + confidence bar + signals + caveats, coverage table, MITRE ATT&CK grid (tactic chips + technique table), defanged copy-ready IOC block, findings by tactic, YARA section, logon analysis, persistence inventory, recommendations
 
 ## v2.6
-- Compromise verdict engine: 5-level scale, signal floors, coverage-weighted confidence, caveats → `verdict.json` + owner-screen RESULT line
+- Compromise verdict engine: 5-level scale, signal floors, coverage-weighted confidence, caveats â†’ `verdict.json` + owner-screen RESULT line
 
 ## v2.5
 - Role gate + 6-entry task menu, deploy/analyze/setup wizards, config memory (`ophira.config.txt`)
 - YARA module (4.7) with bundled `ophira-pack.yar`, hayabusa verbose profile (ATT&CK tags)
 
 ## v2.4
-- Phased parallel collection (volatile → parallel categories → heavy analytics), `-Sequential`, worker runspaces with rehydrated functions
+- Phased parallel collection (volatile â†’ parallel categories â†’ heavy analytics), `-Sequential`, worker runspaces with rehydrated functions
 - hayabusa time-boxing (`--time-offset` + eid-filter), `ModuleTimings` telemetry in `case.json`, parallel zip extraction in Analyze
 
 ## v2.3

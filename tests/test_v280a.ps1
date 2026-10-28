@@ -74,11 +74,11 @@ $gotHi = (@($litHiUniq | Sort-Object) -join "`n")
 $wantHi = (@($expectedHi | Sort-Object) -join "`n")
 Check "two-way drift pin: literal-high names extracted from source == hardcoded list" ($gotHi -eq $wantHi)
 
-# ---- the 4 variable-severity rules (can emit high) must match the verdict regex too ----
-$expectedVar = @('Downloaded then executed', 'LOLBin proxy-execution - $hit', 'Svchost masquerade indicator', 'Cross-process injection (remote thread)')
+# ---- the 5 variable-severity rules (can emit high) must match the verdict regex too ----
+$expectedVar = @('Downloaded then executed', 'LOLBin proxy-execution - $hit', 'Svchost masquerade indicator', 'Cross-process injection (remote thread)', 'Lookalike system binary (Levenshtein near-name)')
 $varUniq = @($varSev | Sort-Object -Unique)
 $varMiss = @($expectedVar | Where-Object { $_ -notmatch $verdictRe })
-Check "variable-severity rules: 4 distinct (got $($varUniq.Count))" ($varUniq.Count -eq 4)
+Check "variable-severity rules: 5 distinct (got $($varUniq.Count))" ($varUniq.Count -eq 5)
 Check "two-way drift pin: variable-severity names == hardcoded list" ((@($varUniq | Sort-Object) -join "`n") -eq (@($expectedVar | Sort-Object) -join "`n"))
 Check "every variable-severity rule name matches the verdict regex$(if ($varMiss.Count) { ' - misses: ' + ($varMiss -join '; ') })" ($varMiss.Count -eq 0)
 
