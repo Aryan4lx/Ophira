@@ -1,4 +1,4 @@
-# test_v256.ps1 - v2.56 report-weaves-the-story: entity cross-links, file links, conn dedupe, focus embed
+﻿# test_v256.ps1 - v2.56 report-weaves-the-story: entity cross-links, file links, conn dedupe, focus embed
 $ErrorActionPreference = 'Stop'
 $repo = Split-Path -Parent $PSScriptRoot
 $src = Get-Content -LiteralPath (Join-Path $repo 'Ophira.ps1') -Raw
@@ -12,7 +12,7 @@ function Assert-Has([string]$needle, [string]$label) {
 Assert-Has 'function Get-SectionAnchorForSource' '9a anchor helper exists'
 Assert-Has "appears in:" '9d appears-in chip row'
 Assert-Has 'Showing the top $($entTop.Count) of <b>$($entAll.Count)</b>' '9c of-N label'
-Assert-Has 'Sort-Object { ConvertTo-SafeInt $_.CatCount } -Descending' '9c entity cards sorted by CatCount'
+Assert-Has 'ConvertTo-SafeInt $_.CatCount }; Descending' '9c entity cards sorted by CatCount'
 Assert-Has '$srcAnc = Get-SectionAnchorForSource $parts[0]' '9a evidence Source cells link'
 Assert-Has '$chainParent[(Split-Path "$($i.Image)" -Leaf).ToLower()]' '9b focus parent from process_chains'
 

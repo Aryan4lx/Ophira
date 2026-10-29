@@ -248,7 +248,7 @@ if ($lines4.Count -ge 6100) {
     $medLead = @($lines4 | Where-Object { $_.Contains("'MEDIUM' -and") -and $_.Contains('flash_process_scored') })
     Check "B5: MEDIUM lead filter+sort use ConvertTo-SafeInt" ($medLead.Count -eq 1 -and "$($medLead[0])".Contains('(ConvertTo-SafeInt $_.Score) -ge 4') -and "$($medLead[0])".Contains('Sort-Object { ConvertTo-SafeInt $_.Score }'))
     $entLine = @($lines4 | Where-Object { $_.Contains('$entAll = @($entB') })[0]
-    Check "B5: entity CatCount filter+sort use ConvertTo-SafeInt" ("$entLine".Contains('(ConvertTo-SafeInt $_.CatCount) -ge 2') -and "$entLine".Contains('Sort-Object { ConvertTo-SafeInt $_.CatCount }'))
+    Check "B5: entity CatCount filter+sort use ConvertTo-SafeInt" ("$entLine".Contains('(ConvertTo-SafeInt $_.CatCount) -ge 2') -and "$entLine".Contains('ConvertTo-SafeInt $_.CatCount }; Descending'))
     $acctLine = @($lines4 | Where-Object { $_.Contains('if ($entA.Count -gt 0') })[0]
     Check "B5: account-entity Logons/Failed/ConsoleHistoryKB use the helpers" ("$acctLine".Contains('(ConvertTo-SafeInt $_.Logons)') -and "$acctLine".Contains('(ConvertTo-SafeInt $_.Failed)') -and "$acctLine".Contains('(ConvertTo-SafeDbl $_.ConsoleHistoryKB)'))
     $remLine = @($lines4 | Where-Object { $_.Contains('if ($entR.Count -gt 0') })[0]

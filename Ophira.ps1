@@ -7221,7 +7221,7 @@ body.nosb .nav{display:none}
     # ---------- connections: correlated entities ----------
     $null = $sb.AppendLine("<a name='entities'></a><h2>Correlated entities - binaries &amp; accounts</h2>")
     $null = $sb.AppendLine("<div class='meta'>Each entity below joins evidence from multiple independent sources (processes, execution history, persistence, network, SRUM usage, YARA, Sigma...) into one story. More categories touching one binary = stronger signal. Full data: csv\entities_binaries.csv / entities_accounts.csv / entities_remotes.csv</div>")
-    $entAll = @($entB | Where-Object { (ConvertTo-SafeInt $_.CatCount) -ge 2 } | Sort-Object { ConvertTo-SafeInt $_.CatCount } -Descending)
+    $entAll = @($entB | Where-Object { (ConvertTo-SafeInt $_.CatCount) -ge 2 } | Sort-Object @{e = { ConvertTo-SafeInt $_.CatCount }; Descending = $true }, @{e = { if ("$($_.Verdict)" -match 'HIGH') { 2 } elseif ("$($_.Verdict)" -match 'MEDIUM') { 1 } else { 0 } }; Descending = $true }, @{e = 'Name' })
     $entTop = @($entAll | Select-Object -First 12)
     if ($entTop.Count -gt 0) {
         if ($entAll.Count -gt $entTop.Count) {
