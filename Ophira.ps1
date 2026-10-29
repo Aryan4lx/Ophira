@@ -1,5 +1,5 @@
 <#
-Ophira v2.87  -  Windows Incident Response Triage Toolkit
+Ophira v2.88  -  Windows Incident Response Triage Toolkit
 READ-ONLY by design: never modifies the system, only reads and copies data
 into its own output folder. Intended to be handed to a system owner or run
 by a responder during early triage / threat hunting.
@@ -356,7 +356,7 @@ param(
     [switch]$ExitVerdict
 )
 
-$ScriptVersion = "2.87"
+$ScriptVersion = "2.88"
 $ErrorActionPreference = 'Continue'
 $ProgressPreference = 'SilentlyContinue'
 
@@ -3854,7 +3854,7 @@ $script:Modules = @(
             Save-Rows -Name 'radar_exec' -Rows (Get-RadarRows)
             Save-Rows -Name 'appswitched' -Rows (Get-AppSwitchedRows)
         } }
-    [pscustomobject]@{ Id = '5.3'; Cat = 'ARTIFACTS'; Name = 'SRUM database (larger, uses VSS copy)'; Default = $true; Quick = $false;
+    [pscustomobject]@{ Id = '5.3'; Cat = 'ARTIFACTS'; Name = 'SRUM database (larger, uses VSS copy)'; Default = $true; Quick = $true;
         Run = {
             $sru = Join-Path $env:SystemRoot 'System32\sru\SRUDB.dat'
             if (-not (Test-Path $sru)) { return }
@@ -5859,6 +5859,9 @@ function New-HtmlReport {
     $rdpTgt = @(Import-CaseCsv 'rdp_client_targets.csv')
     $bitsJobs = @(Import-CaseCsv 'bits_jobs.csv')
     $posture = @(Import-CaseCsv 'posture.csv')
+    $procSnap = @(Import-CaseCsv 'processes')  # v2.88: PID -> name fallback for network talkers
+    $nameByPid = @{}
+    foreach ($pr in $procSnap) { $pk9 = "$($pr.PID)"; if ($pk9 -and -not $nameByPid.ContainsKey($pk9)) { $nameByPid[$pk9] = "$($pr.Name)" } }
     $memMfR = @(Import-CaseCsv 'memory_malfind.csv')
     $browserIocR = @(Import-CaseCsv 'ioc_hits_browser.csv')
     # v2.78: reads hoisted here from mid-section bodies - their row counts feed the nav
@@ -5928,6 +5931,10 @@ td.clip{cursor:copy}
 .pgr{margin:6px 0}.pgr button{background:var(--bg3);border:1px solid var(--line2);color:var(--info);border-radius:4px;padding:2px 10px;cursor:pointer;margin-left:4px}
 tr.techrow{cursor:pointer}
 .grid2{display:grid;grid-template-columns:1fr 1fr;gap:10px}
+#sbopen{display:none;position:fixed;left:12px;bottom:12px;z-index:40}
+body.nosb #sbopen{display:inline-block}
+body.nosb{padding-left:0}
+body.nosb .nav{display:none}
 @media(max-width:1100px){.grid2{grid-template-columns:1fr}}
 .heat{display:flex;flex-direction:column;gap:3px}
 .heatrow{display:grid;grid-template-columns:30px repeat(24,1fr);gap:3px;align-items:center}
@@ -5948,7 +5955,7 @@ tr.techrow{cursor:pointer}
     $sb = New-Object System.Text.StringBuilder
     $null = $sb.AppendLine("<!DOCTYPE html><html><head><meta charset='utf-8'><title>Ophira - $(ConvertTo-HtmlEsc $Computer)</title>$css</head><body>")
     # v2.86: fixed top bar - case identity + light/dark + show-full-values + print toggles
-    $null = $sb.AppendLine("<div class='topbar'><span class='brand'>$(ConvertTo-HtmlEsc $Computer)</span><span class='meta'>OPHIRA COMPROMISE ASSESSMENT</span><span class='tspacer'></span><button class='tbtn' type='button' onclick='themeToggle()'>Light / Dark</button><button class='tbtn' type='button' onclick='showFullToggle(this)'>Show full values</button><button class='tbtn' type='button' onclick='window.print()'>Print report</button></div>")
+    $null = $sb.AppendLine("<div class='topbar'><span class='brand'>$(ConvertTo-HtmlEsc $Computer)</span><span class='meta'>OPHIRA COMPROMISE ASSESSMENT</span><span class='tspacer'></span><button class='tbtn' type='button' onclick='sbToggle(this)'>Sidebar on/off</button><button class='tbtn' type='button' onclick='themeToggle()'>Light / Dark</button><button class='tbtn' type='button' onclick='showFullToggle(this)'>Show full values</button><button class='tbtn' type='button' onclick='window.print()'>Print report</button></div><button id='sbopen' class='tbtn' type='button' onclick='sbToggle()'>Menu</button>")
     $null = $sb.AppendLine("<h1>OPHIRA COMPROMISE ASSESSMENT REPORT</h1>")
     # v2.77: ONE case.json read drives the elevation label AND the provenance line (collector
     # tool, preset, log window). Per-field fallback: an old case without case.json (or without
@@ -6053,6 +6060,42 @@ tr.techrow{cursor:pointer}
         @($entA | Where-Object { (ConvertTo-SafeInt $_.Logons) -gt 0 -or (ConvertTo-SafeInt $_.Failed) -gt 0 -or "$($_.RdpOutTargets)" -or (ConvertTo-SafeDbl $_.ConsoleHistoryKB) -gt 0 }).Count +
         @($entR | Where-Object { (ConvertTo-SafeInt $_.Connections) -gt 0 -or "$($_.Beacon)" -or (ConvertTo-SafeInt $_.FailedLogons) -gt 0 -or (ConvertTo-SafeInt $_.RdpOutCount) -gt 0 }).Count +
         $srumRows.Count + $chains.Count + $sessAct.Count
+    # v2.88 USER-ACTIVITY ROLLUP (who did what): auth 4624/4625 + 4688 process creations +
+    # user-profile MFT activity, keyed per account; feeds the section and the nav counts
+    $userAct = [ordered]@{}
+    foreach ($a2 in $authEv) {
+        if (@('4624', '4625') -notcontains "$($a2.EventId)") { continue }
+        $disp2 = "$(if ("$($a2.AccountDomain)" -and "$($a2.AccountDomain)" -ne '-') { "$($a2.AccountDomain)\" })$($a2.Account)".Trim('\')
+        if (-not $disp2 -or @('', '-', '$') -contains "$($a2.Account)") { continue }
+        $k2 = $disp2.ToLower()
+        if (-not $userAct.Contains($k2)) { $userAct[$k2] = @{ Name = $disp2; Logons = 0; Failed = 0; Types = @{}; Ips = @{}; Procs = @{}; ProcN = 0; Files = 0; Last = '' } }
+        $u2 = $userAct[$k2]
+        if ("$($a2.EventId)" -eq '4625') { $u2.Failed++ } else { $u2.Logons++ }
+        $lt2 = "$($a2.LogonType)"; if ($lt2) { $u2.Types[$lt2] = 1 }
+        $ip2 = "$($a2.SourceIp)"; if ($ip2 -and $ip2 -ne '-') { $u2.Ips[$ip2] = 1 }
+        if ("$($a2.Time)" -gt "$($u2.Last)") { $u2.Last = "$($a2.Time)" }
+    }
+    $procEv = @(Import-CaseCsv 'security_proc_events')
+    foreach ($p3 in $procEv) {
+        $disp3 = "$($p3.Account)"
+        if (-not $disp3 -or @('-', '') -contains $disp3) { continue }
+        $k3 = $disp3.ToLower()
+        if (-not $userAct.Contains($k3)) { $userAct[$k3] = @{ Name = $disp3; Logons = 0; Failed = 0; Types = @{}; Ips = @{}; Procs = @{}; ProcN = 0; Files = 0; Last = '' } }
+        $u3 = $userAct[$k3]
+        $u3.ProcN++
+        $lp3 = try { Split-Path "$($p3.NewProcess)" -Leaf } catch { "$($p3.NewProcess)" }
+        if ($lp3) { $u3.Procs[$lp3] = [int]$u3.Procs[$lp3] + 1 }
+        if ("$($p3.Time)" -gt "$($u3.Last)") { $u3.Last = "$($p3.Time)" }
+    }
+    foreach ($m4 in $mftRecent) {
+        if ("$($m4.Path)" -notmatch '(?i)^c:\\users\\([^\\]+)\\') { continue }
+        $k4 = $Matches[1].ToLower()
+        if (@('public', 'default', 'all users') -contains $k4) { continue }
+        if (-not $userAct.Contains($k4)) { $userAct[$k4] = @{ Name = $Matches[1]; Logons = 0; Failed = 0; Types = @{}; Ips = @{}; Procs = @{}; ProcN = 0; Files = 0; Last = '' } }
+        $userAct[$k4].Files++
+    }
+    $userActNav = $userAct.Count
+    $postureNav = $postureBad.Count + @($posture | Where-Object { "$($_.Status)" -eq 'WARN' }).Count
     $nCount = @{
         activity = $tlRows.Count
         leads = $leads.Count
@@ -6064,6 +6107,7 @@ tr.techrow{cursor:pointer}
         processes = $scored.Count
         sigma = $hayRows.Count
         logons = $authEv.Count + $authSum.Count + $brute.Count + $secNav
+        useract = $userActNav
         persistence = $tasksFlag.Count + $svcFlag.Count + $wmiBind.Count + $runKeys.Count + $asepHot.Count + $certHot.Count + $taskCacheAnom.Count + $taskDel.Count + $esentRows.Count
         filesystem = $usnBursts.Count + $pfParsed.Count + $mftRecent.Count
         beacons = $beacons.Count + $dnsBeacons.Count
@@ -6073,14 +6117,15 @@ tr.techrow{cursor:pointer}
         entities = $entNav
         snapshot = $defStatus.Count + $defThreats.Count + $credSweep.Count + $savedCreds.Count + $rdpTgt.Count + $bitsJobs.Count + $memMfR.Count + $browserIocR.Count + $posture.Count + $radarRows.Count + $aswRows.Count
         timeline = $tlRows.Count
+        posture = $postureNav
         focus = if ($ft) { ConvertTo-SafeInt "$($ft.HitCount)" } else { 0 }
     }
     $nLabel = [ordered]@{
         verdict = 'Verdict'; activity = 'Activity picture'; leads = 'Leads'; coverage = 'Coverage'; attack = 'ATT&CK'; ioc = 'IOCs'
         tactics = 'Findings by tactic'; yara = 'YARA'; processes = 'Processes'; sigma = 'Sigma'
-        logons = 'Logons'; persistence = 'Persistence'; filesystem = 'File system'; beacons = 'Beaconing'
-        network = 'Network'; drivers = 'Drivers'; hunt = 'Hunt'; entities = 'Connections'
-        snapshot = 'Snapshot'; timeline = 'Timeline'; focus = 'Focus'; recommendations = 'Recommendations'
+        logons = 'Logons'; useract = 'User activity'; persistence = 'Persistence'; filesystem = 'File system'; beacons = 'Beaconing'
+        network = 'Network'; drivers = 'Drivers'; hunt = 'Hunt'; entities = 'Entities'
+        snapshot = 'Snapshot'; posture = 'Posture'; timeline = 'Timeline'; focus = 'Focus'; recommendations = 'Recommendations'
         evidence = 'Evidence index'
     }
     $navParts = New-Object System.Collections.Generic.List[string]
@@ -6791,6 +6836,25 @@ tr.techrow{cursor:pointer}
     }
 
     # ---------- persistence inventory ----------
+    # v2.88 USER ACTIVITY section - per-account rollup built above
+    $null = $sb.AppendLine("<a name='useract'></a><h2>User activity rollup</h2>")
+    if ($userAct.Count -gt 0) {
+        $null = $sb.AppendLine("<div class='meta'>Per-account picture: logons, failed attempts, process creations (4688 - richest when command-line auditing is on) and file activity under the user profile. Sorted by total activity.</div>")
+        $null = $sb.AppendLine("<table data-secfilter='useract'><tr><th>Account</th><th>Last seen</th><th>Logons</th><th>Failed</th><th>Types</th><th>Sources</th><th>Processes</th><th>Profile files</th></tr>")
+        $uaRows = @($userAct.Values | Sort-Object @{e = { [int]($_.Logons + $_.Failed + $_.ProcN + [Math]::Min($_.Files, 500)) }; Descending = $true })
+        foreach ($u4 in ($uaRows | Select-Object -First 15)) {
+            $types4 = (@($u4.Types.Keys) | Sort-Object) -join ', '
+            $ips4 = (@($u4.Ips.Keys) | Select-Object -First 3) -join ', '
+            $top4 = (@($u4.Procs.GetEnumerator() | Sort-Object Value -Descending | Select-Object -First 3 | ForEach-Object { "$($_.Key) x$($_.Value)" })) -join ', '
+            $pr4 = if ($u4.ProcN -gt 0) { "$($u4.ProcN)$(if ($top4) { " - $top4" })" } else { '<span class="meta">none logged</span>' }
+            $fl4 = if ($u4.Files -gt 0) { "$($u4.Files) created/modified" } else { '<span class="meta">none</span>' }
+            $null = $sb.AppendLine("<tr><td><b>$(ConvertTo-HtmlEsc $u4.Name)</b></td><td>$(ConvertTo-HtmlEsc $u4.Last)</td><td>$($u4.Logons)</td><td>$(if ($u4.Failed) { "<b class='crit'>$($u4.Failed)</b>" } else { '0' })</td><td>$(ConvertTo-HtmlEsc $types4)</td><td>$(ConvertTo-HtmlEsc $ips4)</td><td class='path'>$pr4</td><td>$fl4</td></tr>")
+        }
+        $null = $sb.AppendLine('</table>')
+        if ($uaRows.Count -gt 15) { $null = $sb.AppendLine("<div class='meta'>showing top 15 of $($uaRows.Count) accounts</div>") }
+    } else {
+        $null = $sb.AppendLine("<div class='meta'>No account activity evidence available (no auth events and no process-creation events in this case).</div>")
+    }
     $null = $sb.AppendLine("<a name='persistence'></a><h2>Persistence inventory</h2>")
     $persAny = $false
     if ($tasksFlag.Count -gt 0) {
@@ -6979,11 +7043,18 @@ tr.techrow{cursor:pointer}
             $domCell = ''
             if ($dAtt -and "$($dAtt.ResolvedDomain)") { $domCell = "$(ConvertTo-HtmlEsc $dAtt.ResolvedDomain)"; if ("$($dAtt.DnsChain)") { $domCell = "<span title='$(ConvertTo-HtmlEsc $dAtt.DnsChain)'>$domCell</span>" } }
             elseif ($dAtt) { $domCell = "<span class='meta'>no cache entry</span>" }
-            $talkers = @($cg.Group | ForEach-Object { $leaf = if ("$($_.ProcessPath)") { Split-Path "$($_.ProcessPath)" -Leaf } else { "PID $($_.PID)" }; [pscustomobject]@{ Leaf = $leaf; Pid = "$($_.PID)" } } | Sort-Object Leaf -Unique)
+            # v2.88: resolve talking-process names properly - ProcessPath leaf, else the flash
+            # process snapshot name for that PID (fixes 'PID 11056 (PID 11056)' with no name);
+            # PID renders as a secondary meta span
+            $talkers = @($cg.Group | ForEach-Object {
+                $leaf = if ("$($_.ProcessPath)") { Split-Path "$($_.ProcessPath)" -Leaf } else { [string]$nameByPid[[string]$($_.PID)] }
+                [pscustomobject]@{ Leaf = $leaf; Pid = "$($_.PID)" }
+            } | Sort-Object Leaf, Pid -Unique)
             $talkerCells = @($talkers | ForEach-Object {
-                $t = "$(ConvertTo-HtmlEsc $_.Leaf)"
-                if ($entLeaf.ContainsKey("$($_.Leaf)".ToLower())) { $t = "<a href='#entities'>$t</a>" }
-                if ("$($_.Pid)") { $t += " (PID $($_.Pid))" }
+                $nm = "$($_.Leaf)"
+                $t = if ($nm) { ConvertTo-HtmlEsc $nm } else { '<span class="meta">name unavailable</span>' }
+                if ($nm -and $entLeaf.ContainsKey($nm.ToLower())) { $t = "<a href='#entities'>$t</a>" }
+                if ("$($_.Pid)") { $t += " <span class='meta'>(PID $($_.Pid))</span>" }
                 $t
             })
             $null = $sb.AppendLine("<tr><td>$(ConvertTo-HtmlEsc $c.RemoteAddress):$(ConvertTo-HtmlEsc $c.RemotePort)</td><td>$(ConvertTo-HtmlEsc $prov)</td><td>$domCell</td><td><b>$($cg.Count)</b></td><td>$($talkerCells -join ', ')</td><td>$(New-VtLink $c.RemoteAddress)</td></tr>")
@@ -7141,7 +7212,7 @@ tr.techrow{cursor:pointer}
     }
 
     # ---------- connections: correlated entities ----------
-    $null = $sb.AppendLine("<a name='entities'></a><h2>Connections - correlated entities</h2>")
+    $null = $sb.AppendLine("<a name='entities'></a><h2>Correlated entities - binaries &amp; accounts</h2>")
     $null = $sb.AppendLine("<div class='meta'>Each entity below joins evidence from multiple independent sources (processes, execution history, persistence, network, SRUM usage, YARA, Sigma...) into one story. More categories touching one binary = stronger signal. Full data: csv\entities_binaries.csv / entities_accounts.csv / entities_remotes.csv</div>")
     $entAll = @($entB | Where-Object { (ConvertTo-SafeInt $_.CatCount) -ge 2 } | Sort-Object { ConvertTo-SafeInt $_.CatCount } -Descending)
     $entTop = @($entAll | Select-Object -First 12)
@@ -7165,8 +7236,8 @@ tr.techrow{cursor:pointer}
             $vCls = switch -Regex ("$($e.Verdict)") { 'HIGH' { 'crit'; break } 'MEDIUM' { 'med'; break } default { 'info' } }
             $vTxt = if ("$($e.Verdict)") { ", verdict <span class='$vCls'>$($e.Verdict)</span>" } else { '' }
             $null = $sb.AppendLine("<details><summary><b>$(ConvertTo-HtmlEsc $e.Name)</b> - <span class='high'>$($e.CatCount) evidence categories</span>$vTxt</summary>")
-            $null = $sb.AppendLine("<table><tr><th>Path</th><th>First seen</th><th>Last seen</th><th>Signer</th><th>Hashes</th></tr>")
-            $null = $sb.AppendLine("<tr><td class='path'>$(ConvertTo-HtmlEsc $e.Path)</td><td>$(ConvertTo-HtmlEsc $e.FirstSeen)</td><td>$(ConvertTo-HtmlEsc $e.LastSeen)</td><td>$(ConvertTo-HtmlEsc $e.Signer)</td><td class='path'>$(ConvertTo-HtmlEsc $e.Hashes)</td></tr></table>")
+            $null = $sb.AppendLine("<table><tr><th>Path</th><th>Company</th><th>Description</th><th>First seen</th><th>Last seen</th><th>Signer</th><th>Hashes</th></tr>")
+            $null = $sb.AppendLine("<tr><td class='path'>$(ConvertTo-HtmlEsc $e.Path)</td><td>$(ConvertTo-HtmlEsc $e.Company)</td><td>$(ConvertTo-HtmlEsc $e.Description)</td><td>$(ConvertTo-HtmlEsc $e.FirstSeen)</td><td>$(ConvertTo-HtmlEsc $e.LastSeen)</td><td>$(ConvertTo-HtmlEsc $e.Signer)</td><td class='path'>$(ConvertTo-HtmlEsc $e.Hashes)</td></tr></table>")
             # v2.56: "appears in" chips - each category links to the section carrying its evidence
             # v2.66 (B8): unmapped categories render as grey/dead chips (informational, not
             # broken); chip order is name-sorted via Sort-Object -Unique (stable across renders)
@@ -7243,7 +7314,12 @@ tr.techrow{cursor:pointer}
             } catch { }
             foreach ($s2 in $srumTop) {
                 $cells = ($numCols | Select-Object -First 4) | ForEach-Object { $p2 = $s2.PSObject.Properties[$_]; "<td>$(ConvertTo-HtmlEsc $(if ($p2) { $p2.Value }))</td>" }
-                $null = $sb.AppendLine("<tr><td class='path'>$(ConvertTo-HtmlEsc $s2.$appCol)</td>$($cells -join '')</tr>")
+                # v2.88: friendly app display - normalize device paths to drive letters, show leaf
+                $srApp = "$($s2.$appCol)"
+                $srDisp = $srApp -replace '(?i)^\\\\\?\\', '' -replace '(?i)^\\device\\harddiskvolume\d+', 'C:' -replace '(?i)^\\volume\{[^}]+\}', 'C:'
+                if ($srDisp -match '[\\/]') { $srLeaf = Split-Path $srDisp -Leaf } else { $srLeaf = $srDisp }
+                if (-not $srLeaf) { $srLeaf = '(app not recorded)' }
+                $null = $sb.AppendLine("<tr><td class='path' title='$(ConvertTo-HtmlEsc $srApp)'>$(ConvertTo-HtmlEsc $srLeaf)</td>$($cells -join '')</tr>")
             }
             $null = $sb.AppendLine("</table><div class='meta'>SRUM records ~30 days of per-application network/resource usage. High sustained upload from a user-path binary = exfiltration candidate. Source: csv\$(Get-CaseCsvPath 'srum_usage')</div>")
         }
@@ -7348,15 +7424,19 @@ tr.techrow{cursor:pointer}
         }
         $null = $sb.AppendLine("</table><div class='meta'>A visit is not proof of compromise - but phishing/initial-access often starts here. Source: csv\ioc_hits_browser.csv</div>")
     }
+    # v2.88: posture is its own anchored section (nav 'Posture') - always rendered so the
+    # nav link never goes dead
+    $null = $sb.AppendLine("<a name='posture'></a><h2>Security posture (hardening audit)</h2>")
     if ($posture.Count -gt 0) {
-        $snapAny = $true
-        $null = $sb.AppendLine("<h3>Security posture (hardening audit)</h3><table><tr><th>Status</th><th>Check</th><th>Detail</th></tr>")
+        $null = $sb.AppendLine("<div class='meta'>Hardening state of this host - BAD rows also appear in Recommendations. Source: csv\context\posture.csv</div><table><tr><th>Status</th><th>Check</th><th>Detail</th></tr>")
         $postureSorted = @($posture | Sort-Object @{e = { switch -Regex ("$($_.Status)") { 'BAD' { 0 } 'WARN' { 1 } default { 2 } } } })
         foreach ($p2 in $postureSorted) {
             $stCls = switch ("$($p2.Status)") { 'BAD' { 'crit' } 'WARN' { 'med' } default { 'info' } }
             $null = $sb.AppendLine("<tr><td class='$stCls'><b>$(ConvertTo-HtmlEsc $p2.Status)</b></td><td>$(ConvertTo-HtmlEsc $p2.Check)</td><td>$(ConvertTo-HtmlEsc $p2.Detail)</td></tr>")
         }
         $null = $sb.AppendLine("</table><div class='meta'>Weak posture = attack path. BAD findings are listed in the recommendations below. Source: csv\posture.csv</div>")
+    } else {
+        $null = $sb.AppendLine("<div class='meta'>No posture checks available in this case (the hardening-audit module was skipped or produced no rows).</div>")
     }
     if (-not $snapAny) { $null = $sb.AppendLine("<div class='meta'>No snapshot data captured (relevant modules skipped).</div>") }
 
@@ -7381,14 +7461,24 @@ tr.techrow{cursor:pointer}
     # ---------- execution stacking + time-stacking views (v2.84, additive) ----------
     if ($stacksName.Count -gt 0) {
         $stkSuspRe = '(?i)\\(recycle|temp|downloads|programdata|perflogs|public|appdata)\\'
+        # v2.88: known-benign user-writable locations (Defender platform/definitions, WU cache)
+        # - drive-agnostic like every other windows-path regex (test_v280d F8 pin)
+        $stkBenignRe = '(?i)^[a-z]:\\programdata\\microsoft\\(windows defender|windows\\)|^[a-z]:\\program files\\windows defender|^[a-z]:\\windows\\softwaredistribution\\'
         $stkNameInt = @($stacksName | Where-Object { [int]$_.PathCount -ge 2 -or ("$($_.Paths)" -match $stkSuspRe) })
         $null = $sb.AppendLine("<h3>Execution stacks - one name, many paths (stack view)</h3>")
         $null = $sb.AppendLine("<div class='meta'>Every executed name ($($stacksName.Count) stacked) mapped to the locations it ran from; showing $($stkNameInt.Count) with multiple paths or user-writable paths (top 25). A critical binary running from a second location is the classic recycling-bin svchost catch. Single-path system names are normal - use the filter to hunt specific names. Source: csv\exec_stacks_byname.csv</div>")
         if ($stkNameInt.Count -gt 0) {
             $null = $sb.AppendLine("<table data-secfilter='execstacks'><tr><th>Name</th><th>Exec count</th><th>Paths</th><th>Distinct locations</th></tr>")
-            foreach ($st1 in ($stkNameInt | Sort-Object @{e={[int]$_.PathCount};Descending=$true}, @{e={[int]$_.ExecCount};Descending=$true} | Select-Object -First 25)) {
-                $stkCls1 = if ("$($st1.Paths)" -match $stkSuspRe) { 'crit' } else { '' }
-                $null = $sb.AppendLine("<tr><td>$(ConvertTo-HtmlEsc $st1.Name)</td><td>$(ConvertTo-HtmlEsc $st1.ExecCount)</td><td class='path $stkCls1'>$(ConvertTo-HtmlEsc $st1.Paths)</td><td>$(ConvertTo-HtmlEsc $st1.PathCount)</td></tr>")
+            $stkRows1 = @($stkNameInt | ForEach-Object {
+                $susp1 = @(($_.Paths -split '; ') | Where-Object { $_ -match $stkSuspRe -and $_ -notmatch $stkBenignRe })
+                $disp1 = @(($_.Paths -split '; ') | Where-Object { $_ -ne '(unknown path)' })
+                $pless1 = ($_.Paths -split '; ' | Where-Object { $_ -eq '(unknown path)' }).Count
+                [pscustomobject]@{ R = $_; Susp = $susp1.Count; Disp = ($disp1 -join '; '); Pless = $pless1 }
+            } | Sort-Object @{e = 'Susp'; Descending = $true }, @{e = { [int]$_.R.PathCount }; Descending = $true }, @{e = { [int]$_.R.ExecCount }; Descending = $true } | Select-Object -First 25)
+            foreach ($st1 in $stkRows1) {
+                $stkCls1 = if ($st1.Susp -gt 0) { 'crit' } else { '' }
+                $plessTag = if ([int]$st1.Pless -gt 0) { " <span class='meta'>(+$($st1.Pless) pathless run(s), prefetch)</span>" } else { '' }
+                $null = $sb.AppendLine("<tr><td>$(ConvertTo-HtmlEsc $st1.R.Name)</td><td>$(ConvertTo-HtmlEsc $st1.R.ExecCount)</td><td class='path $stkCls1'>$(ConvertTo-HtmlEsc $st1.Disp)$plessTag</td><td>$(ConvertTo-HtmlEsc $st1.R.PathCount)</td></tr>")
             }
             $null = $sb.AppendLine('</table>')
         } else {
@@ -8124,6 +8214,9 @@ tr.techrow{cursor:pointer}
       // and remembers the originals - also used to expand/restore around printing so paper
       // always carries the full text, never the preview.
       function themeToggle(){var b=document.body;if(b.getAttribute('data-theme')==='light'){b.removeAttribute('data-theme');}else{b.setAttribute('data-theme','light');}}
+      // v2.88: sidebar collapse - persisted like the theme; floating Menu button reopens it
+      function sbToggle(){var b=document.body;if(b.classList.contains('nosb')){b.classList.remove('nosb');try{localStorage.setItem('oph_sb','1');}catch(e){}}else{b.classList.add('nosb');try{localStorage.setItem('oph_sb','0');}catch(e){}}}
+      try{if(localStorage.getItem('oph_sb')==='0'){document.body.classList.add('nosb');}}catch(e){}
       var fullSaved=[];
       function showFullToggle(btn){
         if(fullSaved.length>0){
@@ -8208,7 +8301,15 @@ function New-SuperTimeline {
             # fragments for $__cmdletization_* code (Get-NetTCPSetting etc.) auto-logged by
             # CDXML cmdlets; hundreds of rows, zero investigative value in the timeline
             if ("$($r.Message)" -match '__cmdletization') { continue }
-            $buf.Add(@("$($r.TimeCreated)", "EID $($r.Id)", '', '', "$($r.Message)"))
+            # v2.88: security events carry the acting account / process in Message - extract so
+            # timeline context tables stop showing an empty Actor column
+            $wAc = ''; $wEn = ''
+            if ($name -eq 'security_events') {
+                if ("$($r.Message)" -match '(?i)Account Name:\s+([^\r\n\s]+)') { $wAc = $Matches[1] }
+                if ("$($r.Message)" -match '(?i)New Process Name:\s+([^\r\n]+?)\s*(\r|\n|$)') { $wEn = try { Split-Path $Matches[1] -Leaf } catch { $Matches[1] } }
+                elseif ("$($r.Message)" -match '(?i)Process Name:\s+([^\r\n]+?)\s*(\r|\n|$)') { $wEn = try { Split-Path $Matches[1] -Leaf } catch { $Matches[1] } }
+            }
+            $buf.Add(@("$($r.TimeCreated)", "EID $($r.Id)", $wAc, $wEn, "$($r.Message)"))
         }
         foreach ($m in (& $keepNewest $buf 5000)) { & $add $m[0] $name $m[1] $m[2] $m[3] $m[4] }
     }
@@ -8372,6 +8473,8 @@ function New-EntityCorrelation {
             Cats = New-Object System.Collections.Generic.List[string]
             Evidence = New-Object System.Collections.Generic.List[string]
             Hashes = New-Object System.Collections.Generic.List[string]
+            EvPerCat = @{}
+            Company = ''; Desc = ''
             Verdict = ''; Signer = ''; FirstSeen = ''; LastSeen = ''; Bytes = ''
         }
         $binsByPath[$lk] = $b
@@ -8383,8 +8486,15 @@ function New-EntityCorrelation {
         if (-not $b) { return }
         if ($b.Cats -notcontains $cat) { $b.Cats.Add($cat) }
         if ($detail) {
+            # v2.88: per-category evidence cap - one chatty source (SRUM byte rows) can no
+            # longer drown the verdict/network lines in the 14-line evidence window
+            $cnt = 0
+            if ($b.EvPerCat.ContainsKey($cat)) { $cnt = $b.EvPerCat[$cat] }
             $line = "$cat`: $detail"
-            if ($b.Evidence.Count -lt 14 -and -not $b.Evidence.Contains($line)) { $b.Evidence.Add($line.Substring(0, [Math]::Min(220, $line.Length))) }
+            if ($b.Evidence.Count -lt 14 -and $cnt -lt 3 -and -not $b.Evidence.Contains($line)) {
+                $b.Evidence.Add($line.Substring(0, [Math]::Min(220, $line.Length)))
+                $b.EvPerCat[$cat] = $cnt + 1
+            }
         }
         if ($when) {
             $t = $null
@@ -8421,7 +8531,27 @@ function New-EntityCorrelation {
         $b = & $binFromRow $r
         if ($b) { $b.Verdict = "$($r.Verdict)"; $b.Signer = "$($r.Signer)"; & $binAdd $b 'verdict' "[$($r.Verdict) $($r.Score)] $($r.Evidence)" '' }
     }
-    foreach ($r in (& $rowsOf 'processes')) { & $binAdd (& $binFromRow $r) 'running' "PID $($r.PID)" '' }
+    # v2.88: one 'running' evidence line per binary (was one per PID - flooded the 14-entry
+    # evidence cap and read as multiple unrelated sections); capture Company/Description once
+    $procAgg = @{}
+    foreach ($r in (& $rowsOf 'processes')) {
+        $b = & $binFromRow $r
+        if (-not $b) { continue }
+        $pk = "$($b.Path)".ToLower()
+        if (-not $procAgg.ContainsKey($pk)) { $procAgg[$pk] = @{ B = $b; Pids = New-Object System.Collections.Generic.List[string]; Cnt = 0; Company = ''; Desc = '' } }
+        $pg = $procAgg[$pk]
+        $pg.Cnt++
+        if ($pg.Pids.Count -lt 8 -and "$($r.PID)") { $pg.Pids.Add("$($r.PID)") }
+        if (-not $pg.Company -and "$($r.Company)") { $pg.Company = "$($r.Company)" }
+        if (-not $pg.Desc -and "$($r.Description)") { $pg.Desc = "$($r.Description)" }
+    }
+    foreach ($pg in $procAgg.Values) {
+        $pidStr = (@($pg.Pids) | Select-Object -First 4) -join ', '
+        if ($pg.Cnt -gt (@($pg.Pids).Count)) { $pidStr = "$pidStr (+$($pg.Cnt - @($pg.Pids).Count) more)" }
+        & $binAdd $pg.B 'running' "live at flash: PID$(if ($pg.Cnt -ne 1) { 's' }) $pidStr" ''
+        if ($pg.Company -and -not $pg.B.Company) { $pg.B.Company = $pg.Company }
+        if ($pg.Desc -and -not $pg.B.Desc) { $pg.B.Desc = $pg.Desc }
+    }
     foreach ($r in (& $rowsOf 'process_hashes')) { $b = & $binFromRow $r; if ($b) { $null = $b.Hashes.Add("$($r.SHA256)"); & $binAdd $b 'hash' "$($r.SHA256)" '' } }
     foreach ($src in @('services', 'services_flagged')) {
         foreach ($r in (& $rowsOf $src)) {
@@ -8582,11 +8712,49 @@ function New-EntityCorrelation {
     }
 
     # ---------- emit ----------
+    # v2.88: merge cards that are the same binary under different drive letters / casing -
+    # SRUM reports \device\harddiskvolumeN paths (best-effort mapped to C:) while live/4688
+    # rows carry the real letter, so one binary can end up split across two cards with HALF
+    # the story each. Key = leaf + last two directory segments, case-insensitive. Evidence,
+    # verdict and seen-times merge into the richer card; the losing path is recorded.
+    $binGroups = @{}
+    foreach ($kv in @($binsByPath.Keys)) {
+        $bp = "$($binsByPath[$kv].Path)"
+        $segs = @(($bp -split '\\') | Where-Object { $_ })
+        $n = $segs.Count
+        if ($n -ge 3) { $gk = ("$($segs[$n-3])\$($segs[$n-2])\$($segs[$n-1])").ToLower() } else { $gk = $kv }
+        if (-not $binGroups.ContainsKey($gk)) { $binGroups[$gk] = New-Object System.Collections.Generic.List[string] }
+        $binGroups[$gk].Add($kv)
+    }
+    foreach ($g in $binGroups.Values) {
+        if ($g.Count -lt 2) { continue }
+        $keepKey = $g[0]
+        for ($gi = 1; $gi -lt $g.Count; $gi++) {
+            $srcKey = $g[$gi]
+            $keep = $binsByPath[$keepKey]
+            $src = $binsByPath[$srcKey]
+            if ($keep.Cats.Count -lt $src.Cats.Count) { $tmp = $keep; $keep = $src; $src = $tmp; $tmp2 = $keepKey; $keepKey = $srcKey; $srcKey = $tmp2 }
+            foreach ($c in $src.Cats) { if ($keep.Cats -notcontains $c) { $keep.Cats.Add($c) } }
+            foreach ($h in $src.Hashes) { if ($keep.Hashes -notcontains $h) { $keep.Hashes.Add($h) } }
+            foreach ($e in $src.Evidence) { if ($keep.Evidence.Count -lt 14 -and -not $keep.Evidence.Contains($e)) { $keep.Evidence.Add($e) } }
+            foreach ($k2 in @($src.EvPerCat.Keys)) { if (-not $keep.EvPerCat.ContainsKey($k2) -or $keep.EvPerCat[$k2] -lt $src.EvPerCat[$k2]) { $keep.EvPerCat[$k2] = $src.EvPerCat[$k2] } }
+            if (-not $keep.Company) { $keep.Company = $src.Company }
+            if (-not $keep.Desc) { $keep.Desc = $src.Desc }
+            if (-not $keep.Verdict -or ($keep.Verdict -notmatch 'HIGH' -and $src.Verdict -match 'HIGH')) { $keep.Verdict = $src.Verdict; $keep.Signer = $src.Signer }
+            if ($src.FirstSeen -and (-not $keep.FirstSeen -or ([datetime]$src.FirstSeen) -lt ([datetime]$keep.FirstSeen))) { $keep.FirstSeen = $src.FirstSeen }
+            if ($src.LastSeen -and (-not $keep.LastSeen -or ([datetime]$src.LastSeen) -gt ([datetime]$keep.LastSeen))) { $keep.LastSeen = $src.LastSeen }
+            if ("$($src.Bytes)" -and -not "$($keep.Bytes)") { $keep.Bytes = $src.Bytes }
+            $mLine = "correlated: same binary also seen as $($src.Path)"
+            if ($keep.Evidence.Count -lt 14 -and -not $keep.Evidence.Contains($mLine)) { $keep.Evidence.Add($mLine) }
+            $binsByPath.Remove($srcKey)
+        }
+    }
     if ($env:OPHIRA_DBG_ENT) { foreach ($kv in $binsByPath.GetEnumerator()) { Write-Host ("DBG bin: {0} -> [{1}]" -f $kv.Key, ($kv.Value.Cats -join ",")) } }
     if ($env:OPHIRA_DBG_ENT) { foreach ($a2 in $accts.Values) { Write-Host ("DBG acct: {0} logons={1} failed={2}" -f $a2.Account, $a2.Logons, $a2.Failed) } }
     $binRows = @($binsByPath.Values | ForEach-Object {
         [pscustomobject]@{
             Categories = ($_.Cats -join ';'); CatCount = $_.Cats.Count; Name = $_.Name; Path = $_.Path
+            Company = $_.Company; Description = $_.Desc
             Verdict = $_.Verdict; Signer = $_.Signer; FirstSeen = $_.FirstSeen; LastSeen = $_.LastSeen
             Hashes = (($_.Hashes | Select-Object -Unique | Select-Object -First 4) -join ';'); Bytes = $_.Bytes
             Evidence = ($_.Evidence -join ' | ')
@@ -8816,6 +8984,9 @@ function New-ExecStacks {
         $x = $x -replace '(?i)^\\device\\harddiskvolume\d+', 'C:'
         $x = $x -replace '(?i)\\volume\{[a-z0-9-]+\}', ''
         $x = $x -replace '/', '\'
+        # v2.88: collapse version-number segments (\140.0.3485.66, \v4.0.30319) so 'one name,
+        # many paths' counts distinct LOCATIONS, not app updates; display keeps first-seen dir
+        $x = $x -replace '(?i)\\v?\d+(\.\d+)+(?=\\|$)', ''
         return $x
     }
     $addExec = {
