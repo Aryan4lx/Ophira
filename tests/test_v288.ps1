@@ -6,6 +6,10 @@ $fn = [regex]::Match((Get-Content (Join-Path $repo 'Ophira.ps1') -Raw), '(?s)fun
 Invoke-Expression $fn
 $fnS = [regex]::Match((Get-Content (Join-Path $repo 'Ophira.ps1') -Raw), '(?s)function Get-InvariantDate \{.*?\r?\n\}').Value
 if ($fnS) { Invoke-Expression $fnS }
+$fnP = [regex]::Match((Get-Content (Join-Path $repo 'Ophira.ps1') -Raw), '(?s)function Get-PlasoExe \{.*?\r?\n\}').Value
+Invoke-Expression $fnP
+$fnP2 = [regex]::Match((Get-Content (Join-Path $repo 'Ophira.ps1') -Raw), '(?s)function New-PlasoTimeline \{.*?\r?\n\}').Value
+Invoke-Expression $fnP2
 
 $fx = @{}
 $fx['flash_process_scored'] = @(
@@ -63,6 +67,25 @@ $src = Get-Content (Join-Path $repo 'Ophira.ps1') -Raw
 Check "merge pass keyed by leaf+tail segments" ($src.Contains('$gk = ("$($segs[$n-3])\$($segs[$n-2])\$($segs[$n-1])").ToLower()'))
 Check "no broken hashtable interpolation in merge" (-not $src.Contains('"$binsByPath[$kv].Path"'))
 Check "per-category evidence cap present" ($src.Contains('EvPerCat'))
+
+# ---- P5: plaso deep-timeline helpers (v2.88) ----
+function Get-Command { param($Name) }          # shadow: no plaso on the test box
+function Get-ToolsDir { return $null }
+function Invoke-NativeTool { param($ExePath, $ToolArgs, $WorkingDir) $script:ntCalls += 1 }
+$script:ntCalls = 0
+$px1 = Get-PlasoExe
+Check "Get-PlasoExe returns null without plaso" ($null -eq $px1)
+$tmpP = Join-Path $env:TEMP ("ophira_v288_plaso_" + (Get-Date -Format 'HHmmss'))
+New-Item -ItemType Directory -Path $tmpP -Force | Out-Null
+New-PlasoTimeline -CaseRoot $tmpP              # no raw\evtx -> early-out, no files
+Check "New-PlasoTimeline early-out leaves no storage" (-not (Test-Path (Join-Path $tmpP 'plaso_storage.plaso')))
+Remove-Item $tmpP -Recurse -Force -ErrorAction SilentlyContinue
+
+# ---- P6: plaso wiring (param switch, ParseMode hook, report hint) ----
+Check "-PlasoTimeline switch declared" ($src.Contains('[switch]$PlasoTimeline,'))
+Check "ParseMode hook before regen" ($src.Contains('if ($PlasoTimeline) { New-PlasoTimeline -CaseRoot (Split-Path -Parent $script:CsvDir) }'))
+Check "report hint: merged state" ($src.Contains('plaso deep-timeline merged:'))
+Check "report hint: how-to state" ($src.Contains('Deeper timeline option: with <b>plaso</b>'))
 
 if ($checkFail -gt 0) { Write-Host "RESULT: $($checkFail) failed"; exit 1 }
 Write-Host 'RESULT: all passed'

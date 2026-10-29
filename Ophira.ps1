@@ -156,6 +156,12 @@ by a responder during early triage / threat hunting.
     Analyze mode: explicit path to hayabusa.exe when it is not found
     recursively under tools\.
 
+.PARAMETER PlasoTimeline
+    Parse mode: build the deep timeline with plaso before regenerating. Requires
+    log2timeline on PATH (or a loose copy under tools\); runs it over the case's
+    raw\evtx exports, exports plaso.csv via psort, and the regen merges it into
+    supertimeline.csv as Source 'plaso' rows.
+
 .PARAMETER CanaryTarget
     Canary mode: optional second host; the canary touches it over SMB so
     lateral-movement detections can be validated cross-host.
@@ -345,6 +351,7 @@ param(
     [string]$TimelineStart = '',
     [string]$TimelineEnd = '',
     [string]$HayabusaPath = '',
+    [switch]$PlasoTimeline,
     [string]$CanaryTarget = '',
     [string]$CanaryTargetUser = '',
     [switch]$KeepLogging,
@@ -7445,6 +7452,13 @@ body.nosb .nav{display:none}
     $tlSources = @($tlAll | ForEach-Object { "$($_.Source)" } | Sort-Object -Unique)
     $null = $sb.AppendLine("<a name='timeline'></a><h2>Master timeline (gathered evidence chronology)</h2>")
     $null = $sb.AppendLine("<div class='card'>The full chronology lives in <b>csv\$(ConvertTo-HtmlEsc (Get-CaseCsvPath 'supertimeline'))</b> ($(ConvertTo-HtmlEsc $tlAll.Count) events from $($tlSources.Count) evidence sources - open it in Excel/Timeline Explorer and filter by Timestamp). Evidence sources woven: $(ConvertTo-HtmlEsc ($tlSources -join ', ')). Per-source row caps (200-5000 per source) keep the file bounded - when a cap bites, the NEWEST events of that source are kept, and the total file is capped at the newest 120,000 events. Scanner conclusions (Sigma detections, hunt findings, beacons) are intentionally NOT part of it - they have their own sections above. For windowed pivots with per-source/busiest-minute summaries run <b>-Mode Timeline</b>.</div>")
+    # v2.88: plaso deep-timeline status / how-to (kept to one honest line)
+    $plasoN = @($tlAll | Where-Object { "$($_.Source)" -eq 'plaso' }).Count
+    if ($plasoN -gt 0) {
+        $null = $sb.AppendLine("<div class='meta'>plaso deep-timeline merged: $(ConvertTo-HtmlEsc $plasoN) events from the analyst-side log2timeline run (browser history, Jumplists, SRUM and other artifacts the endpoint collectors do not cover).</div>")
+    } else {
+        $null = $sb.AppendLine("<div class='meta'>Deeper timeline option: with <b>plaso</b> installed on the analyst system, <b>.\Ophira.ps1 -Mode Parse -ParsePath &lt;case&gt; -PlasoTimeline</b> runs log2timeline over this case's evtx exports and merges the result here (browser history, Jumplists, SRUM and other artifacts the endpoint collectors do not cover).</div>")
+    }
     if ($scExec.Count -gt 0) {
         $scNo = @($scExec | Where-Object { $_.Executed -eq 'no' })
         $scYes = @($scExec | Where-Object { $_.Executed -eq 'yes' })
@@ -11356,6 +11370,62 @@ function ConvertFrom-SrumCsv {
     @($raw | ForEach-Object { [pscustomobject]@{ Timestamp = "$($_.Timestamp)"; Application = "$($_.ExeInfo)"; User = "$($_.UserName)"; BytesSent = "$($_.BytesSent)"; BytesReceived = "$($_.BytesReceived)"; InterfaceType = "$($_.InterfaceType)" } })
 }
 
+function Get-PlasoExe {
+    # v2.88: locate an analyst-side plaso install (log2timeline). Ophira never ships a
+    # Python runtime - the plaso Windows installer (or pip) puts log2timeline on PATH;
+    # a loose copy inside the tools folder also works.
+    foreach ($n in @('log2timeline.exe', 'log2timeline.py', 'log2timeline')) {
+        $c = Get-Command $n -ErrorAction SilentlyContinue
+        if ($c -and $c.Source) { return $c.Source }
+    }
+    $td = $null
+    try { $td = Get-ToolsDir } catch { }
+    if ($td) {
+        $f = Get-ChildItem -LiteralPath $td -Recurse -Filter 'log2timeline.exe' -File -ErrorAction SilentlyContinue | Select-Object -First 1
+        if ($f) { return $f.FullName }
+    }
+    return $null
+}
+
+function New-PlasoTimeline {
+    # v2.88: optional analyst-side deep timeline. -PlasoTimeline (Parse mode) runs
+    # log2timeline over the case's raw\evtx exports and psort's l2tcsv into plaso.csv
+    # in the case root; the existing 'plaso import' regen step then merges it into
+    # supertimeline.csv as Source 'plaso'. The storage file is kept so the analyst can
+    # run their own psort queries (tagging, filtering) against it later.
+    param([string]$CaseRoot)
+    $lt = Get-PlasoExe
+    if (-not $lt) {
+        Write-Host '  plaso: log2timeline not found on this system - install plaso (github.com/log2timeline/plaso/releases), then re-run -Mode Parse with -PlasoTimeline' 'Yellow'
+        return
+    }
+    $evSrc = Join-Path $CaseRoot 'raw\evtx'
+    $evts = @(Get-ChildItem -LiteralPath $evSrc -Filter '*.evtx' -File -ErrorAction SilentlyContinue)
+    if ($evts.Count -eq 0) { Write-Host '  plaso: no evtx exports in raw\evtx - nothing to feed log2timeline' 'Yellow'; return }
+    $store = Join-Path $CaseRoot 'plaso_storage.plaso'
+    Write-Host "  plaso: log2timeline over $($evts.Count) evtx file(s) - this can take a few minutes..." 'Cyan'
+    $null = Invoke-NativeTool -ExePath $lt -ToolArgs @('--status-view', 'none', $store, $evSrc) -WorkingDir (Split-Path $lt)
+    if (-not (Test-Path -LiteralPath $store)) { Write-Host '  plaso: log2timeline produced no storage file - skipped' 'Yellow'; return }
+    $ps = $null
+    foreach ($pn in @('psort.exe', 'psort.py', 'psort')) {
+        $c = Get-Command $pn -ErrorAction SilentlyContinue
+        if ($c -and $c.Source) { $ps = $c.Source; break }
+    }
+    if (-not $ps) {
+        $sib = Join-Path (Split-Path $lt) 'psort.exe'
+        if (Test-Path -LiteralPath $sib) { $ps = $sib }
+    }
+    if (-not $ps) { Write-Host '  plaso: storage built but psort not found - cannot export plaso.csv' 'Yellow'; return }
+    $plasoOut = Join-Path $CaseRoot 'plaso.csv'
+    Write-Host '  plaso: psort -> plaso.csv (l2tcsv)...' 'Cyan'
+    $null = Invoke-NativeTool -ExePath $ps -ToolArgs @('-o', 'l2tcsv', '-w', $plasoOut, $store) -WorkingDir (Split-Path $ps)
+    if (Test-Path -LiteralPath $plasoOut) {
+        Write-Host "  plaso: $([int]((Get-Item -LiteralPath $plasoOut).Length / 1KB)) KB exported (storage kept at $(Split-Path $store -Leaf) for analyst psort queries)" 'Gray'
+    } else {
+        Write-Host '  plaso: psort produced no plaso.csv - skipped' 'Yellow'
+    }
+}
+
 function Import-PlasoTimeline {
     # v2.57: analyst-side plaso deep-timeline import. The analyst runs plaso's
     # log2timeline.py against the case's raw\ folder on their own box (Ophira never ships
@@ -12326,6 +12396,9 @@ function Invoke-ParseMode {
     }
 
     # 3) regenerate everything derived from csv\
+    # v2.88: optional plaso deep-timeline build first (analyst-side, needs plaso on PATH
+    # or in tools\) - the regen below merges the resulting plaso.csv automatically
+    if ($PlasoTimeline) { New-PlasoTimeline -CaseRoot (Split-Path -Parent $script:CsvDir) }
     Invoke-RegenerateOutputs -Case $meta
     try {
         $meta | Add-Member -NotePropertyName AnalystParsedUTC -NotePropertyValue ((Get-Date).ToUniversalTime().ToString('o')) -Force
