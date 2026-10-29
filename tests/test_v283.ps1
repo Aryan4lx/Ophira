@@ -131,18 +131,25 @@ $script:fakeTasks = @(
     New-FakeRegKey '{22222222-2222-2222-2222-222222222222}' @{} "$tcBase\Tasks\{22222222-2222-2222-2222-222222222222}"
     New-FakeRegKey '{33333333-3333-3333-3333-333333333333}' @{ SD = [byte[]](9) } "$tcBase\Tasks\{33333333-3333-3333-3333-333333333333}"
 )
+# v2.87: a key whose GetValue THROWS (registry ACL) must be flagged VALUE-READ-DENIED,
+# never silently treated as SD-MISSING
+$k444 = New-FakeRegKey '{44444444-4444-4444-4444-444444444444}' @{} "$tcBase\Tasks\{44444444-4444-4444-4444-444444444444}"
+$k444 | Add-Member -MemberType ScriptMethod -Name GetValue -Value { param($n) throw 'Requested registry access is not allowed' } -Force
+$script:fakeTasks += $k444
 function Get-ChildItem { param($Path) if ("$Path" -match 'Tree') { return $script:fakeTree } elseif ("$Path" -match 'Tasks') { return $script:fakeTasks }; return @() }
 function Test-Path { param($Path) return $true }
 $script:saved = @{}
 & $script:m23Run
 $tcOut = $script:saved['scheduled_taskcache']
-Check "taskcache: 5 rows (2 tree + 3 tasks)" ($tcOut.Count -eq 5)
+Check "taskcache: 6 rows (2 tree + 4 tasks)" ($tcOut.Count -eq 6)
 $tcLinked = @($tcOut | Where-Object { $_.Kind -eq 'tasks' -and "$($_.Guid)" -eq '{11111111-1111-1111-1111-111111111111}' })[0]
 Check "taskcache: linked + SD present -> no flags" ("$($tcLinked.Flags)" -eq '' -and "$($tcLinked.SdPresent)" -eq 'True')
 $tcGhost = @($tcOut | Where-Object { "$($_.Guid)" -eq '{22222222-2222-2222-2222-222222222222}' })[0]
 Check "taskcache: no SD + no link -> SD-MISSING + ORPHANED" ("$($tcGhost.Flags)" -match 'SD-MISSING' -and "$($tcGhost.Flags)" -match 'ORPHANED')
 $tcOrph = @($tcOut | Where-Object { "$($_.Guid)" -eq '{33333333-3333-3333-3333-333333333333}' })[0]
-Check "taskcache: SD present but unlinked -> ORPHANED only" ("$($tcOrph.Flags)" -eq 'ORPHANED (no Tree link)')
+Check "taskcache: SD present but unlinked -> ORPHANED only" ("$($tcOrph.Flags)" -eq 'ORPHANED')
+$tcDenied = @($tcOut | Where-Object { "$($_.Guid)" -eq '{44444444-4444-4444-4444-444444444444}' })[0]
+Check "taskcache: GetValue denied -> VALUE-READ-DENIED, SD unknown" ("$($tcDenied.Flags)" -eq 'VALUE-READ-DENIED' -and "$($tcDenied.SdPresent)" -eq '')
 $tcTree = @($tcOut | Where-Object { $_.Kind -eq 'tree' -and $_.TaskPath -eq '\EvilTask' })[0]
 Check "taskcache: tree row path relative to Tree" ($null -ne $tcTree -and "$($tcTree.Guid)" -eq '{11111111-1111-1111-1111-111111111111}')
 Check "taskcache: tree row without GID still recorded" (@($tcOut | Where-Object { $_.Kind -eq 'tree' -and "$($_.Guid)" -eq '' }).Count -eq 1)
@@ -157,10 +164,24 @@ foreach ($n in @('Get-InvariantDate', 'Get-LevenshteinDistance', 'Test-IsUserWri
 }
 $script:Verbosity = 2
 $script:caseCsv = @{}
+# --- tree-blind variant: no Tree GUIDs readable -> orphan labels are read artifacts, never high ---
+$script:caseCsv['scheduled_taskcache'] = @(
+    [pscustomobject]@{ Kind = 'tree'; TaskPath = '\SomeTask'; Guid = ''; SdPresent = ''; Flags = '' }
+    [pscustomobject]@{ Kind = 'tasks'; TaskPath = ''; Guid = '{22222222-2222-2222-2222-222222222222}'; SdPresent = 'False'; Flags = 'SD-MISSING;ORPHANED' }
+)
+$script:saved = @{}
+New-HuntFindings
+$hfBlind = $script:saved['hunt_findings']
+Check "R45 blind: no hidden-task high when tree GID data is absent" (@($hfBlind | Where-Object { "$($_.Rule)" -match '^Hidden scheduled task' }).Count -eq 0)
+Check "R45 blind: unverifiable entries aggregated to one info row" (@($hfBlind | Where-Object { "$($_.Rule)" -eq 'Unverifiable TaskCache entries (no tree-link data)' -and "$($_.Severity)" -eq 'info' }).Count -eq 1)
+
+# --- main variant: tree link present, the three shapes distinguishable ---
+$script:caseCsv = @{}
 $script:caseCsv['scheduled_taskcache'] = @(
     [pscustomobject]@{ Kind = 'tree'; TaskPath = '\EvilTask'; Guid = '{11111111-1111-1111-1111-111111111111}'; SdPresent = ''; Flags = '' }
-    [pscustomobject]@{ Kind = 'tasks'; TaskPath = ''; Guid = '{22222222-2222-2222-2222-222222222222}'; SdPresent = 'False'; Flags = 'SD-MISSING (hidden from schtasks/GUI);ORPHANED (no Tree link)' }
-    [pscustomobject]@{ Kind = 'tasks'; TaskPath = ''; Guid = '{33333333-3333-3333-3333-333333333333}'; SdPresent = 'True'; Flags = 'ORPHANED (no Tree link)' }
+    [pscustomobject]@{ Kind = 'tasks'; TaskPath = ''; Guid = '{22222222-2222-2222-2222-222222222222}'; SdPresent = 'False'; Flags = 'SD-MISSING;ORPHANED' }
+    [pscustomobject]@{ Kind = 'tasks'; TaskPath = ''; Guid = '{33333333-3333-3333-3333-333333333333}'; SdPresent = 'True'; Flags = 'ORPHANED' }
+    [pscustomobject]@{ Kind = 'tasks'; TaskPath = ''; Guid = '{55555555-5555-5555-5555-555555555555}'; SdPresent = 'False'; Flags = 'SD-MISSING' }
 )
 $script:caseCsv['esent_ntds'] = @(
     [pscustomobject]@{ Time = '2026-10-28 11:00:00'; EventId = '325'; BackupPattern = 'False'; Message = 'lsass.exe (600) NTDS Database opens ntds.dit' }
@@ -170,10 +191,12 @@ $script:saved = @{}
 New-HuntFindings
 $hf = $script:saved['hunt_findings']
 $hfHidden = @($hf | Where-Object { "$($_.Rule)" -match '^Hidden scheduled task' })
-Check "R45: SD-MISSING -> high hidden-task finding" ($hfHidden.Count -eq 1 -and "$($hfHidden[0].Severity)" -eq 'high' -and "$($hfHidden[0].Attck)" -eq 'T1053.005')
+Check "R45: SD-MISSING + Tree-linked -> high hidden-task finding" ($hfHidden.Count -eq 1 -and "$($hfHidden[0].Severity)" -eq 'high' -and "$($hfHidden[0].Entity)" -match '55555555' -and "$($hfHidden[0].Attck)" -eq 'T1053.005')
 Check "R45: evidence explains the trick" ("$($hfHidden[0].Evidence)" -match 'schtasks/GUI')
-$hfOrph = @($hf | Where-Object { "$($_.Rule)" -match 'Orphaned' })
-Check "R45: ORPHANED -> medium finding" ($hfOrph.Count -eq 1 -and "$($hfOrph[0].Severity)" -eq 'medium')
+Check "R45: SD-gone + unlinked cruft produces NO per-row finding" (@($hf | Where-Object { "$($_.Entity)" -match '22222222' }).Count -eq 0)
+$hfGhost = @($hf | Where-Object { "$($_.Rule)" -eq 'Orphaned TaskCache entry (SD kept)' })
+Check "R45: SD-kept orphan -> low ghost finding" ($hfGhost.Count -eq 1 -and "$($hfGhost[0].Severity)" -eq 'low' -and "$($hfGhost[0].Entity)" -match '33333333')
+Check "R45: cruft -> one aggregated info finding" (@($hf | Where-Object { "$($_.Rule)" -eq 'Stale TaskCache entries (deleted-task leftovers)' -and "$($_.Severity)" -eq 'info' }).Count -eq 1)
 $hfNtds = @($hf | Where-Object { "$($_.Rule)" -match 'ntds\.dit accessed' })
 Check "R46: non-backup ntds -> high finding" (@($hfNtds | Where-Object { "$($_.Rule)" -match '325/326' -and "$($_.Severity)" -eq 'high' }).Count -eq 1)
 Check "R46: backup-pattern ntds -> low finding" (@($hfNtds | Where-Object { "$($_.Rule)" -match 'backup-pattern' -and "$($_.Severity)" -eq 'low' }).Count -eq 1)
@@ -188,7 +211,8 @@ Check "wire: task_deletions woven into supertimeline" ($src.Contains('& $weave '
 Check "wire: esent_ntds woven into supertimeline" ($src.Contains('& $weave ''esent_ntds'' 200'))
 Check "wire: TaskScheduler evtx exported" ($src.Contains("Export-Evtx -LogName 'Microsoft-Windows-TaskScheduler/Operational' -FileName 'TaskScheduler_Operational.evtx'"))
 Check "wire: verdict signal - hidden task floor 3" ($src.Contains("Add-Signal 'Hidden scheduled task (TaskCache SD stripped)' 3"))
-Check "wire: verdict signal - orphaned floor 2" ($src.Contains("Add-Signal 'Orphaned TaskCache entries (no Tree link)' 2"))
+Check "wire: orphan floor-2 door removed (deleted-task residue never weighs)" (-not $src.Contains('Orphaned TaskCache entries'))
+Check "wire: hunt storm guard cap present" ($src.Contains('same finding repeated'))
 Check "wire: verdict signal - ntds theft floor 3" ($src.Contains("Add-Signal 'ntds.dit accessed - non-backup pattern (ESENT 325/326)' 3"))
 Check "wire: verdict signal - ntds backup noted weight 0" ($src.Contains("Add-Signal 'ntds.dit accessed - backup pattern (verify schedule)' 0"))
 Check "wire: CsvCatMap - scheduled_taskcache persistence" ($src.Contains("'scheduled_taskcache' = 'persistence'"))
@@ -206,7 +230,7 @@ Check "wire: report radar h3 present" ($src.Contains('RADAR diagnosed applicatio
 Check "wire: report appswitched h3 present" ($src.Contains('App focus switches (taskbar FeatureUsage)'))
 Check "wire: report shimcache exec h3 present" ($src.Contains('Shimcache executed-flag (Win10+ records'))
 Check "wire: report imports for the six artifacts" ($src.Contains("Import-CaseCsv 'scheduled_taskcache.csv'") -and $src.Contains("Import-CaseCsv 'task_deletions.csv'") -and $src.Contains("Import-CaseCsv 'esent_ntds.csv'") -and $src.Contains("Import-CaseCsv 'shimcache_exec.csv'") -and $src.Contains("Import-CaseCsv 'radar_exec.csv'") -and $src.Contains("Import-CaseCsv 'appswitched.csv'"))
-Check "wire: version bumped to 2.86" ($src.Contains('$ScriptVersion = "2.86"'))
+Check "wire: version bumped to 2.87" ($src.Contains('$ScriptVersion = "2.87"'))
 
 # ============================================================================
 Write-Host ""

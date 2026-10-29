@@ -1,5 +1,26 @@
 ﻿# Changelog
 
+## v2.87
+- **TaskCache false-positive storm fixed (274 false HIGHs -> honest info row)**: the v2.86
+  collector read TaskCache GID/SD values with GetValue on keys returned by Get-ChildItem -Recurse
+  without re-opening the key handle, so an elevated run could still get all-null values; every
+  task then looked SD-stripped AND orphaned. Collection now re-opens each key (GetValue fixed),
+  distinguishes VALUE-READ-DENIED from true null, and records TreeGidCount + TaskCount per hive
+  snapshot; consumers gate orphan conclusions on tree-link data being present (tree-blind case
+  renders one aggregated 'Unverifiable TaskCache entries' info row instead of storming).
+- **R45 semantics corrected**: SD stripped + Tree-linked = HIGH (real hidden task); SD stripped +
+  no tree data at all = unverifiable (info, aggregated); orphaned-with-SD = LOW ghost task, capped
+  at 5 rows + '+N more'; the orphan verdict door (weight 2) is gone - orphans alone can no longer
+  move the verdict.
+- **Hunt-findings storm guard**: every rule+severity combination is capped at 15 report rows with
+  one aggregated '+N more' info row - a single noisy rule can no longer flood the report or drag
+  the verdict (R29's internal cap now feeds the guard, 40 -> 15 + '+25 more').
+- **Scheduled-task flag noise tightened**: \\Microsoft\\ task paths are exempt from the
+  suspicious-interpreter flag; vendor tasks (ASUS/Realtek-style authors) no longer flagged for
+  authorship alone - they stay listed in the full tasks table.
+- E2E: storm case OPHIRA_..._20261029 verdict LIKELY COMPROMISED -> SUSPICIOUS (hunt 292/274-high
+  -> 19/0-high); baseline case 20261028 verdict unchanged (SUSPICIOUS 86%, 21/29, 6 signals).
+
 ## v2.86
 - **Report shell overhaul (additive)**: the report renders in the approved redesign shell - fixed
   sidebar nav (same anchors + counts, max-width fallback for narrow windows), fixed topbar with

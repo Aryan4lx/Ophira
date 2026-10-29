@@ -68,9 +68,12 @@ $caseCsv = @{
 }
 New-HuntFindings
 $r29hi = @($savedHF | Where-Object { $_.Rule -eq 'C2-style named pipe (known C2 family)' })
-$r29med = @($savedHF | Where-Object { $_.Rule -eq 'Named pipe created from user-writable path' })
+$r29med = @($savedHF | Where-Object { $_.Rule -eq 'Named pipe created from user-writable path' -and $_.Severity -eq 'medium' })
 Check "F4: HIGH C2 pipe row after 40+ medium rows still classified" (@($r29hi | Where-Object { "$($_.Entity)" -eq '\msagent_beef' -and $_.Severity -eq 'high' }).Count -eq 1)
-Check "F4: medium cap still honest (40 emitted of 45)" ($r29med.Count -eq 40)
+# v2.87: the global storm guard (15 per rule+severity + one aggregate info row) supersedes R29's
+# internal 40 cap - R29 emits 40, the guard keeps 15 and aggregates the other 25 into one info row
+Check "F4: storm guard caps medium at 15" ($r29med.Count -eq 15)
+Check "F4: overflow aggregated honestly (+ 25 more)" (@($savedHF | Where-Object { $_.Rule -eq 'Named pipe created from user-writable path' -and $_.Severity -eq 'info' -and "$($_.Entity)" -eq '+ 25 more' }).Count -eq 1)
 
 # ---- F5: R4 HashMismatch / NotSigned / signed severity matrix ----
 $dlDir = Join-Path $f5dir 'Downloads'

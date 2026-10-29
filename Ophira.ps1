@@ -1,5 +1,5 @@
 <#
-Ophira v2.86  -  Windows Incident Response Triage Toolkit
+Ophira v2.87  -  Windows Incident Response Triage Toolkit
 READ-ONLY by design: never modifies the system, only reads and copies data
 into its own output folder. Intended to be handed to a system owner or run
 by a responder during early triage / threat hunting.
@@ -356,7 +356,7 @@ param(
     [switch]$ExitVerdict
 )
 
-$ScriptVersion = "2.86"
+$ScriptVersion = "2.87"
 $ErrorActionPreference = 'Continue'
 $ProgressPreference = 'SilentlyContinue'
 
@@ -2917,8 +2917,10 @@ $script:Modules = @(
                 $author = ''
                 try { $author = $t.Author } catch { }
                 $flags = @()
-                if ($author -and $author -notmatch '(?i)microsoft') { $flags += 'NON-MS-AUTHOR' }
-                if ($actions -match '(?i)powershell|cmd\.exe|mshta|rundll32|regsvr32|wscript|cscript|certutil|bitsadmin|curl|wget') { $flags += 'SUSPICIOUS-INTERPRETER' }
+                # v2.87 noise fix: NON-MS-AUTHOR dropped as a standalone flag (every vendor
+                # task carries one - ASUS/Realtek/Intel legions); interpreter list narrowed to
+                # the abuse-prone hosts and \Microsoft\ paths exempted entirely.
+                if ($t.TaskPath -notmatch '(?i)\\Microsoft\\' -and $actions -match '(?i)powershell|cmd\.exe|mshta|wscript|cscript|certutil|bitsadmin|curl|wget') { $flags += 'SUSPICIOUS-INTERPRETER' }
                 if (Test-IsUserWritablePath $actions) { $flags += 'USER-WRITABLE-PATH' }
                 $rows += [pscustomobject]@{
                     Name = $t.TaskName; Path = $t.TaskPath; Author = $author; State = $t.State
@@ -2934,10 +2936,11 @@ $script:Modules = @(
             try {
                 $tcRoot = 'HKLM:\SOFTWARE\Microsoft\Windows NT\CurrentVersion\Schedule\TaskCache'
                 $treeGids = @{}
+                $tcDenied = 0
                 if (Test-Path "$tcRoot\Tree") {
                     foreach ($k in @(Get-ChildItem "$tcRoot\Tree" -Recurse -ErrorAction SilentlyContinue)) {
                         $gid = ''
-                        try { $gid = "$($k.GetValue('GID'))".Trim() } catch { }
+                        try { $gv = $k.GetValue('GID'); if ($null -ne $gv) { $gid = "$gv".Trim() } } catch { $tcDenied++ }
                         if ($gid) { $treeGids[$gid.ToLower()] = $true }
                         $tp = ($k.Name -replace '^.*TaskCache\\Tree', '')
                         $null = $tcRows.Add([pscustomobject]@{ Kind = 'tree'; TaskPath = $tp; Guid = $gid; SdPresent = ''; Flags = '' })
@@ -2945,14 +2948,18 @@ $script:Modules = @(
                 }
                 if (Test-Path "$tcRoot\Tasks") {
                     foreach ($k in @(Get-ChildItem "$tcRoot\Tasks" -ErrorAction SilentlyContinue)) {
-                        $sd = $false
-                        try { $sd = ($null -ne $k.GetValue('SD')) } catch { }
+                        $sd = $false; $sdDenied = $false
+                        try { $sdv = $k.GetValue('SD'); $sd = ($null -ne $sdv) } catch { $sdDenied = $true; $tcDenied++ }
                         $tflags = @()
-                        if (-not $sd) { $tflags += 'SD-MISSING (hidden from schtasks/GUI)' }
-                        if (-not $treeGids.ContainsKey($k.PSChildName.ToLower())) { $tflags += 'ORPHANED (no Tree link)' }
-                        $null = $tcRows.Add([pscustomobject]@{ Kind = 'tasks'; TaskPath = ''; Guid = $k.PSChildName; SdPresent = $sd; Flags = ($tflags -join ';') })
+                        # v2.87: an access-denied value read is NOT evidence of a stripped SD -
+                        # label it honestly instead of calling every key 'hidden'
+                        if ($sdDenied) { $tflags += 'VALUE-READ-DENIED' }
+                        elseif (-not $sd) { $tflags += 'SD-MISSING' }
+                        if (-not $sdDenied -and -not $treeGids.ContainsKey($k.PSChildName.ToLower())) { $tflags += 'ORPHANED' }
+                        $null = $tcRows.Add([pscustomobject]@{ Kind = 'tasks'; TaskPath = ''; Guid = $k.PSChildName; SdPresent = $(if ($sdDenied) { '' } else { $sd }); Flags = ($tflags -join ';') })
                     }
                 }
+                if ($tcDenied -gt 0) { Write-CaseLog "    taskcache: $tcDenied value read(s) denied by registry ACL - SD/GID state unknown for those keys (not counted as anomalies)" 'Yellow' }
             } catch { }
             Save-Rows -Name 'scheduled_taskcache' -Rows $tcRows.ToArray()
             Save-Rows -Name 'scheduled_tasks' -Rows $rows
@@ -5824,7 +5831,10 @@ function New-HtmlReport {
     $tasksFlag = @(Import-CaseCsv 'scheduled_tasks_flagged.csv')
     # v2.83: ghost/hidden tasks + ntds access + execution-evidence extras
     $taskCacheRows = @(Import-CaseCsv 'scheduled_taskcache.csv')
-    $taskCacheAnom = @($taskCacheRows | Where-Object { "$($_.Flags)" })
+    # v2.87: only true anomalies reach the table - SD-gone+unlinked rows are the normal
+    # residue of deleted tasks and are summarized as a count instead
+    $taskCacheAnom = @($taskCacheRows | Where-Object { $f87 = "$($_.Flags)"; $f87 -match 'VALUE-READ-DENIED' -or ($f87 -match 'SD-MISSING' -and $f87 -notmatch 'ORPHANED') -or ($f87 -match 'ORPHANED' -and $f87 -notmatch 'SD-MISSING') })
+    $taskCacheCruft = @($taskCacheRows | Where-Object { $f87 = "$($_.Flags)"; $f87 -match 'SD-MISSING' -and $f87 -match 'ORPHANED' }).Count
     $taskDel = @(Import-CaseCsv 'task_deletions.csv')
     $esentRows = @(Import-CaseCsv 'esent_ntds.csv')
     $scExec = @(Import-CaseCsv 'shimcache_exec.csv')
@@ -6797,7 +6807,11 @@ tr.techrow{cursor:pointer}
         foreach ($t4 in ($taskCacheAnom | Select-Object -First 40)) {
             $null = $sb.AppendLine("<tr><td>$(ConvertTo-HtmlEsc $t4.Kind)</td><td class='path'>$(ConvertTo-HtmlEsc $t4.Guid)</td><td class='path'>$(ConvertTo-HtmlEsc $t4.TaskPath)</td><td>$(ConvertTo-HtmlEsc $t4.SdPresent)</td><td class='crit'>$(ConvertTo-HtmlEsc $t4.Flags)</td></tr>")
         }
-        $null = $sb.AppendLine("</table><div class='meta'>Deleting a task's Tree key + Tasks key + XML does not unload an already-loaded task until reboot; deleting the SD value hides it from schtasks/GUI while it still runs. ORPHANED = Tasks\{guid} with no Tree\GID link. Source: csv\scheduled_taskcache.csv</div>")
+        $tc87Meta = "Three shapes: SD-MISSING while still Tree-linked = hidden task (still runs, invisible to schtasks/GUI - deleting Tree+XML does not unload a loaded task until reboot); SD kept + ORPHANED = ghost or deletion leftover; SD gone + ORPHANED = stale residue every deleted task leaves ($($taskCacheCruft) row(s) here, not listed). VALUE-READ-DENIED = the collector could not read the value (registry ACL) - state unknown, never treated as an anomaly. Source: csv\scheduled_taskcache.csv"
+        $null = $sb.AppendLine("</table><div class='meta'>$(ConvertTo-HtmlEsc $tc87Meta)</div>")
+    } elseif ($taskCacheCruft -gt 0) {
+        $persAny = $true
+        $null = $sb.AppendLine("<div class='meta'>Task cache: $($taskCacheCruft) stale deleted-task residue entries (no SD + no Tree link - the normal shape every deleted task leaves). No hidden or ghost anomalies found. Source: csv\scheduled_taskcache.csv</div>")
     }
     if ($taskDel.Count -gt 0) {
         $persAny = $true
@@ -10257,19 +10271,43 @@ function New-HuntFindings {
     }
     & $trace 'R38' 'execution hour-of-day stacking' "amcache+prefetch_parsed+security_proc_events+sysmon_proc_create: $r38In rows -> $($r38Seen.Count) first-seen binaries -> $r38Burst off-hours burst + $r38Stage staging findings"
 
-    # ---------- R45: TaskCache tamper - hidden/orphaned scheduled tasks (v2.83) ----------
+    # ---------- R45: TaskCache tamper - hidden/orphaned scheduled tasks (v2.83, reshaped v2.87) ----------
+    # Three distinct shapes: SD gone + still Tree-linked = true hidden task (high);
+    # SD kept + unlinked = ghost/deletion leftover (low, capped); SD gone + unlinked =
+    # the residue EVERY deleted task leaves behind (one aggregated info row, never per-row).
     $r45In = @(Import-CaseCsv 'scheduled_taskcache')
-    foreach ($r in $r45In) {
+    $r45TreeGids = @($r45In | Where-Object { "$($_.Kind)" -eq 'tree' -and "$($_.Guid)".Trim() }).Count
+    $r45Cruft = 0
+    $r45Blind = 0
+    $r45Ghost = New-Object System.Collections.Generic.List[object]
+    foreach ($r in @($r45In | Where-Object { "$($_.Kind)" -eq 'tasks' })) {
         $r45Flags = "$($r.Flags)"
-        if (-not $r45Flags) { continue }
-        $r45G = "$($r.Guid)"
-        if ($r45Flags -match 'SD-MISSING') {
-            & $find 'Hidden scheduled task (TaskCache SD value stripped)' 'high' "Tasks\$r45G" "no SD value - invisible to schtasks/GUI but still runs (deleted Tree+XML does not unload a loaded task until reboot)" 'T1053.005'
-        } elseif ($r45Flags -match 'ORPHANED') {
-            & $find 'Orphaned scheduled task cache entry' 'medium' "Tasks\$r45G" "no Tree\GID link - deleted from the UI but still in TaskCache, or planted" 'T1053.005'
+        if ($r45Flags -match 'VALUE-READ-DENIED') { continue }
+        $r45SdMiss = $r45Flags -match 'SD-MISSING'
+        $r45Orph = $r45Flags -match 'ORPHANED'
+        if ($r45SdMiss -and -not $r45Orph) {
+            & $find 'Hidden scheduled task (TaskCache SD value stripped)' 'high' "Tasks\$($r.Guid)" "no SD value but still Tree-linked - invisible to schtasks/GUI while it still runs (deleting Tree+XML does not unload a loaded task until reboot)" 'T1053.005'
+        } elseif ($r45Orph -and $r45TreeGids -eq 0) {
+            $r45Blind++ # tree link data unavailable - 'orphan' would be an artifact of the blind read
+        } elseif ($r45SdMiss) {
+            $r45Cruft++
+        } elseif ($r45Orph) {
+            $r45Ghost.Add($r)
         }
     }
-    & $trace 'R45' 'TaskCache ghost/hidden tasks' "scheduled_taskcache: $($r45In.Count) keys"
+    foreach ($r45Gh in @($r45Ghost | Select-Object -First 5)) {
+        & $find 'Orphaned TaskCache entry (SD kept)' 'low' "Tasks\$($r45Gh.Guid)" "unlinked Tasks key that kept its SD - deletion leftover or a service-loaded ghost; correlate with EID 4699 deletions and live scheduled_tasks" 'T1053.005'
+    }
+    if ($r45Ghost.Count -gt 5) {
+        & $find 'Orphaned TaskCache entry (SD kept)' 'low' "+ $($r45Ghost.Count - 5) more" "remaining unlinked-but-SD-bearing Tasks keys - full list in csv\scheduled_taskcache.csv" 'T1053.005'
+    }
+    if ($r45Blind -gt 0) {
+        & $find 'Unverifiable TaskCache entries (no tree-link data)' 'info' "TaskCache ($r45Blind entries)" "$r45Blind Tasks keys have no SD value while the Tree GID index is empty - link state could not be established, so these are neither confirmed hidden nor confirmed deleted; re-collect elevated or compare against live scheduled_tasks" 'T1053.005'
+    }
+    if ($r45Cruft -gt 0) {
+        & $find 'Stale TaskCache entries (deleted-task leftovers)' 'info' "TaskCache ($r45Cruft entries)" "$r45Cruft Tasks keys with no SD and no Tree link - the normal residue of deleted tasks, not a tamper signal on its own; a task still RUNNING after deletion needs 4699/4702 corroboration" 'T1053.005'
+    }
+    & $trace 'R45' 'TaskCache ghost/hidden tasks' "scheduled_taskcache: $($r45In.Count) keys (tree links with GID: $r45TreeGids) -> cruft $r45Cruft, blind $r45Blind, ghost $($r45Ghost.Count)"
 
     # ---------- R46: ntds.dit access via ESENT 325/326 (v2.83) ----------
     $r46In = @(Import-CaseCsv 'esent_ntds')
@@ -10350,6 +10388,26 @@ function New-HuntFindings {
         & $find 'Recon tool burst' $r51Sev "session $($s51.StartUTC)" "$tc51 distinct discovery tools ($($s51.Tools)); sample: $($s51.Sample)" 'T1087'
     }
     & $trace 'R51' 'recon tool burst' "recon_sessions: $($r51.Count) session(s) scanned -> $r51N burst finding(s)"
+
+    # v2.87 storm guard: one broken source can flood one rule with hundreds of rows and
+    # drown both the report and the verdict - cap each rule+severity at 15 rows and
+    # aggregate the overflow into one info row so the count is never silently lost
+    $rCap = @{}
+    $capped = New-Object System.Collections.Generic.List[object]
+    foreach ($f in $out.ToArray()) {
+        $capKey = "$($f.Rule)|$($f.Severity)"
+        $n = 0; if ($rCap.ContainsKey($capKey)) { $n = $rCap[$capKey] }
+        $rCap[$capKey] = $n + 1
+        if ($n -lt 15) { $capped.Add($f) }
+    }
+    foreach ($capKey in @($rCap.Keys)) {
+        if ($rCap[$capKey] -gt 15) {
+            $capParts = $capKey.Split('|')
+            $proto = @($out.ToArray() | Where-Object { "$($_.Rule)" -eq $capParts[0] -and "$($_.Severity)" -eq $capParts[1] } | Select-Object -First 1)[0]
+            $capped.Add([pscustomobject]@{ Found = $proto.Found; Rule = $proto.Rule; Severity = 'info'; Entity = "+ $($rCap[$capKey] - 15) more"; Attck = $proto.Attck; Evidence = 'same finding repeated - full list in csv\hunt_findings.csv' })
+        }
+    }
+    $out = $capped
 
     Save-Rows -Name 'hunt_findings' -Rows $out.ToArray()
     $hi = @($out | Where-Object { $_.Severity -eq 'high' }).Count
@@ -10629,8 +10687,9 @@ function Get-CompromiseVerdict {
     $dnsMed = @($dnsBeacons | Where-Object { "$($_.Severity)" -match '^medium$' }).Count
     # v2.83 (R45/R46): SD-stripped = strong anti-forensics; orphaned = suspicious; ntds only
     # weights the non-backup shape (VSS/wbengine rows are usually scheduled backups)
-    $tcHidden = @($taskCache | Where-Object { "$($_.Flags)" -match 'SD-MISSING' })
-    $tcOrphan = @($taskCache | Where-Object { "$($_.Flags)" -match 'ORPHANED' })
+    # v2.87: only the TRUE hidden shape weighs the verdict - SD gone while still Tree-linked.
+    # SD-gone+unlinked is the residue every deleted task leaves (noise); read-denied is unknown.
+    $tcHidden = @($taskCache | Where-Object { $f87 = "$($_.Flags)"; $f87 -match 'SD-MISSING' -and $f87 -notmatch 'ORPHANED' -and $f87 -notmatch 'VALUE-READ-DENIED' })
     $ntdsTheft = @($esentNtds | Where-Object { "$($_.BackupPattern)" -ne 'True' })
     $ntdsBackup = @($esentNtds | Where-Object { "$($_.BackupPattern)" -eq 'True' })
     $lolMal = @($lol | Where-Object { $_.Status -eq 'malicious' }).Count
@@ -10767,7 +10826,6 @@ function Get-CompromiseVerdict {
     Add-Signal 'Defender detection - stale history (resolved / outside log window)' 1 $defStale.Count (& $defDetail $defStale)
     Add-Signal 'Security tooling tampering / log clearing' 2 $gapTamper "log cleared or security service stopped"
     Add-Signal 'Hidden scheduled task (TaskCache SD stripped)' 3 $tcHidden.Count (($tcHidden | Select-Object -First 3 | ForEach-Object { "Tasks\$($_.Guid)" }) -join '; ')
-    Add-Signal 'Orphaned TaskCache entries (no Tree link)' 2 $tcOrphan.Count (($tcOrphan | Select-Object -First 3 | ForEach-Object { "Tasks\$($_.Guid)" }) -join '; ')
     Add-Signal 'ntds.dit accessed - non-backup pattern (ESENT 325/326)' 3 $ntdsTheft.Count (($ntdsTheft | Select-Object -First 2 | ForEach-Object { "$($_.Time)" }) -join '; ')
     Add-Signal 'ntds.dit accessed - backup pattern (verify schedule)' 0 $ntdsBackup.Count "ESENT events matching backup engines - confirm the backup window covers them"
     # v2.85 (R51): recon tool bursts - 4-5 distinct tools = suspicious, 6+ = strong
