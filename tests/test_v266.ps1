@@ -1,4 +1,4 @@
-# test_v266.ps1 - v2.66 report nav + linking pack:
+﻿# test_v266.ps1 - v2.66 report nav + linking pack:
 #   B1 nav order mirrors the rendered H2/anchor order (was: Leads before Verdict, Timeline
 #       before Snapshot/Drivers/Hunt/Entities)
 #   B3 'Security posture gaps' + 'Credential material exposure' signal rows resolve to a

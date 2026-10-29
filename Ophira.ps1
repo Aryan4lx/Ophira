@@ -7270,6 +7270,44 @@ body.nosb .nav{display:none}
                 $null = $sb.AppendLine("<tr><td>$srcCell</td><td class='path'>$detCell</td></tr>")
             }
             $null = $sb.AppendLine("</table>")
+            # v2.88: entity trail - timeline rows that actually MENTION this binary (name /
+            # path leaf / first hash anywhere in Entity or Detail). Precise where the old
+            # wall-clock +/-30min window was loose; the window now renders only as fallback.
+            $trail = @()
+            $alts = @()
+            $nl = "$($e.Name)"
+            if ($nl) { $alts += [regex]::Escape($nl) }
+            try {
+                $tl2 = Split-Path "$($e.Path)" -Leaf
+                if ($tl2 -and $tl2 -ne $nl) { $alts += [regex]::Escape($tl2) }
+            } catch { }
+            $h1 = ("$($e.Hashes)" -split ';') | Where-Object { "$_".Length -ge 32 } | Select-Object -First 1
+            if ($h1) { $alts += [regex]::Escape("$h1") }
+            if ($alts.Count -gt 0 -and $tlPre.Count -gt 0) {
+                $trailRe = '(?i)(' + ($alts -join '|') + ')'
+                # diversity cap: max 6 rows per source (SRUM's hourly buckets would flood
+                # the 20-row cap and drown out proc/conn/logon evidence otherwise)
+                $perSrc = @{}
+                $div = New-Object System.Collections.Generic.List[object]
+                foreach ($t4 in @($tlPre | Where-Object { ("$($_.Row.Entity) $($_.Row.Detail)" -match $trailRe) } | Sort-Object T)) {
+                    $s4 = "$($t4.Row.Source)"
+                    $c4 = 0; if ($perSrc.ContainsKey($s4)) { $c4 = $perSrc[$s4] }
+                    if ($c4 -lt 6) { $perSrc[$s4] = $c4 + 1; $div.Add($t4) }
+                    if ($div.Count -ge 20) { break }
+                }
+                $trail = $div.ToArray()
+            }
+            if ($trail.Count -gt 0) {
+                $stLbl = "csv\$(Get-CaseCsvPath 'supertimeline')"
+                $stLink = ConvertTo-CaseFileLink (Join-Path $CsvDir (Get-CaseCsvPath 'supertimeline')) $stLbl
+                $null = $sb.AppendLine("<div class='meta'><b>Entity trail: $($trail.Count) timeline event(s) mention this binary</b> (name/path/hash matched across all woven sources - full data: $stLink; deep-dive: <b>-Mode Focus -ProcessName $(ConvertTo-HtmlEsc $e.Name)</b>)</div>")
+                $null = $sb.AppendLine("<table><tr><th>Time</th><th>Source</th><th>Type</th><th>Actor</th><th>Detail</th></tr>")
+                foreach ($t3 in $trail) {
+                    $r3 = $t3.Row
+                    $null = $sb.AppendLine("<tr><td>$(ConvertTo-HtmlEsc $r3.Timestamp)</td><td>$(ConvertTo-HtmlEsc $r3.Source)</td><td>$(ConvertTo-HtmlEsc $r3.Type)</td><td>$(ConvertTo-HtmlEsc $r3.Actor)</td><td class='path'>$(ConvertTo-HtmlEsc ("$($r3.Entity) $($r3.Detail)".Trim()))</td></tr>")
+                }
+                $null = $sb.AppendLine("</table>")
+            }
             # +/-30 min context window around first seen, pulled from the master timeline
             $fs = Get-InvariantDate $e.FirstSeen
             if ($fs -gt [datetime]::MinValue) { $fs = $fs.ToUniversalTime() } else { $fs = $null }

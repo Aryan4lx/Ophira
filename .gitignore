@@ -12,3 +12,5 @@ SQLite.Interop.dll
 
 # superpowers subagent-driven-development scratch workspaces
 .superpowers/
+
+logs/lfcheck/

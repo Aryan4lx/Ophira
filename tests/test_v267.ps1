@@ -1,4 +1,4 @@
-# test_v267.ps1 - v2.67 quick fixes:
+﻿# test_v267.ps1 - v2.67 quick fixes:
 #   B1 New-VtLink stops VT-linking file paths / executable+document filenames (process names
 #       like OneDrive.exe rendered as VT search links - analyst noise, not a lookup). Hashes,
 #       IPs and real domains keep linking; signature and HTML shape unchanged.
@@ -237,8 +237,8 @@ if ($lines4.Count -ge 6100) {
     # window shifted 6297..6897 -> 6340..6939 (v2.82: Get-DomainProvider + Azure IP rules
     # + connections_dns emptyWhy added upstream; same report region)
     # -> 6610..7255 (v2.86 activity-picture block added ~105 lines before the entities region -
-    #    markers now: Score 6629, rcCol 6898, a2.Failed 7208, Steps 7240; same report region)
-    $region4 = ($lines4[6610..7255] -join "`n")
+    #    markers now: Score 6629, rcCol 6898, a2.Failed 7324, Steps 7375; same report region)
+    $region4 = ($lines4[6610..7380] -join "`n")
     Check "B5: no bare [int]quoted casts left in the report region" (-not $region4.Contains('[int]"$('))
     Check "B5: no bare [double]quoted casts left in the report region" (-not $region4.Contains('[double]"$('))
     Check "B5: no bare [long]quoted casts left in the report region" (-not $region4.Contains('[long]"$('))
