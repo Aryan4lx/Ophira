@@ -7,13 +7,13 @@
 `git clone` is the reliable path (long file paths in the bundled rule packs exceed Windows' 260-char ZIP limit in some locations):
 
 ```
-git clone https://github.com/Aryan4lx/Ophira-Tool.git
+git clone https://github.com/Aryan4lx/Ophira.git
 ```
 
 If you download the ZIP instead, do **not** use Explorer's built-in extractor - use either:
 
 ```
-tar -xf Ophira-Tool-main.zip        # tar.exe ships with Windows 10+ and handles long paths
+tar -xf Ophira-main.zip            # tar.exe ships with Windows 10+ and handles long paths
 ```
 
 or 7-Zip ("Extract" from the context menu).
