@@ -1,5 +1,13 @@
 ﻿# Changelog
 
+## v2.88
+- **Correlation wave (report + engines)**: binary entity cards gain Company/Description, merged `live at flash: PIDs a, b` evidence, per-source evidence diversity caps and HIGH-first sort; leaf-identity merge joins same-hash copies under one card; duplicate-name cards carry a verify-by-hash hint; account-activity and remote-endpoint cards get their own master-timeline trails; connections (with DNS-resolved domains) now woven into the supertimeline.
+- **Ran-as attribution**: every binary card shows the accounts that ran it, resolved via the 4688 -> 4624 logon-session map (honest `not captured` when process auditing is off).
+- **Optional plaso deep timeline**: `-PlasoTimeline` runs log2timeline/psort over the case's evtx exports and merges the result into the master timeline (analyst-side, tool auto-detected; report shows a how-to hint when absent).
+- **Focus dossier trail**: the dossier indicator's master-timeline mentions render as a table above the entity groups.
+- **Report polish**: hunt findings severity rails (colored dot per row), one-line section intros (leads/logons/entities/snapshot/timeline), User activity + Posture nav entries, entities section renamed `Correlated entities`, PID-only talker cells resolve names from processes.csv, stack view version-dir collapse + benign-path whitelist + suspicious-first sort.
+- **Housekeeping**: SRUM module now runs in the Quick preset; release workflow marks new releases as pre-release (v2.85 stays Latest until the overhaul is blessed); repo renamed to Aryan4lx/Ophira with DFIR topics.
+
 ## v2.87
 - **TaskCache false-positive storm fixed (274 false HIGHs -> honest info row)**: the v2.86
   collector read TaskCache GID/SD values with GetValue on keys returned by Get-ChildItem -Recurse

@@ -146,7 +146,7 @@ Check "wire: report recon h3 present" ($src.Contains('Recon sessions - clustered
 Check "wire: report t-corr h3 present" ($src.Contains('Temporal execution correlation (t-corr)'))
 Check "wire: report imports for the two artifacts" ($src.Contains("Import-CaseCsv 'recon_sessions.csv'") -and $src.Contains("Import-CaseCsv 'exec_tcorr.csv'"))
 Check "wire: nav hunt count includes both" ($src.Contains('hunt = $huntRows.Count + $liveScan.Count + $reconSessions.Count + $tcorrRows.Count'))
-Check "wire: version bumped to 2.87" ($src.Contains('$ScriptVersion = "2.87"'))
+Check "wire: version bumped to 2.88" ($src.Contains('$ScriptVersion = "2.88"'))
 
 # ============================================================================
 Write-Host ""

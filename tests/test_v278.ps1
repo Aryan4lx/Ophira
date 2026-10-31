@@ -149,7 +149,7 @@ Check "T10: populated section shows its count - Timeline (4)" ($html.Contains("<
 Check "T10: focus dossier row count from focus_terms.json - Focus (7)" ($html.Contains("<a href='#focus'>Focus (7)</a>"))
 Check "T10: coverage rows + gaps - Coverage (3)" ($html.Contains("<a href='#coverage'>Coverage (3)</a>"))
 Check "T10: 4648 rows counted - Logons (2)" ($html.Contains("<a href='#logons'>Logons (2)</a>"))
-Check "T10: multi-source binaries only - Connections (1)" ($html.Contains("<a href='#entities'>Connections (1)</a>"))
+Check "T10: multi-source binaries only - Entities (1)" ($html.Contains("<a href='#entities'>Entities (1)</a>"))
 Check "T10: populated snapshot source counted - Snapshot (1)" ($html.Contains("<a href='#snapshot'>Snapshot (1)</a>"))
 Check "T10: credential sweep table renders from the populated CSV" (($html.Contains('<h3>Credential exposure sweep</h3>')) -and ($html.Contains('WLAN key (NETGEAR-GUEST)')))
 Check "T10: empty section shows the (none) marker - YARA" ($html.Contains("<a href='#yara'>YARA (none)</a>"))

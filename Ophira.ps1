@@ -5908,6 +5908,7 @@ table{border-collapse:collapse;width:100%;font-size:13px}th,td{border:1px solid 
 th{background:var(--bg3);color:var(--acc);position:sticky;top:50px;z-index:2}tr:nth-child(even){background:var(--bg3)}
 details{margin:10px 0;padding:6px 10px;background:var(--bg2);border:1px solid var(--line);border-radius:8px}summary{cursor:pointer;padding:4px 0}
 .crit{color:var(--bad);font-weight:700}.high{color:#ffb35c}.med{color:var(--warn)}.low{color:var(--info)}.info{color:var(--tx3)}
+.sevdot{display:inline-block;width:10px;height:10px;border-radius:3px;margin-right:7px;vertical-align:baseline;background:var(--tx3)}td.crit .sevdot{background:var(--bad)}td.med .sevdot{background:var(--warn)}td.info .sevdot{background:var(--info)}
 .foot{margin-top:40px;color:var(--tx3);font-size:11px}
 .vbanner{border-radius:12px;padding:20px 24px;margin:18px 0;border:2px solid}
 .v4{background:#2a0f12;border-color:#a33}.v3{background:#2a150f;border-color:#b33}.v2{background:#2a220f;border-color:#b93}.v1{background:#0f2418;border-color:#3a5}.v0{background:var(--bg3);border-color:var(--line2)}
@@ -7098,6 +7099,7 @@ body.nosb .nav{display:none}
         $huntRowHtml = {
             param($h2)
             $sevCls = switch -Regex ("$($h2.Severity)") { 'high' { 'crit'; break } 'medium' { 'med'; break } default { 'info' } }
+            # v2.88 severity rail - a colored bar beside the severity word (scannable at a glance)
             # v2.77: leading-stamp normalization ONLY - a locale stamp that OPENS the evidence
             # cell ('10/12/2026 7:43:01 AM: ...') renders in the one Ophira stamp dialect; a
             # date anywhere after the leading stamp (quoted command lines, embedded evidence
@@ -7110,7 +7112,7 @@ body.nosb .nav{display:none}
                     $ev2 = $ld.ToString('yyyy-MM-dd HH:mm') + $ev2.Substring($lm.Groups[1].Length)
                 }
             }
-            "<tr><td class='$sevCls'><b>$(ConvertTo-HtmlEsc $h2.Severity)</b></td><td>$(ConvertTo-HtmlEsc $h2.Rule)</td><td>$(ConvertTo-HtmlEsc $h2.Attck)</td><td class='path'>$(ConvertTo-HtmlEsc $h2.Entity)</td><td class='path'>$(ConvertTo-HtmlEsc $ev2)</td></tr>"
+            "<tr><td class='$sevCls'><span class='sevdot'></span><b>$(ConvertTo-HtmlEsc $h2.Severity)</b></td><td>$(ConvertTo-HtmlEsc $h2.Rule)</td><td>$(ConvertTo-HtmlEsc $h2.Attck)</td><td class='path'>$(ConvertTo-HtmlEsc $h2.Entity)</td><td class='path'>$(ConvertTo-HtmlEsc $ev2)</td></tr>"
         }
         $null = $sb.AppendLine("<table><tr><th>Severity</th><th>Rule</th><th>ATT&amp;CK</th><th>Entity</th><th>Evidence</th></tr>")
         foreach ($h2 in ($mainRows | Sort-Object { switch -Regex ("$($_.Severity)") { 'high' { 0 } 'medium' { 1 } default { 2 } } })) {
