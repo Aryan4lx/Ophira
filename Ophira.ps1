@@ -5885,7 +5885,7 @@ function New-HtmlReport {
 body{background:var(--bg);color:var(--tx);font-family:'Segoe UI',Arial,sans-serif;margin:0;padding:58px 30px 90px 278px}
 h1{font-size:21px;margin:0 0 4px} h2{font-size:16px;margin:34px 0 10px;color:var(--acc);border-bottom:1px solid var(--line);padding-bottom:6px}
 .meta{color:var(--tx2);font-size:12px}
-a{color:var(--acc)}
+a{color:var(--acc);text-decoration:none}a:hover{color:var(--tx)}
 .topbar{position:fixed;top:0;left:250px;right:0;z-index:30;display:flex;align-items:center;gap:10px;padding:9px 30px;background:var(--bg);border-bottom:1px solid var(--line)}
 .topbar .brand{font-weight:700;font-size:14px}
 .tspacer{flex:1}
@@ -5939,10 +5939,12 @@ td.clip{cursor:copy}
 .pgr{margin:6px 0}.pgr button{background:var(--bg3);border:1px solid var(--line2);color:var(--info);border-radius:4px;padding:2px 10px;cursor:pointer;margin-left:4px}
 tr.techrow{cursor:pointer}
 .grid2{display:grid;grid-template-columns:1fr 1fr;gap:10px}
-#sbopen{display:none;position:fixed;left:12px;bottom:12px;z-index:40}
-body.nosb #sbopen{display:inline-block}
+body{transition:padding-left .18s ease}
 body.nosb{padding-left:0}
-body.nosb .nav{display:none}
+.nav{transition:transform .18s ease}
+body.nosb .nav{transform:translateX(-100%)}
+.topbar{transition:left .18s ease}
+body.nosb .topbar{left:0}
 @media(max-width:1100px){.grid2{grid-template-columns:1fr}}
 .heat{display:flex;flex-direction:column;gap:3px}
 .heatrow{display:grid;grid-template-columns:30px repeat(24,1fr);gap:3px;align-items:center}
@@ -5963,7 +5965,7 @@ body.nosb .nav{display:none}
     $sb = New-Object System.Text.StringBuilder
     $null = $sb.AppendLine("<!DOCTYPE html><html><head><meta charset='utf-8'><title>Ophira - $(ConvertTo-HtmlEsc $Computer)</title>$css</head><body>")
     # v2.86: fixed top bar - case identity + light/dark + show-full-values + print toggles
-    $null = $sb.AppendLine("<div class='topbar'><span class='brand'>$(ConvertTo-HtmlEsc $Computer)</span><span class='meta'>OPHIRA COMPROMISE ASSESSMENT</span><span class='tspacer'></span><button class='tbtn' type='button' onclick='sbToggle(this)'>Sidebar on/off</button><button class='tbtn' type='button' onclick='themeToggle()'>Light / Dark</button><button class='tbtn' type='button' onclick='showFullToggle(this)'>Show full values</button><button class='tbtn' type='button' onclick='window.print()'>Print report</button></div><button id='sbopen' class='tbtn' type='button' onclick='sbToggle()'>Menu</button>")
+    $null = $sb.AppendLine("<div class='topbar'><button id='sbb' class='tbtn' type='button' onclick='sbToggle()' title='Show / hide the section sidebar'>&#9776;</button><span class='brand'>$(ConvertTo-HtmlEsc $Computer)</span><span class='meta'>OPHIRA COMPROMISE ASSESSMENT</span><span class='tspacer'></span><button class='tbtn' type='button' onclick='themeToggle()'>Light / Dark</button><button class='tbtn' type='button' onclick='showFullToggle(this)'>Show full values</button><button class='tbtn' type='button' onclick='window.print()'>Print report</button></div>")
     $null = $sb.AppendLine("<h1>OPHIRA COMPROMISE ASSESSMENT REPORT</h1>")
     # v2.77: ONE case.json read drives the elevation label AND the provenance line (collector
     # tool, preset, log window). Per-field fallback: an old case without case.json (or without
@@ -7739,6 +7741,9 @@ body.nosb .nav{display:none}
             if (@($ft.Masquerade).Count -gt 0) {
                 $null = $sb.AppendLine("<div class='lead lead-med' style='padding:6px 12px'><b>MASQUERADE WARNING:</b> the name appears at multiple paths - $(ConvertTo-HtmlEsc (@($ft.Masquerade) -join ', ')). Compare the entity groups below; only one of them is probably the real OS binary.</div>")
             }
+            # v2.89: reading guide - each block explained, so the dossier tells the analyst
+            # what is related to what instead of assuming they will guess
+            $null = $sb.AppendLine("<div class='meta' style='margin-bottom:8px'>How to read this dossier, top to bottom: <b>Trail</b> = every master-timeline event that mentions this indicator, oldest first (Source = which collection produced the row). <b>Entity groups</b> = the places this NAME lives; one row per path, and the hash tells you whether two paths hold the same file. <b>Instances</b> = the process runs captured for it - Parent links each run to what launched it. <b>Evidence by artifact</b> = which collection sources saw it, with links to their sections.</div>")
             # v2.88: dossier trail - the same timeline-slice machinery the entity cards use,
         # keyed on the dossier's names/paths/hashes; renders before the entity groups
         $fAlts = @()
@@ -7751,7 +7756,7 @@ body.nosb .nav{display:none}
             $fTrail = Get-EntityTrailPieces $tlPre $fPat2 6 20
         }
         if ($fTrail.Count -gt 0) {
-            $null = $sb.AppendLine("<h3>Dossier trail ($($fTrail.Count) master-timeline event(s) mention this indicator)</h3>")
+            $null = $sb.AppendLine("<h3>Dossier trail ($($fTrail.Count) master-timeline event(s) mention this indicator)</h3><div class='meta'>Chronological - read top to bottom; a run of rows from one source is one story (e.g. browser activity, then file births, then executions, then network).</div>")
             $null = $sb.AppendLine("<table><tr><th>Time</th><th>Source</th><th>Type</th><th>Actor</th><th>Detail</th></tr>")
             foreach ($t4 in $fTrail) {
                 $r4 = $t4.Row
@@ -7760,7 +7765,7 @@ body.nosb .nav{display:none}
             $null = $sb.AppendLine("</table>")
         }
         if (@($ft.Paths).Count -gt 0) {
-                $null = $sb.AppendLine("<h3>Entity groups (path + hash keyed - same-name binaries at different paths are separate groups)</h3><table><tr><th>Path</th><th>Hash</th><th>Hits</th><th>First seen</th><th>Last seen</th></tr>")
+                $null = $sb.AppendLine("<h3>Entity groups (path + hash keyed - same-name binaries at different paths are separate groups)</h3><div class='meta'>Same hash on two rows = same binary at two places (moved or copied). Same NAME with different hashes = two different files - the odd one out is your masquerade suspect.</div><table><tr><th>Path</th><th>Hash</th><th>Hits</th><th>First seen</th><th>Last seen</th></tr>")
                 # v2.82: per-group hash from focus_terms.json EntityGroups - Hashes[0] on every
                 # row was the same-hash bug; algo label (SHA256:/SHA1:) is baked into the value
                 $egMap = @{}
@@ -7770,7 +7775,7 @@ body.nosb .nav{display:none}
                     $fs = ($g | Where-Object { "$($_.Time)" } | Sort-Object { "$($_.Time)" } | Select-Object -First 1).Time
                     $ls = ($g | Where-Object { "$($_.Time)" } | Sort-Object { "$($_.Time)" } | Select-Object -Last 1).Time
                     $hCell = if ($egMap.ContainsKey("$p")) { $egMap["$p"] } else { '' }
-                    $null = $sb.AppendLine("<tr><td class='path'>$(ConvertTo-HtmlEsc $p)</td><td class='path'>$(ConvertTo-HtmlEsc $hCell)</td><td>$($g.Count)</td><td>$(ConvertTo-HtmlEsc $fs)</td><td>$(ConvertTo-HtmlEsc $ls)</td></tr>")
+                    $null = $sb.AppendLine("<tr><td class='path'>$(ConvertTo-HtmlEsc $p)</td><td class='path'>$(ConvertTo-HtmlEsc $hCell)</td><td>$($g.Count)</td><td>$(if ($fs) { ConvertTo-HtmlEsc $fs } else { '-' })</td><td>$(if ($ls) { ConvertTo-HtmlEsc $ls } else { '-' })</td></tr>")
                 }
                 $null = $sb.AppendLine("</table>")
             }
@@ -7780,11 +7785,11 @@ body.nosb .nav{display:none}
                 foreach ($ch in @(Import-CaseCsv 'process_chains')) {
                     if ("$($ch.Child)" -and "$($ch.Parent)") { $chainParent[(Split-Path "$($ch.Child)" -Leaf).ToLower()] = "$($ch.Parent)" }
                 }
-                $null = $sb.AppendLine("<h3>Instances</h3><table><tr><th>PID</th><th>ProcessGuid</th><th>Started</th><th>Image</th><th>Parent</th><th>User</th></tr>")
+                $null = $sb.AppendLine("<h3>Instances</h3><div class='meta'>One row per captured run of this binary. Started ties a run to the trail above; Parent (PPID) shows what launched it; User/ProcessGuid need Sysmon or process auditing to populate.</div><table><tr><th>PID</th><th>ProcessGuid</th><th>Started</th><th>Image</th><th>Parent</th><th>User</th></tr>")
                 foreach ($i in @($fInst | Select-Object -First 25)) {
                     $par = "$($i.Parent)"
                     if (-not $par -and $chainParent.ContainsKey((Split-Path "$($i.Image)" -Leaf).ToLower())) { $par = $chainParent[(Split-Path "$($i.Image)" -Leaf).ToLower()] }
-                    $null = $sb.AppendLine("<tr><td>$(ConvertTo-HtmlEsc $i.Pid)</td><td class='path'>$(ConvertTo-HtmlEsc $i.Guid)</td><td>$(ConvertTo-HtmlEsc $i.Started)</td><td class='path'>$(ConvertTo-HtmlEsc $i.Image)</td><td class='path'>$(ConvertTo-HtmlEsc $par)</td><td>$(ConvertTo-HtmlEsc $i.User)</td></tr>")
+                    $null = $sb.AppendLine("<tr><td>$(ConvertTo-HtmlEsc $i.Pid)</td><td class='path'>$(if ("$($i.Guid)") { ConvertTo-HtmlEsc $i.Guid } else { '-' })</td><td>$(ConvertTo-HtmlEsc $i.Started)</td><td class='path'>$(ConvertTo-HtmlEsc $i.Image)</td><td class='path'>$(ConvertTo-HtmlEsc $par)</td><td>$(if ("$($i.User)") { ConvertTo-HtmlEsc $i.User } else { '-' })</td></tr>")
                 }
                 $null = $sb.AppendLine("</table><div class='meta'>Multiple instances of one name group per path+hash; a same-name binary at another path would appear as its own group (masquerade split).</div>")
             }
@@ -13165,7 +13170,7 @@ function Invoke-FocusCore {
                 }
                 if ($detail.Length -gt 400) { $detail = $detail.Substring(0, 400) + '...' }
                 $t = ''
-                foreach ($tc in @('Time', 'TimeCreated', 'Timestamp', 'Started', 'LastWrite')) {
+                foreach ($tc in @('Time', 'TimeCreated', 'Timestamp', 'Started', 'LastWrite', 'FileKeyLastWriteTimestamp', 'LastModified', 'LastRun', 'WhenCreated', 'Created')) {
                     if ($r.PSObject.Properties[$tc] -and "$($r.$tc)") { $t = "$($r.$tc)"; break }
                 }
                 # v2.73: the window filters the hit record only - expansion terms and the
