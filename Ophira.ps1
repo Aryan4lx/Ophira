@@ -7772,8 +7772,8 @@ body.nosb .topbar{left:0}
                 foreach ($eg in @($ft.EntityGroups)) { if ($eg -and "$($eg.Path)") { $egMap["$($eg.Path)"] = "$($eg.Hash)" } }
                 foreach ($p in @($ft.Paths | Select-Object -First 20)) {
                     $g = @($fHits | Where-Object { "$($_.Detail)".ToLower().Contains("$p") })
-                    $fs = ($g | Where-Object { "$($_.Time)" } | Sort-Object { "$($_.Time)" } | Select-Object -First 1).Time
-                    $ls = ($g | Where-Object { "$($_.Time)" } | Sort-Object { "$($_.Time)" } | Select-Object -Last 1).Time
+                    $fs = ($g | Where-Object { "$($_.Time)" } | Sort-Object { $d3 = [datetime]::MinValue; if ([datetime]::TryParse("$($_.Time)", [ref]$d3)) { $d3.Ticks } else { [long]::MaxValue } } | Select-Object -First 1).Time
+                    $ls = ($g | Where-Object { "$($_.Time)" } | Sort-Object { $d3 = [datetime]::MinValue; if ([datetime]::TryParse("$($_.Time)", [ref]$d3)) { $d3.Ticks } else { [long]::MinValue } } | Select-Object -Last 1).Time
                     $hCell = if ($egMap.ContainsKey("$p")) { $egMap["$p"] } else { '' }
                     $null = $sb.AppendLine("<tr><td class='path'>$(ConvertTo-HtmlEsc $p)</td><td class='path'>$(ConvertTo-HtmlEsc $hCell)</td><td>$($g.Count)</td><td>$(if ($fs) { ConvertTo-HtmlEsc $fs } else { '-' })</td><td>$(if ($ls) { ConvertTo-HtmlEsc $ls } else { '-' })</td></tr>")
                 }
@@ -13510,8 +13510,8 @@ function Invoke-FocusCore {
             Key = $pt; Name = $gName; Path = $pt
             Hash = $hashByPath[$pt]
             HitCount = $gHits.Count
-            FirstSeen = ($gHits | Where-Object { "$($_.Time)" } | Sort-Object { "$($_.Time)" } | Select-Object -First 1).Time
-            LastSeen = ($gHits | Where-Object { "$($_.Time)" } | Sort-Object { "$($_.Time)" } | Select-Object -Last 1).Time
+            FirstSeen = ($gHits | Where-Object { "$($_.Time)" } | Sort-Object { $d2 = [datetime]::MinValue; if ([datetime]::TryParse("$($_.Time)", [ref]$d2)) { $d2.Ticks } else { [long]::MaxValue } } | Select-Object -First 1).Time
+            LastSeen = ($gHits | Where-Object { "$($_.Time)" } | Sort-Object { $d2 = [datetime]::MinValue; if ([datetime]::TryParse("$($_.Time)", [ref]$d2)) { $d2.Ticks } else { [long]::MinValue } } | Select-Object -Last 1).Time
         })
     }
     $masq = @()
