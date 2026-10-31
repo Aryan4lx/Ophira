@@ -1,4 +1,4 @@
-# test_v255.ps1 - v2.55 report-truthfulness fixes
+﻿# test_v255.ps1 - v2.55 report-truthfulness fixes
 # Static assertions on Ophira.ps1 source (Contains / regex, no fixture parse)
 $ErrorActionPreference = 'Stop'
 $repo = Split-Path -Parent $PSScriptRoot
@@ -37,7 +37,7 @@ Assert-Has '$elevLabel' '1d elevation label variable'
 Assert-Has '$recElev' '1d recommendation elevation variable'
 
 # 1e remote endpoint IP + VT link
-Assert-Has 'ConvertTo-HtmlEsc $e.Remote) $(New-VtLink' '1e remote IP shown with VT link'
+Assert-Has '$rv.Remote)</b> $(New-VtLink' '1e remote IP shown with VT link'
 
 # 1f case-draft count
 Assert-Has '@($ft2.SourcesHit.PSObject.Properties).Count' '1f case-draft count wrapped'

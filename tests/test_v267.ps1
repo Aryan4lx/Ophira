@@ -237,8 +237,8 @@ if ($lines4.Count -ge 6100) {
     # window shifted 6297..6897 -> 6340..6939 (v2.82: Get-DomainProvider + Azure IP rules
     # + connections_dns emptyWhy added upstream; same report region)
     # -> 6610..7255 (v2.86 activity-picture block added ~105 lines before the entities region -
-    #    markers now: Score 6629, rcCol 6898, a2.Failed 7324, Steps 7375; same report region)
-    $region4 = ($lines4[6610..7380] -join "`n")
+    #    markers now: Score 6629, rcCol 6898, SRUM 7394, Steps 7411; same report region)
+    $region4 = ($lines4[6610..7416] -join "`n")
     Check "B5: no bare [int]quoted casts left in the report region" (-not $region4.Contains('[int]"$('))
     Check "B5: no bare [double]quoted casts left in the report region" (-not $region4.Contains('[double]"$('))
     Check "B5: no bare [long]quoted casts left in the report region" (-not $region4.Contains('[long]"$('))
@@ -254,7 +254,7 @@ if ($lines4.Count -ge 6100) {
     $remLine = @($lines4 | Where-Object { $_.Contains('if ($entR.Count -gt 0') })[0]
     Check "B5: remote-entity Connections/FailedLogons/RdpOutCount use ConvertTo-SafeInt" ("$remLine".Contains('(ConvertTo-SafeInt $_.Connections)') -and "$remLine".Contains('(ConvertTo-SafeInt $_.FailedLogons)') -and "$remLine".Contains('(ConvertTo-SafeInt $_.RdpOutCount)'))
     Check "B5: account Failed severity class uses ConvertTo-SafeInt" ($region4.Contains('(ConvertTo-SafeInt $a2.Failed) -ge 5') -and $region4.Contains('(ConvertTo-SafeInt $a2.Failed) -gt 0'))
-    Check "B5: remote FailedLogons severity class uses ConvertTo-SafeInt" ($region4.Contains('(ConvertTo-SafeInt $e.FailedLogons) -gt 0'))
+    Check "B5: remote FailedLogons severity class uses ConvertTo-SafeInt" ($region4.Contains('(ConvertTo-SafeInt $rv.FailedLogons) -gt 0'))
     Check "B5: SRUM numeric sort uses ConvertTo-SafeDbl (byte counts)" ($region4.Contains('ConvertTo-SafeDbl $p2.Value'))
     Check "B5: prefetch run-count sort uses ConvertTo-SafeInt" ($region4.Contains('ConvertTo-SafeInt $_.$rcCol'))
     Check "B5: process-chain steps sort uses ConvertTo-SafeInt" ($region4.Contains('Sort-Object { ConvertTo-SafeInt $_.Steps }'))

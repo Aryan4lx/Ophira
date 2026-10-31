@@ -1,4 +1,4 @@
-# test_v268.ps1 - v2.68 robustness batch:
+﻿# test_v268.ps1 - v2.68 robustness batch:
 #   B7 CoveragePercentUnadjusted was a lie - both verdict properties read the SAME corrected
 #       value ($coverageRaw, i.e. AFTER the non-elevated -15 weight correction). Now the
 #       unadjusted property carries the pre-correction fraction (same Round/Max math, same
@@ -138,7 +138,7 @@ Check "B5f: New-EntityCorrelation is called from Invoke-RegenerateOutputs (main-
 
 # ===================== B10: comments say the 30 they mean =====================
 Check "B10: no '+/-15 min' comments left (code has been +/-30 since v2.66)" (-not $src.Contains('+/-15 min'))
-$mB10a = [regex]::Match($src, '(?s)master-timeline context for the top cards: rows within \+/-30 min.*?AddMinutes\(-30\); \$hi = \$fs\.AddMinutes\(30\)')
+$mB10a = [regex]::Match($src, '(?s)\+/-30 min context window around first seen.*?AddMinutes\(-30\); \$hi = \$fs\.AddMinutes\(30\)')
 Check "B10: top-card comment and the window constant agree on 30" $mB10a.Success
 $mB10b = [regex]::Match($src, '(?s)\+/-30 min context window around first seen.*?\$fs\.AddMinutes\(-30\)')
 Check "B10: context-window comment matches the AddMinutes(-30) code" $mB10b.Success

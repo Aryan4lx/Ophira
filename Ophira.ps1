@@ -7223,19 +7223,33 @@ body.nosb .nav{display:none}
     $null = $sb.AppendLine("<div class='meta'>Each entity below joins evidence from multiple independent sources (processes, execution history, persistence, network, SRUM usage, YARA, Sigma...) into one story. More categories touching one binary = stronger signal. Full data: csv\entities_binaries.csv / entities_accounts.csv / entities_remotes.csv</div>")
     $entAll = @($entB | Where-Object { (ConvertTo-SafeInt $_.CatCount) -ge 2 } | Sort-Object @{e = { ConvertTo-SafeInt $_.CatCount }; Descending = $true }, @{e = { if ("$($_.Verdict)" -match 'HIGH') { 2 } elseif ("$($_.Verdict)" -match 'MEDIUM') { 1 } else { 0 } }; Descending = $true }, @{e = 'Name' })
     $entTop = @($entAll | Select-Object -First 12)
+    # master-timeline rows, time-parsed once and shared by every entity trail below
+    # (supertimeline Timestamps are UTC wall-clock per the weave contract)
+    $tlPre = @()
+    try {
+        $tlPre = @($tlRows | ForEach-Object { $t = Get-InvariantDate $_.Timestamp; if ($t -gt [datetime]::MinValue) { [pscustomobject]@{ T = $t; Row = $_ } } })
+    } catch { }
+    # v2.88: shared trail builder - diverse, time-sorted slice of the master timeline
+    # (max $CapSrc rows per source so SRUM's hourly buckets cannot drown other evidence)
+    function Get-EntityTrailPieces {
+        param($Pre, $Pattern, [int]$CapSrc = 5, [int]$CapTotal = 15)
+        $out = New-Object System.Collections.Generic.List[object]
+        $seenSrc = @{}
+        foreach ($t5 in @($Pre | Where-Object { ("$($_.Row.Entity) $($_.Row.Detail) $($_.Row.Actor)" -match $Pattern) } | Sort-Object T)) {
+            $s5 = "$($t5.Row.Source)"
+            $c5 = 0; if ($seenSrc.ContainsKey($s5)) { $c5 = $seenSrc[$s5] }
+            if ($c5 -lt $CapSrc) { $seenSrc[$s5] = $c5 + 1; $out.Add($t5) }
+            if ($out.Count -ge $CapTotal) { break }
+        }
+        return $out.ToArray()
+    }
     if ($entTop.Count -gt 0) {
         if ($entAll.Count -gt $entTop.Count) {
             $ebLbl = "csv\$(Get-CaseCsvPath 'entities_binaries')"
             $ebLink = ConvertTo-CaseFileLink (Join-Path $CsvDir (Get-CaseCsvPath 'entities_binaries')) $ebLbl
             $null = $sb.AppendLine("<div class='meta'>Showing the top $($entTop.Count) of <b>$($entAll.Count)</b> multi-source binaries - full list: $ebLink</div>")
         }
-        # master-timeline context for the top cards: rows within +/-30 min of the entity's first seen
-        # (supertimeline Timestamps are UTC wall-clock per the weave contract - compare raw ticks
-        # against the converted $fs below; do NOT re-shift either side)
-        $tlPre = @()
-        try {
-            $tlPre = @($tlRows | ForEach-Object { $t = Get-InvariantDate $_.Timestamp; if ($t -gt [datetime]::MinValue) { [pscustomobject]@{ T = $t; Row = $_ } } })
-        } catch { }
+        # (tlPre is computed above the section - shared with the account/remote trails)
         # v2.66 (B12): shared text filter over the entity cards
         $null = $sb.AppendLine("<div class='sbar'><input id='entf' data-secfilter='1' data-wrap='entwrap' data-sel='details' data-cnt='cnt_ent' placeholder='filter entities (name / path / evidence)...' style='width:340px'> <span class='meta' id='cnt_ent'></span></div>")
         $null = $sb.AppendLine("<div id='entwrap'>")
@@ -7285,17 +7299,7 @@ body.nosb .nav{display:none}
             if ($h1) { $alts += [regex]::Escape("$h1") }
             if ($alts.Count -gt 0 -and $tlPre.Count -gt 0) {
                 $trailRe = '(?i)(' + ($alts -join '|') + ')'
-                # diversity cap: max 6 rows per source (SRUM's hourly buckets would flood
-                # the 20-row cap and drown out proc/conn/logon evidence otherwise)
-                $perSrc = @{}
-                $div = New-Object System.Collections.Generic.List[object]
-                foreach ($t4 in @($tlPre | Where-Object { ("$($_.Row.Entity) $($_.Row.Detail)" -match $trailRe) } | Sort-Object T)) {
-                    $s4 = "$($t4.Row.Source)"
-                    $c4 = 0; if ($perSrc.ContainsKey($s4)) { $c4 = $perSrc[$s4] }
-                    if ($c4 -lt 6) { $perSrc[$s4] = $c4 + 1; $div.Add($t4) }
-                    if ($div.Count -ge 20) { break }
-                }
-                $trail = $div.ToArray()
+                $trail = Get-EntityTrailPieces $tlPre $trailRe 6 20
             }
             if ($trail.Count -gt 0) {
                 $stLbl = "csv\$(Get-CaseCsvPath 'supertimeline')"
@@ -7333,20 +7337,52 @@ body.nosb .nav{display:none}
         $null = $sb.AppendLine("<div class='meta'>No multi-source binary correlations in this case (a binary must appear in 2+ independent evidence sources to be listed here).</div>")
     }
     if ($entA.Count -gt 0 -and @($entA | Where-Object { (ConvertTo-SafeInt $_.Logons) -gt 0 -or (ConvertTo-SafeInt $_.Failed) -gt 0 -or "$($_.RdpOutTargets)" -or (ConvertTo-SafeDbl $_.ConsoleHistoryKB) -gt 0 }).Count -gt 0) {
-        $null = $sb.AppendLine("<h3>Account activity</h3><table><tr><th>Account</th><th>Logons</th><th>Failed</th><th>Logon types</th><th>Source IPs</th><th>RDP out to</th><th>Console hist</th></tr>")
+        $null = $sb.AppendLine("<h3>Account activity</h3>")
         foreach ($a2 in ($entA | Select-Object -First 10)) {
             $fCls = if ((ConvertTo-SafeInt $a2.Failed) -ge 5) { 'crit' } elseif ((ConvertTo-SafeInt $a2.Failed) -gt 0) { 'med' } else { 'info' }
-            $null = $sb.AppendLine("<tr><td><b>$(ConvertTo-HtmlEsc $a2.Account)</b></td><td>$($a2.Logons)</td><td class='$fCls'>$($a2.Failed)</td><td>$(ConvertTo-HtmlEsc $a2.LogonTypes)</td><td>$(ConvertTo-HtmlEsc $a2.Sources)</td><td class='path'>$(ConvertTo-HtmlEsc $a2.RdpOutTargets)</td><td>$($a2.ConsoleHistoryKB) KB</td></tr>")
+            $null = $sb.AppendLine("<details><summary><b>$(ConvertTo-HtmlEsc $a2.Account)</b> - $(ConvertTo-HtmlEsc $a2.Logons) logon(s), <span class='$fCls'>$(ConvertTo-HtmlEsc $a2.Failed) failed</span></summary>")
+            $null = $sb.AppendLine("<table><tr><th>Logon types</th><th>Source IPs</th><th>RDP out to</th><th>Console hist</th></tr>")
+            $null = $sb.AppendLine("<tr><td>$(ConvertTo-HtmlEsc $a2.LogonTypes)</td><td class='path'>$(ConvertTo-HtmlEsc $a2.Sources)</td><td class='path'>$(ConvertTo-HtmlEsc $a2.RdpOutTargets)</td><td>$($a2.ConsoleHistoryKB) KB</td></tr></table>")
+            # v2.88: account trail - timeline rows whose Actor/Entity/Detail mentions this account
+            $acctLeaf = "$($a2.Account)" -replace '^.*\\', ''
+            if ($acctLeaf -and $acctLeaf -notmatch '(?i)^(system|network service|local service|anonymous logon|dwm-\d+|umfd-\d+)$' -and $tlPre.Count -gt 0) {
+                $aTrail = Get-EntityTrailPieces $tlPre ([regex]::Escape($acctLeaf))
+                if ($aTrail.Count -gt 0) {
+                    $null = $sb.AppendLine("<div class='meta'><b>Account trail: $($aTrail.Count) timeline event(s) mention this account</b> (Actor/Entity/Detail matched across all woven sources)</div>")
+                    $null = $sb.AppendLine("<table><tr><th>Time</th><th>Source</th><th>Type</th><th>Actor</th><th>Detail</th></tr>")
+                    foreach ($t6 in $aTrail) {
+                        $r6 = $t6.Row
+                        $null = $sb.AppendLine("<tr><td>$(ConvertTo-HtmlEsc $r6.Timestamp)</td><td>$(ConvertTo-HtmlEsc $r6.Source)</td><td>$(ConvertTo-HtmlEsc $r6.Type)</td><td>$(ConvertTo-HtmlEsc $r6.Actor)</td><td class='path'>$(ConvertTo-HtmlEsc ("$($r6.Entity) $($r6.Detail)".Trim()))</td></tr>")
+                    }
+                    $null = $sb.AppendLine("</table>")
+                }
+            }
+            $null = $sb.AppendLine("</details>")
         }
-        $null = $sb.AppendLine("</table>")
     }
     if ($entR.Count -gt 0 -and @($entR | Where-Object { (ConvertTo-SafeInt $_.Connections) -gt 0 -or "$($_.Beacon)" -or (ConvertTo-SafeInt $_.FailedLogons) -gt 0 -or (ConvertTo-SafeInt $_.RdpOutCount) -gt 0 }).Count -gt 0) {
-        $null = $sb.AppendLine("<h3>Remote endpoints</h3><table><tr><th>Remote</th><th>Public</th><th>Conns</th><th>Talkers</th><th>Beacon</th><th>Failed logons</th><th>RDP out</th></tr>")
-        foreach ($e in ($entR | Select-Object -First 12)) {
-            $bCls = switch -Regex ("$($e.Beacon)") { 'high' { 'crit'; break } 'medium' { 'med'; break } default { 'info' } }
-            $null = $sb.AppendLine("<tr><td class='path'>$(ConvertTo-HtmlEsc $e.Remote) $(New-VtLink $e.Remote)</td><td>$(ConvertTo-HtmlEsc $e.Public)</td><td>$($e.Connections)</td><td class='path'>$(ConvertTo-HtmlEsc $e.Talkers)</td><td class='$bCls'>$(ConvertTo-HtmlEsc $e.Beacon)</td><td class='$(if ((ConvertTo-SafeInt $e.FailedLogons) -gt 0) { 'crit' } else { 'info' })'>$($e.FailedLogons)</td><td>$($e.RdpOutCount)</td></tr>")
+        $null = $sb.AppendLine("<h3>Remote endpoints</h3>")
+        foreach ($rv in ($entR | Select-Object -First 12)) {
+            $bCls = switch -Regex ("$($rv.Beacon)") { 'high' { 'crit'; break } 'medium' { 'med'; break } default { 'info' } }
+            $null = $sb.AppendLine("<details><summary><b>$(ConvertTo-HtmlEsc $rv.Remote)</b> $(New-VtLink $rv.Remote) - $(ConvertTo-HtmlEsc $rv.Connections) conn(s), beacon <span class='$bCls'>$(ConvertTo-HtmlEsc $rv.Beacon)</span></summary>")
+            $null = $sb.AppendLine("<table><tr><th>Public</th><th>Talkers</th><th>Failed logons</th><th>RDP out</th></tr>")
+            $null = $sb.AppendLine("<tr><td>$(ConvertTo-HtmlEsc $rv.Public)</td><td class='path'>$(ConvertTo-HtmlEsc $rv.Talkers)</td><td class='$(if ((ConvertTo-SafeInt $rv.FailedLogons) -gt 0) { 'crit' } else { 'info' })'>$(ConvertTo-HtmlEsc $rv.FailedLogons)</td><td>$(ConvertTo-HtmlEsc $rv.RdpOutCount)</td></tr></table>")
+            # v2.88: remote trail - every timeline event tied to this endpoint (share access,
+            # network weave rows, logon failures from it)
+            if ($tlPre.Count -gt 0 -and "$($rv.Remote)") {
+                $rTrail = Get-EntityTrailPieces $tlPre ([regex]::Escape("$($rv.Remote)"))
+                if ($rTrail.Count -gt 0) {
+                    $null = $sb.AppendLine("<div class='meta'><b>Endpoint trail: $($rTrail.Count) timeline event(s) involve this remote</b> (share access, network weave, logon failures)</div>")
+                    $null = $sb.AppendLine("<table><tr><th>Time</th><th>Source</th><th>Type</th><th>Actor</th><th>Detail</th></tr>")
+                    foreach ($t7 in $rTrail) {
+                        $r7 = $t7.Row
+                        $null = $sb.AppendLine("<tr><td>$(ConvertTo-HtmlEsc $r7.Timestamp)</td><td>$(ConvertTo-HtmlEsc $r7.Source)</td><td>$(ConvertTo-HtmlEsc $r7.Type)</td><td>$(ConvertTo-HtmlEsc $r7.Actor)</td><td class='path'>$(ConvertTo-HtmlEsc ("$($r7.Entity) $($r7.Detail)".Trim()))</td></tr>")
+                    }
+                    $null = $sb.AppendLine("</table>")
+                }
+            }
+            $null = $sb.AppendLine("</details>")
         }
-        $null = $sb.AppendLine("</table>")
     }
     if ($srumRows.Count -gt 0) {
         $appCol = @($srumRows[0].PSObject.Properties.Name | Where-Object { $_ -match '(?i)^(app|application|path|name|image)' } | Select-Object -First 1)[0]
@@ -8385,6 +8421,27 @@ function New-SuperTimeline {
     & $weave 'sysmon_file_time' 1000 { param($r) @("$($r.Time)", 'file creation time changed (Sysmon 2)', (& $leaf $r.Image), (& $leaf $r.TargetFilename), "$($r.PreviousCreationUtcTime) -> $($r.CreationUtcTime)") }
     & $weave 'sysmon_file_create' 3000 { param($r) @("$($r.Time)", 'file created (Sysmon 11)', (& $leaf $r.Image), (& $leaf $r.TargetFilename), "$($r.TargetFilename)") }
     & $weave 'sysmon_file_delete' 1000 { param($r) @("$($r.Time)", 'file deleted (Sysmon 23)', (& $leaf $r.Image), (& $leaf $r.TargetFilename), 'deleted by process - anti-forensics / cleanup lead') }
+    # v2.88: flash network snapshot - point-in-time evidence, stamped at the collection
+    # instant (case.json StartedUTC) so the timeline carries the host's live public
+    # connections, enriched with the DNS-cache attribution from connections_dns
+    $connTs = ''
+    try {
+        $cj2 = Get-Content -LiteralPath (Join-Path (Split-Path -Parent (Split-Path -Parent (Split-Path -Parent (Get-CaseCsvFullPath 'supertimeline')))) 'case.json') -Raw -ErrorAction Stop | ConvertFrom-Json
+        # local wall-clock: the $add helper below re-converts naive stamps via
+        # ToUniversalTime, so hand it local time and let it normalize to UTC
+        $connTs = ([datetimeoffset]::Parse("$($cj2.StartedUTC)", [System.Globalization.CultureInfo]::InvariantCulture, [System.Globalization.DateTimeStyles]::RoundtripKind)).ToLocalTime().ToString('yyyy-MM-dd HH:mm:ss')
+    } catch { }
+    if ($connTs) {
+        $dnsByIp = @{}
+        foreach ($d2 in (Import-CaseCsv 'connections_dns')) {
+            if ("$($d2.RemoteAddress)") { $dnsByIp["$($d2.RemoteAddress)"] = "$($d2.ResolvedDomain)" }
+        }
+        & $weave 'flash_public_connections' 500 { param($r)
+            $d3 = "$(if ($dnsByIp.ContainsKey("$($r.RemoteAddress)")) { $dnsByIp["$($r.RemoteAddress)"] })"
+            $d3x = if ($d3 -and $d3 -ne 'unknown') { " | resolved: $d3" } else { '' }
+            @($connTs, "public connection at flash ($($r.State))", (& $leaf $r.ProcessPath), "$($r.RemoteAddress):$($r.RemotePort)", "$($r.Proto) local $($r.LocalAddress):$($r.LocalPort) pid $($r.PID)$d3x")
+        }
+    }
     & $weave 'sysmon_remote_thread' 2000 { param($r) @("$($r.Time)", 'remote thread (Sysmon 8)', (& $leaf $r.SourceImage), (& $leaf $r.TargetImage), "$(& $leaf $r.SourceImage) injected a remote thread into $(& $leaf $r.TargetImage) - cross-process injection lead") }
     & $weave 'sysmon_pipes' 1000 { param($r) @("$($r.Time)", "pipe $(if ("$($r.EventId)" -eq '17') { 'created' } else { 'connected' }) (Sysmon $($r.EventId))", (& $leaf $r.Image), ("$($r.PipeName)"), "named pipe $($r.PipeName)") }
     & $weave 'sysmon_proc_tamper' 1000 { param($r) @("$($r.Time)", 'process tampering (Sysmon 25)', (& $leaf $r.Image), (& $leaf $r.Image), "image swapped in memory - hollowing/herpaderp detected by Sysmon (R30)") }
