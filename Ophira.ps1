@@ -6402,6 +6402,7 @@ body.nosb .nav{display:none}
     try {
         # v2.78: $leads is imported up at the nav build (one read, its count feeds the nav)
         $null = $sb.AppendLine("<a name='leads'></a><h2>Triage leads - decide these first</h2>")
+        $null = $sb.AppendLine("<div class='meta'>Ranked by the verdict engine - work top to bottom; every lead links to the evidence section backing it.</div>")
         if ($leads.Count -eq 0) {
             $null = $sb.AppendLine("<div class='meta'>No signal rose to lead level - nothing here demands a decision before the reference sections.</div>")
         } else {
@@ -6795,6 +6796,7 @@ body.nosb .nav{display:none}
 
     # ---------- logon & account analysis ----------
     $null = $sb.AppendLine("<a name='logons'></a><h2>Logon & account activity</h2>")
+    $null = $sb.AppendLine("<div class='meta'>Who logged in, from where, and how often - failed attempts and unusual logon types are what matter.</div>")
     $inter = @($authEv | Where-Object { "$($_.EventId)" -eq '4624' -and "$($_.LogonType)" -match '^(2|10)$' } |
         ForEach-Object { [pscustomobject]@{ Who = "$(if ("$($_.AccountDomain)") { "$($_.AccountDomain)\" })$($_.Account) @ $(if ("$($_.SourceIp)") { $_.SourceIp } else { '-' })" } } |
         Group-Object Who | Sort-Object Count -Descending | Select-Object -First 15)
@@ -7220,6 +7222,7 @@ body.nosb .nav{display:none}
 
     # ---------- connections: correlated entities ----------
     $null = $sb.AppendLine("<a name='entities'></a><h2>Correlated entities - binaries &amp; accounts</h2>")
+    $null = $sb.AppendLine("<div class='meta'>Every binary, account and remote endpoint the case names, cross-linked across sources - open a card for its full story (trail, ran-as, usage).</div>")
     $null = $sb.AppendLine("<div class='meta'>Each entity below joins evidence from multiple independent sources (processes, execution history, persistence, network, SRUM usage, YARA, Sigma...) into one story. More categories touching one binary = stronger signal. Full data: csv\entities_binaries.csv / entities_accounts.csv / entities_remotes.csv</div>")
     $entAll = @($entB | Where-Object { (ConvertTo-SafeInt $_.CatCount) -ge 2 } | Sort-Object @{e = { ConvertTo-SafeInt $_.CatCount }; Descending = $true }, @{e = { if ("$($_.Verdict)" -match 'HIGH') { 2 } elseif ("$($_.Verdict)" -match 'MEDIUM') { 1 } else { 0 } }; Descending = $true }, @{e = 'Name' })
     $entTop = @($entAll | Select-Object -First 12)
@@ -7261,6 +7264,27 @@ body.nosb .nav{display:none}
             try { $lnD = (Split-Path "$($eD.Path)" -Leaf).ToLower() } catch { }
             if ($lnD) { $leafDup[$lnD] = 1 + (0 + $leafDup[$lnD]) }
         }
+        # v2.88: ran-as attribution - 4688 process creations per leaf; Account '-' is
+        # resolved through the 4624 logon-session map (LogonId -> account)
+        $ranByLeaf = @{}
+        $logonAcct = @{}
+        foreach ($la2 in $authEv) {
+            if ("$($la2.EventId)" -eq '4624' -and "$($la2.LogonId)" -and "$($la2.Account)" -and "$($la2.Account)" -ne '-') {
+                $logonAcct["$($la2.LogonId)"] = $(if ("$($la2.AccountDomain)" -and "$($la2.AccountDomain)" -ne '-') { "$($la2.AccountDomain)\$($la2.Account)" } else { "$($la2.Account)" })
+            }
+        }
+        foreach ($pe2 in $procEv) {
+            $np2 = "$($pe2.NewProcess)"
+            if (-not $np2) { continue }
+            $lf2 = ''
+            try { $lf2 = (Split-Path $np2 -Leaf).ToLower() } catch { }
+            if (-not $lf2) { continue }
+            $ac2 = "$($pe2.Account)"
+            if ($ac2 -eq '-') { $ac2 = $logonAcct["$($pe2.LogonId)"] }
+            if (-not $ac2) { continue }
+            if (-not $ranByLeaf.ContainsKey($lf2)) { $ranByLeaf[$lf2] = New-Object System.Collections.Generic.List[string] }
+            if ($ranByLeaf[$lf2].Count -lt 4 -and -not ($ranByLeaf[$lf2] | Where-Object { $_ -like "$ac2 @ *" })) { $ranByLeaf[$lf2].Add("$ac2 @ $($pe2.Time)") }
+        }
         foreach ($e in $entTop) {
             $vCls = switch -Regex ("$($e.Verdict)") { 'HIGH' { 'crit'; break } 'MEDIUM' { 'med'; break } default { 'info' } }
             $vTxt = if ("$($e.Verdict)") { ", verdict <span class='$vCls'>$($e.Verdict)</span>" } else { '' }
@@ -7268,8 +7292,9 @@ body.nosb .nav{display:none}
             try { $lnE = (Split-Path "$($e.Path)" -Leaf).ToLower() } catch { }
             $dupTxt = if ($lnE -and $leafDup[$lnE] -gt 1) { " <span class='meta'>(name shared by $($leafDup[$lnE]) cards - verify identity by hash before treating as one)</span>" } else { '' }
             $null = $sb.AppendLine("<details><summary><b>$(ConvertTo-HtmlEsc $e.Name)</b> - <span class='high'>$($e.CatCount) evidence categories</span>$vTxt$dupTxt</summary>")
-            $null = $sb.AppendLine("<table><tr><th>Path</th><th>Company</th><th>Description</th><th>First seen</th><th>Last seen</th><th>Signer</th><th>Hashes</th></tr>")
-            $null = $sb.AppendLine("<tr><td class='path'>$(ConvertTo-HtmlEsc $e.Path)</td><td>$(ConvertTo-HtmlEsc $e.Company)</td><td>$(ConvertTo-HtmlEsc $e.Description)</td><td>$(ConvertTo-HtmlEsc $e.FirstSeen)</td><td>$(ConvertTo-HtmlEsc $e.LastSeen)</td><td>$(ConvertTo-HtmlEsc $e.Signer)</td><td class='path'>$(ConvertTo-HtmlEsc $e.Hashes)</td></tr></table>")
+            $null = $sb.AppendLine("<table><tr><th>Path</th><th>Company</th><th>Description</th><th>First seen</th><th>Last seen</th><th>Signer</th><th>Hashes</th><th>Ran as</th></tr>")
+            $ranTxt = if ($lnE -and $ranByLeaf.ContainsKey($lnE)) { @($ranByLeaf[$lnE]) -join '; ' } else { 'not captured (process auditing off)' }
+            $null = $sb.AppendLine("<tr><td class='path'>$(ConvertTo-HtmlEsc $e.Path)</td><td>$(ConvertTo-HtmlEsc $e.Company)</td><td>$(ConvertTo-HtmlEsc $e.Description)</td><td>$(ConvertTo-HtmlEsc $e.FirstSeen)</td><td>$(ConvertTo-HtmlEsc $e.LastSeen)</td><td>$(ConvertTo-HtmlEsc $e.Signer)</td><td class='path'>$(ConvertTo-HtmlEsc $e.Hashes)</td><td>$(ConvertTo-HtmlEsc $ranTxt)</td></tr></table>")
             # v2.56: "appears in" chips - each category links to the section carrying its evidence
             # v2.66 (B8): unmapped categories render as grey/dead chips (informational, not
             # broken); chip order is name-sorted via Sort-Object -Unique (stable across renders)
@@ -7434,6 +7459,7 @@ body.nosb .nav{display:none}
 
     # ---------- host snapshot ----------
     $null = $sb.AppendLine("<a name='snapshot'></a><h2>Host snapshot (AV state, stored credentials, outbound RDP)</h2>")
+    $null = $sb.AppendLine("<div class='meta'>Point-in-time host state - posture context for the verdict, not evidence of compromise by itself.</div>")
     $snapAny = $false
     if ($defStatus.Count -gt 0) {
         $snapAny = $true
@@ -7536,6 +7562,7 @@ body.nosb .nav{display:none}
     $tlAll = $tlRows
     $tlSources = @($tlAll | ForEach-Object { "$($_.Source)" } | Sort-Object -Unique)
     $null = $sb.AppendLine("<a name='timeline'></a><h2>Master timeline (gathered evidence chronology)</h2>")
+    $null = $sb.AppendLine("<div class='meta'>All woven sources in one chronology - connections (with DNS resolution), logons, executions and Defender actions in sequence.</div>")
     $null = $sb.AppendLine("<div class='card'>The full chronology lives in <b>csv\$(ConvertTo-HtmlEsc (Get-CaseCsvPath 'supertimeline'))</b> ($(ConvertTo-HtmlEsc $tlAll.Count) events from $($tlSources.Count) evidence sources - open it in Excel/Timeline Explorer and filter by Timestamp). Evidence sources woven: $(ConvertTo-HtmlEsc ($tlSources -join ', ')). Per-source row caps (200-5000 per source) keep the file bounded - when a cap bites, the NEWEST events of that source are kept, and the total file is capped at the newest 120,000 events. Scanner conclusions (Sigma detections, hunt findings, beacons) are intentionally NOT part of it - they have their own sections above. For windowed pivots with per-source/busiest-minute summaries run <b>-Mode Timeline</b>.</div>")
     # v2.88: plaso deep-timeline status / how-to (kept to one honest line)
     $plasoN = @($tlAll | Where-Object { "$($_.Source)" -eq 'plaso' }).Count
@@ -7710,7 +7737,27 @@ body.nosb .nav{display:none}
             if (@($ft.Masquerade).Count -gt 0) {
                 $null = $sb.AppendLine("<div class='lead lead-med' style='padding:6px 12px'><b>MASQUERADE WARNING:</b> the name appears at multiple paths - $(ConvertTo-HtmlEsc (@($ft.Masquerade) -join ', ')). Compare the entity groups below; only one of them is probably the real OS binary.</div>")
             }
-            if (@($ft.Paths).Count -gt 0) {
+            # v2.88: dossier trail - the same timeline-slice machinery the entity cards use,
+        # keyed on the dossier's names/paths/hashes; renders before the entity groups
+        $fAlts = @()
+        foreach ($fn2 in @($ft.Names)) { if ("$fn2".Length -ge 4) { $fAlts += [regex]::Escape("$fn2") } }
+        foreach ($fp2 in @($ft.Paths)) { try { $fl2 = Split-Path "$fp2" -Leaf; if ($fl2) { $esc2 = [regex]::Escape($fl2); if ($fAlts -notcontains $esc2) { $fAlts += $esc2 } } } catch { } }
+        foreach ($fh2 in @($ft.Hashes)) { if ("$fh2".Length -ge 32) { $fAlts += [regex]::Escape("$fh2") } }
+        $fTrail = @()
+        if ($fAlts.Count -gt 0 -and $tlPre.Count -gt 0) {
+            $fPat2 = '(?i)(' + (($fAlts | Select-Object -Unique | Select-Object -First 12) -join '|') + ')'
+            $fTrail = Get-EntityTrailPieces $tlPre $fPat2 6 20
+        }
+        if ($fTrail.Count -gt 0) {
+            $null = $sb.AppendLine("<h3>Dossier trail ($($fTrail.Count) master-timeline event(s) mention this indicator)</h3>")
+            $null = $sb.AppendLine("<table><tr><th>Time</th><th>Source</th><th>Type</th><th>Actor</th><th>Detail</th></tr>")
+            foreach ($t4 in $fTrail) {
+                $r4 = $t4.Row
+                $null = $sb.AppendLine("<tr><td>$(ConvertTo-HtmlEsc $r4.Timestamp)</td><td>$(ConvertTo-HtmlEsc $r4.Source)</td><td>$(ConvertTo-HtmlEsc $r4.Type)</td><td>$(ConvertTo-HtmlEsc $r4.Actor)</td><td class='path'>$(ConvertTo-HtmlEsc ("$($r4.Entity) $($r4.Detail)".Trim()))</td></tr>")
+            }
+            $null = $sb.AppendLine("</table>")
+        }
+        if (@($ft.Paths).Count -gt 0) {
                 $null = $sb.AppendLine("<h3>Entity groups (path + hash keyed - same-name binaries at different paths are separate groups)</h3><table><tr><th>Path</th><th>Hash</th><th>Hits</th><th>First seen</th><th>Last seen</th></tr>")
                 # v2.82: per-group hash from focus_terms.json EntityGroups - Hashes[0] on every
                 # row was the same-hash bug; algo label (SHA256:/SHA1:) is baked into the value
