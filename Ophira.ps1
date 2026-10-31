@@ -7253,10 +7253,21 @@ body.nosb .nav{display:none}
         # v2.66 (B12): shared text filter over the entity cards
         $null = $sb.AppendLine("<div class='sbar'><input id='entf' data-secfilter='1' data-wrap='entwrap' data-sel='details' data-cnt='cnt_ent' placeholder='filter entities (name / path / evidence)...' style='width:340px'> <span class='meta' id='cnt_ent'></span></div>")
         $null = $sb.AppendLine("<div id='entwrap'>")
+        # v2.88: duplicate-name awareness - cards sharing a leaf name stay separate until a
+        # hash or size proves them identical; surface that so analysts verify before merging
+        $leafDup = @{}
+        foreach ($eD in $entAll) {
+            $lnD = ''
+            try { $lnD = (Split-Path "$($eD.Path)" -Leaf).ToLower() } catch { }
+            if ($lnD) { $leafDup[$lnD] = 1 + (0 + $leafDup[$lnD]) }
+        }
         foreach ($e in $entTop) {
             $vCls = switch -Regex ("$($e.Verdict)") { 'HIGH' { 'crit'; break } 'MEDIUM' { 'med'; break } default { 'info' } }
             $vTxt = if ("$($e.Verdict)") { ", verdict <span class='$vCls'>$($e.Verdict)</span>" } else { '' }
-            $null = $sb.AppendLine("<details><summary><b>$(ConvertTo-HtmlEsc $e.Name)</b> - <span class='high'>$($e.CatCount) evidence categories</span>$vTxt</summary>")
+            $lnE = ''
+            try { $lnE = (Split-Path "$($e.Path)" -Leaf).ToLower() } catch { }
+            $dupTxt = if ($lnE -and $leafDup[$lnE] -gt 1) { " <span class='meta'>(name shared by $($leafDup[$lnE]) cards - verify identity by hash before treating as one)</span>" } else { '' }
+            $null = $sb.AppendLine("<details><summary><b>$(ConvertTo-HtmlEsc $e.Name)</b> - <span class='high'>$($e.CatCount) evidence categories</span>$vTxt$dupTxt</summary>")
             $null = $sb.AppendLine("<table><tr><th>Path</th><th>Company</th><th>Description</th><th>First seen</th><th>Last seen</th><th>Signer</th><th>Hashes</th></tr>")
             $null = $sb.AppendLine("<tr><td class='path'>$(ConvertTo-HtmlEsc $e.Path)</td><td>$(ConvertTo-HtmlEsc $e.Company)</td><td>$(ConvertTo-HtmlEsc $e.Description)</td><td>$(ConvertTo-HtmlEsc $e.FirstSeen)</td><td>$(ConvertTo-HtmlEsc $e.LastSeen)</td><td>$(ConvertTo-HtmlEsc $e.Signer)</td><td class='path'>$(ConvertTo-HtmlEsc $e.Hashes)</td></tr></table>")
             # v2.56: "appears in" chips - each category links to the section carrying its evidence
@@ -8856,6 +8867,46 @@ function New-EntityCorrelation {
             $mLine = "correlated: same binary also seen as $($src.Path)"
             if ($keep.Evidence.Count -lt 14 -and -not $keep.Evidence.Contains($mLine)) { $keep.Evidence.Add($mLine) }
             $binsByPath.Remove($srcKey)
+        }
+    }
+    # v2.88: leaf-identity pass - same leaf name AND matching file size or a shared hash is
+    # one binary copied around (the path pass above cannot join node.exe living under two
+    # unrelated directory trees). Pairs with neither size nor hash known stay separate.
+    $leafKeys = @($binsByPath.Keys)
+    for ($bi = 0; $bi -lt $leafKeys.Count; $bi++) {
+        $kA = $leafKeys[$bi]
+        if (-not $binsByPath.ContainsKey($kA)) { continue }
+        $a = $binsByPath[$kA]
+        $lnA = ''
+        try { $lnA = (Split-Path $a.Path -Leaf).ToLower() } catch { }
+        if (-not $lnA) { continue }
+        for ($bj = $bi + 1; $bj -lt $leafKeys.Count; $bj++) {
+            $kB = $leafKeys[$bj]
+            if (-not $binsByPath.ContainsKey($kB)) { continue }
+            $b = $binsByPath[$kB]
+            try { if ((Split-Path $b.Path -Leaf).ToLower() -ne $lnA) { continue } } catch { continue }
+            $hashMatch = @($a.Hashes | Where-Object { $b.Hashes -contains $_ }).Count -gt 0
+            $byteMatch = ("$($a.Bytes)" -and "$($a.Bytes)" -eq "$($b.Bytes)")
+            if (-not $hashMatch -and -not $byteMatch) { continue }
+            $keep = $a; $src = $b
+            if ($keep.Cats.Count -lt $src.Cats.Count) { $tmp = $keep; $keep = $src; $src = $tmp }
+            foreach ($c in $src.Cats) { if ($keep.Cats -notcontains $c) { $keep.Cats.Add($c) } }
+            foreach ($h in $src.Hashes) { if ($keep.Hashes -notcontains $h) { $keep.Hashes.Add($h) } }
+            foreach ($e in $src.Evidence) { if ($keep.Evidence.Count -lt 14 -and -not $keep.Evidence.Contains($e)) { $keep.Evidence.Add($e) } }
+            foreach ($k2 in @($src.EvPerCat.Keys)) { if (-not $keep.EvPerCat.ContainsKey($k2) -or $keep.EvPerCat[$k2] -lt $src.EvPerCat[$k2]) { $keep.EvPerCat[$k2] = $src.EvPerCat[$k2] } }
+            if (-not $keep.Company) { $keep.Company = $src.Company }
+            if (-not $keep.Desc) { $keep.Desc = $src.Desc }
+            if (-not $keep.Verdict -or ($keep.Verdict -notmatch 'HIGH' -and $src.Verdict -match 'HIGH')) { $keep.Verdict = $src.Verdict; $keep.Signer = $src.Signer }
+            if ($src.FirstSeen -and (-not $keep.FirstSeen -or ([datetime]$src.FirstSeen) -lt ([datetime]$keep.FirstSeen))) { $keep.FirstSeen = $src.FirstSeen }
+            if ($src.LastSeen -and (-not $keep.LastSeen -or ([datetime]$src.LastSeen) -gt ([datetime]$keep.LastSeen))) { $keep.LastSeen = $src.LastSeen }
+            if ("$($src.Bytes)" -and -not "$($keep.Bytes)") { $keep.Bytes = $src.Bytes }
+            $mLine = "correlated: same binary also seen as $($src.Path)"
+            if ($keep.Evidence.Count -lt 14 -and -not $keep.Evidence.Contains($mLine)) { $keep.Evidence.Add($mLine) }
+            # keep the richer card under ITS key; drop the absorbed one
+            $winKey = $kA
+            foreach ($kk in @($binsByPath.Keys)) { if ($binsByPath[$kk] -eq $keep) { $winKey = $kk; break } }
+            if ($winKey -ne $kA) { $binsByPath.Remove($kA) } else { $binsByPath.Remove($kB) }
+            $a = $binsByPath[$winKey]
         }
     }
     if ($env:OPHIRA_DBG_ENT) { foreach ($kv in $binsByPath.GetEnumerator()) { Write-Host ("DBG bin: {0} -> [{1}]" -f $kv.Key, ($kv.Value.Cats -join ",")) } }
