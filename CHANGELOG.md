@@ -1,5 +1,11 @@
 ﻿# Changelog
 
+## v2.90
+- Focus engine: ports no longer expand as new terms - shared-by-design ports (proxy listeners like 10808, ephemeral client ports) bridged unrelated processes and made dossiers drift (xray.exe pulled in every proxy client + browser/steam junk via port 10808); indicator ports still match exactly
+- Dossier trail is indicator-scoped: only rows mentioning the indicator leaf, its own path leaves or its hashes - expansion-discovered relations stay on the entity cards instead of reading as unrelated garbage
+- User activity rollup: account rows key on the account LEAF so 'DOMAIN\\user', bare 4688 accounts and the C:\Users\\<user> profile bucket merge into one row (display keeps the domain-qualified name); 'last seen' compares parsed timestamps instead of text (PM events no longer lose to lexically-greater AM text)
+- Version bump v2.90; new tests\test_v290.ps1 (engine port-bridge brake proven on a synthetic xray/firefox fixture + rollup merge/ticks logic)
+
 ## v2.89
 - Report UI overhaul wave 2: grouped sidebar (Overview/Findings/Context/Host state/Reference) with scrollspy active-section highlight, collapsible via hamburger (state remembered)
 - At-a-glance stat tiles under the verdict banner (high/medium findings, flagged processes, hot leads, sigma alerts, beacon candidates, caveats) - severity-colored only when non-zero, each tile jumps to its section

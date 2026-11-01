@@ -1,5 +1,5 @@
 <#
-Ophira v2.89  -  Windows Incident Response Triage Toolkit
+Ophira v2.90  -  Windows Incident Response Triage Toolkit
 READ-ONLY by design: never modifies the system, only reads and copies data
 into its own output folder. Intended to be handed to a system owner or run
 by a responder during early triage / threat hunting.
@@ -363,7 +363,7 @@ param(
     [switch]$ExitVerdict
 )
 
-$ScriptVersion = "2.89"
+$ScriptVersion = "2.90"
 $ErrorActionPreference = 'Continue'
 $ProgressPreference = 'SilentlyContinue'
 
@@ -6094,29 +6094,37 @@ h3{font-size:13.5px;margin:20px 0 8px;color:var(--tx)}
     # v2.88 USER-ACTIVITY ROLLUP (who did what): auth 4624/4625 + 4688 process creations +
     # user-profile MFT activity, keyed per account; feeds the section and the nav counts
     $userAct = [ordered]@{}
+    # v2.90: parse-dont-compare helper for 'last seen' - lexical compare made '9:58 AM'
+    # beat '1:59 PM' (en-US M/d/yyyy h:mm:ss tt sorts '9' after '1' as text)
+    $uaTicks = { param([string]$s) $d = [datetime]::MinValue; if ($s -and [datetime]::TryParse($s, [ref]$d)) { $d.Ticks } else { [long]::MinValue } }
     foreach ($a2 in $authEv) {
         if (@('4624', '4625') -notcontains "$($a2.EventId)") { continue }
         $disp2 = "$(if ("$($a2.AccountDomain)" -and "$($a2.AccountDomain)" -ne '-') { "$($a2.AccountDomain)\" })$($a2.Account)".Trim('\')
         if (-not $disp2 -or @('', '-', '$') -contains "$($a2.Account)") { continue }
-        $k2 = $disp2.ToLower()
+        # v2.90: key on the account LEAF so 'DESKTOP-88Q1H74\aryan', bare 'aryan' (4688)
+        # and the C:\Users\aryan profile bucket are ONE user, not three rows; display keeps
+        # the most-qualified (domain-qualified) name seen
+        $k2 = ("$disp2" -split '\\')[-1].ToLower()
         if (-not $userAct.Contains($k2)) { $userAct[$k2] = @{ Name = $disp2; Logons = 0; Failed = 0; Types = @{}; Ips = @{}; Procs = @{}; ProcN = 0; Files = 0; Last = '' } }
         $u2 = $userAct[$k2]
+        if ("$($u2.Name)" -notmatch '\\' -and "$disp2" -match '\\') { $u2.Name = $disp2 }
         if ("$($a2.EventId)" -eq '4625') { $u2.Failed++ } else { $u2.Logons++ }
         $lt2 = "$($a2.LogonType)"; if ($lt2) { $u2.Types[$lt2] = 1 }
         $ip2 = "$($a2.SourceIp)"; if ($ip2 -and $ip2 -ne '-') { $u2.Ips[$ip2] = 1 }
-        if ("$($a2.Time)" -gt "$($u2.Last)") { $u2.Last = "$($a2.Time)" }
+        if ((& $uaTicks "$($a2.Time)") -gt (& $uaTicks "$($u2.Last)")) { $u2.Last = "$($a2.Time)" }
     }
     $procEv = @(Import-CaseCsv 'security_proc_events')
     foreach ($p3 in $procEv) {
         $disp3 = "$($p3.Account)"
         if (-not $disp3 -or @('-', '') -contains $disp3) { continue }
-        $k3 = $disp3.ToLower()
+        $k3 = ("$disp3" -split '\\')[-1].ToLower()
         if (-not $userAct.Contains($k3)) { $userAct[$k3] = @{ Name = $disp3; Logons = 0; Failed = 0; Types = @{}; Ips = @{}; Procs = @{}; ProcN = 0; Files = 0; Last = '' } }
         $u3 = $userAct[$k3]
+        if ("$($u3.Name)" -notmatch '\\' -and "$disp3" -match '\\') { $u3.Name = $disp3 }
         $u3.ProcN++
         $lp3 = try { Split-Path "$($p3.NewProcess)" -Leaf } catch { "$($p3.NewProcess)" }
         if ($lp3) { $u3.Procs[$lp3] = [int]$u3.Procs[$lp3] + 1 }
-        if ("$($p3.Time)" -gt "$($u3.Last)") { $u3.Last = "$($p3.Time)" }
+        if ((& $uaTicks "$($p3.Time)") -gt (& $uaTicks "$($u3.Last)")) { $u3.Last = "$($p3.Time)" }
     }
     foreach ($m4 in $mftRecent) {
         if ("$($m4.Path)" -notmatch '(?i)^c:\\users\\([^\\]+)\\') { continue }
@@ -7804,10 +7812,16 @@ h3{font-size:13.5px;margin:20px 0 8px;color:var(--tx)}
             # what is related to what instead of assuming they will guess
             $null = $sb.AppendLine("<div class='meta' style='margin-bottom:8px'>How to read this dossier, top to bottom: <b>Trail</b> = every master-timeline event that mentions this indicator, oldest first (Source = which collection produced the row). <b>Entity groups</b> = the places this NAME lives; one row per path, and the hash tells you whether two paths hold the same file. <b>Instances</b> = the process runs captured for it - Parent links each run to what launched it. <b>Evidence by artifact</b> = which collection sources saw it, with links to their sections.</div>")
             # v2.88: dossier trail - the same timeline-slice machinery the entity cards use,
-        # keyed on the dossier's names/paths/hashes; renders before the entity groups
+        # keyed on the dossier's own identities; renders before the entity groups
+        # v2.90: trail is INDICATOR-scoped - only rows mentioning the indicator leaf, the
+        # indicator's own path leaves, or its hashes. Expansion-discovered relations (proxy
+        # clients, browser noise) belong on the entity cards; folding them in made the trail
+        # read as unrelated garbage (steam rows on an xray dossier).
+        $fIndLeaf = "$($ft.Indicator)"
+        if ("$fIndLeaf".Contains('\')) { $fIndLeaf = ("$fIndLeaf" -split '\\')[-1] }
         $fAlts = @()
-        foreach ($fn2 in @($ft.Names)) { if ("$fn2".Length -ge 4) { $fAlts += [regex]::Escape("$fn2") } }
-        foreach ($fp2 in @($ft.Paths)) { try { $fl2 = Split-Path "$fp2" -Leaf; if ($fl2) { $esc2 = [regex]::Escape($fl2); if ($fAlts -notcontains $esc2) { $fAlts += $esc2 } } } catch { } }
+        if ("$fIndLeaf".Length -ge 4) { $fAlts += [regex]::Escape("$fIndLeaf") }
+        foreach ($fp2 in @($ft.Paths)) { if ("$fp2" -like "*$fIndLeaf*") { try { $fl2 = Split-Path "$fp2" -Leaf; if ($fl2) { $esc2 = [regex]::Escape($fl2); if ($fAlts -notcontains $esc2) { $fAlts += $esc2 } } } catch { } } }
         foreach ($fh2 in @($ft.Hashes)) { if ("$fh2".Length -ge 32) { $fAlts += [regex]::Escape("$fh2") } }
         $fTrail = @()
         if ($fAlts.Count -gt 0 -and $tlPre.Count -gt 0) {
@@ -13049,13 +13063,10 @@ function Invoke-FocusCore {
         if ($x -match '^(0\.0\.0\.0|255\.255\.255\.255|22[4-9]\.|2[3-5]\d\.)') { return }
         if (-not $ips.Contains($x) -and $ips.Count -lt 20) { $ips.Add($x) }
     }
-    $addPort = {
-        param([string]$v)
-        $x = "$v".Trim()
-        if ($x -notmatch '^\d{1,5}$') { return }
-        if ([int]$x -lt 1 -or [int]$x -gt 65535) { return }
-        if (-not $ports.Contains($x) -and $ports.Count -lt 10) { $ports.Add($x) }
-    }
+    # v2.90: $addPort removed - ports/PIDs must NOT expand. Shared-by-design ports (proxy
+    # listeners like 10808, ephemeral client ports) bridge unrelated processes and the
+    # dossier drifted (xray -> port 10808 -> every proxy client -> browser junk). Indicator
+    # ports still match exactly via matchRow.
 
     # hash seed -> resolve to the binary's path/name so one hash pulls the whole story
     foreach ($hn in @('process_hashes.csv', 'entities_binaries.csv', 'amcache.csv')) {
@@ -13189,7 +13200,7 @@ function Invoke-FocusCore {
                     if ($nm -match $pathCols) { & $addPath $v }
                     if ($nm -match $nameCols) { & $addName $v }
                     if ($nm -match $ipCols) { & $addIp $v }
-                    if ($nm -match $portCols) { & $addPort $v }
+                    # v2.90: no port expansion here (see $addPort removal note above)
                 }
                 # instance record from the identity sources
                 if ($src -eq 'processes' -or $src -eq 'sysmon_proc_create' -or $src -eq 'security_proc_events') {
