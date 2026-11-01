@@ -156,7 +156,7 @@ Check "T10: empty section shows the (none) marker - YARA" ($html.Contains("<a hr
 Check "T10: empty section shows the (none) marker - Drivers" ($html.Contains("<a href='#drivers'>Drivers (none)</a>"))
 
 # nav counts must not break the v2.66 B1 contract: every link still targets a real anchor
-$navHtml278 = [regex]::Match($html, "(?s)<div class='nav'>(.*?)</div>").Groups[1].Value
+$navHtml278 = [regex]::Match($html, "(?m)^<div class='nav' id='snav'>(.*)$").Groups[1].Value
 $navSeq278 = @([regex]::Matches($navHtml278, "href='#([a-z]+)'") | ForEach-Object { $_.Groups[1].Value })
 $docSeq278 = @([regex]::Matches($html, "<a name='([a-z]+)'></a>") | ForEach-Object { $_.Groups[1].Value })
 $deadNav278 = @($navSeq278 | Where-Object { $docSeq278 -notcontains $_ })

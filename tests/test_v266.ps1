@@ -152,14 +152,19 @@ $null = New-HtmlReport
 $html = Get-Content -LiteralPath (Join-Path $CaseDir 'report.html') -Raw
 
 # ---- B1: nav order mirrors the rendered document ----
-$navHtml = [regex]::Match($html, "(?s)<div class='nav'>(.*?)</div>").Groups[1].Value
+$navHtml = [regex]::Match($html, "(?m)^<div class='nav' id='snav'>(.*)$").Groups[1].Value
 $navSeq = @([regex]::Matches($navHtml, "href='#([a-z]+)'") | ForEach-Object { $_.Groups[1].Value })
 $docSeq = @([regex]::Matches($html, "<a name='([a-z]+)'></a>") | ForEach-Object { $_.Groups[1].Value })
 Check "nav: extracted $($navSeq.Count) nav links and $($docSeq.Count) document anchors" ($navSeq.Count -ge 20 -and $docSeq.Count -ge 20)
 $deadNav = @($navSeq | Where-Object { $docSeq -notcontains $_ })
 Check "B1: every nav link targets an existing document anchor" ($deadNav.Count -eq 0)
 $docInNavOrder = @($docSeq | Where-Object { $navSeq -contains $_ })
-Check "B1: nav sequence == document render order (was Leads-before-Verdict, Timeline-before-Snapshot)" ((($navSeq -join ',') -eq ($docInNavOrder -join ',')))
+# v2.89: sidebar groups the sections (Overview/Findings/Context/HostState/Reference) - pin the
+# grouped flat sequence instead of raw document order (the old doc-order pin is the v2.85 layout)
+$navSeqExpected = @('verdict','activity','leads','coverage','attack','ioc','tactics','yara','processes','sigma','hunt','logons','useract','entities','persistence','filesystem','beacons','network','drivers','snapshot','posture','timeline','focus','recommendations','evidence')
+Check "B1: nav sequence == grouped sidebar order (v2.89 groups)" ((($navSeq -join ',') -eq ($navSeqExpected -join ',')))
+# grouped nav re-orders vs the document (hunt moved into Findings group etc) - compare as SETS
+Check "B1: nav covers every document section" (((@($docInNavOrder | Sort-Object) -join ',') -eq (@($navSeqExpected | Sort-Object) -join ',')))
 Check "B1: Verdict nav link precedes Leads" ($navSeq.IndexOf('verdict') -lt $navSeq.IndexOf('leads'))
 Check "B1: Drivers/Hunt/Entities nav links precede Snapshot and Timeline" (($navSeq.IndexOf('drivers') -lt $navSeq.IndexOf('snapshot')) -and ($navSeq.IndexOf('hunt') -lt $navSeq.IndexOf('snapshot')) -and ($navSeq.IndexOf('entities') -lt $navSeq.IndexOf('snapshot')) -and ($navSeq.IndexOf('snapshot') -lt $navSeq.IndexOf('timeline')))
 

@@ -1,5 +1,5 @@
 <#
-Ophira v2.88  -  Windows Incident Response Triage Toolkit
+Ophira v2.89  -  Windows Incident Response Triage Toolkit
 READ-ONLY by design: never modifies the system, only reads and copies data
 into its own output folder. Intended to be handed to a system owner or run
 by a responder during early triage / threat hunting.
@@ -363,7 +363,7 @@ param(
     [switch]$ExitVerdict
 )
 
-$ScriptVersion = "2.88"
+$ScriptVersion = "2.89"
 $ErrorActionPreference = 'Continue'
 $ProgressPreference = 'SilentlyContinue'
 
@@ -5880,7 +5880,7 @@ function New-HtmlReport {
 
     $css = @'
 <style>
-:root{--bg:#0d0f13;--bg2:#14171e;--bg3:#1a1e27;--line:#252b38;--line2:#313a4c;--tx:#e2e7f0;--tx2:#9aa4b8;--tx3:#697182;--acc:#7aa2f7;--ok:#4cc38a;--warn:#e0af68;--bad:#f7768e;--info:#7dcfff}
+:root{--bg:#0b0e14;--bg2:#121622;--bg3:#1a2030;--line:#232b3d;--line2:#313c55;--tx:#e6edf7;--tx2:#9aa8c0;--tx3:#6b7691;--acc:#7aa2f7;--ok:#4cc38a;--warn:#e0af68;--bad:#f7768e;--info:#7dcfff}
 [data-theme=light]{--bg:#f6f7fa;--bg2:#ffffff;--bg3:#eef1f6;--line:#dce1ea;--line2:#c7d0dd;--tx:#181e2c;--tx2:#525d76;--tx3:#8791a5;--acc:#2b6cb0;--ok:#1f8f5a;--warn:#a3671a;--bad:#c0392b;--info:#2278a0}
 body{background:var(--bg);color:var(--tx);font-family:'Segoe UI',Arial,sans-serif;margin:0;padding:58px 30px 90px 278px}
 h1{font-size:21px;margin:0 0 4px} h2{font-size:16px;margin:34px 0 10px;color:var(--acc);border-bottom:1px solid var(--line);padding-bottom:6px}
@@ -5894,6 +5894,11 @@ a{color:var(--acc);text-decoration:none}a:hover{color:var(--tx)}
 .nav{position:fixed;top:0;left:0;bottom:0;width:250px;background:var(--bg2);border-right:1px solid var(--line);padding:16px 10px;overflow-y:auto;z-index:40;display:flex;flex-direction:column;gap:2px}
 .nav a{color:var(--tx2);font-size:12.5px;text-decoration:none;padding:5px 10px;border-radius:6px;border-left:2px solid transparent;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 .nav a:hover{background:var(--bg3);color:var(--tx)}
+.nbrand{font-weight:800;font-size:15px;letter-spacing:2px;color:var(--acc);padding:2px 10px 10px;border-bottom:1px solid var(--line);margin-bottom:8px}
+.nbrand span{display:block;font-size:10px;font-weight:400;letter-spacing:1px;color:var(--tx3);margin-top:2px}
+.ngh{font-size:10px;font-weight:700;letter-spacing:1.5px;text-transform:uppercase;color:var(--tx3);padding:10px 10px 4px}
+.nav a.act{background:var(--bg3);color:var(--acc);border-left-color:var(--acc)}
+.nav::-webkit-scrollbar{width:8px}.nav::-webkit-scrollbar-thumb{background:var(--line2);border-radius:4px}
 @media(max-width:1100px){.nav{position:static;width:auto;flex-direction:row;flex-wrap:wrap;border-bottom:1px solid var(--line)}body{padding-left:30px}.topbar{left:0}}
 .mkey{position:sticky;top:50px;z-index:5;background:var(--bg);border-bottom:1px solid var(--line);padding:3px 0;font-size:11px;color:var(--tx3)}
 .mkey i{display:inline-block;width:9px;height:9px;border-radius:2px;border:1px solid;margin:0 3px 0 10px;vertical-align:middle}
@@ -5958,7 +5963,23 @@ body.nosb .topbar{left:0}
 .barcnt{flex:0 0 auto;margin-left:auto;text-align:right;color:var(--tx2)}
 .sevbar{display:flex;height:14px;border-radius:4px;overflow:hidden;border:1px solid var(--line)}
 .sevbar div{height:100%}
-@media print{body{background:#fff;color:#111;font-size:11px;padding:6px}.nav,.topbar,#copied,.sbar,.pgr,.mkey,.tbtn,button{display:none!important}h1,h2{color:#111;border-color:#999}pre.ioc{background:#f4f4f4;color:#111;border-color:#bbb}table{font-size:10px}th{background:#eee;color:#111;position:static}tr:nth-child(even){background:#fafafa}.vbanner,.lead,.rec,.card{background:#fafafa;border-color:#bbb}.meta,.foot{color:#444}a{color:#111;text-decoration:none}.swall{display:none!important}.heatcell{outline:1px solid #ccc}.lead-crit{border-left-color:#c0392b}.lead-med{border-left-color:#a3671a}}
+.tiles{display:grid;grid-template-columns:repeat(auto-fit,minmax(124px,1fr));gap:10px;margin:14px 0}
+.tile{background:var(--bg2);border:1px solid var(--line);border-radius:10px;padding:10px 14px;display:flex;flex-direction:column;gap:2px;border-top:3px solid var(--line2);transition:border-color .15s,transform .15s;cursor:pointer}
+.tile b{font-size:22px;color:var(--tx)}.tile span{font-size:11px;color:var(--tx2)}
+.tile:hover{border-color:var(--acc);transform:translateY(-1px)}
+.tile.tBad{border-top-color:var(--bad)}.tile.tBad b{color:var(--bad)}
+.tile.tWarn{border-top-color:var(--warn)}.tile.tWarn b{color:var(--warn)}
+.tile.tInfo{border-top-color:var(--info)}.tile.tInfo b{color:var(--info)}
+.tile.tOk{border-top-color:var(--ok)}.tile.tOk b{color:var(--ok)}
+tr{transition:background .12s}
+tr:hover{background:rgba(122,162,247,.06)}
+[data-theme=light] tr:hover{background:rgba(43,108,176,.06)}
+a:focus-visible,button:focus-visible,summary:focus-visible{outline:2px solid var(--acc);outline-offset:1px;border-radius:4px}
+::selection{background:rgba(122,162,247,.35)}
+summary:hover{color:var(--acc)}
+h3{font-size:13.5px;margin:20px 0 8px;color:var(--tx)}
+@media (prefers-reduced-motion: reduce){*{transition:none!important;animation:none!important}}
+@media print{body{background:#fff;color:#111;font-size:11px;padding:6px}.nav,.topbar,#copied,.sbar,.pgr,.mkey,.tbtn,button,.tiles{display:none!important}h1,h2{color:#111;border-color:#999}pre.ioc{background:#f4f4f4;color:#111;border-color:#bbb}table{font-size:10px}th{background:#eee;color:#111;position:static}tr:nth-child(even){background:#fafafa}.vbanner,.lead,.rec,.card{background:#fafafa;border-color:#bbb}.meta,.foot{color:#444}a{color:#111;text-decoration:none}.swall{display:none!important}.heatcell{outline:1px solid #ccc}.lead-crit{border-left-color:#c0392b}.lead-med{border-left-color:#a3671a}}
 </style>
 '@
 
@@ -6138,16 +6159,30 @@ body.nosb .topbar{left:0}
         snapshot = 'Snapshot'; posture = 'Posture'; timeline = 'Timeline'; focus = 'Focus'; recommendations = 'Recommendations'
         evidence = 'Evidence index'
     }
-    $navParts = New-Object System.Collections.Generic.List[string]
-    foreach ($nk in $nLabel.Keys) {
-        $nl2 = ConvertTo-HtmlEsc $nLabel[$nk]
-        if ($nCount.ContainsKey($nk)) {
-            $nc2 = [int]$nCount[$nk]
-            $nl2 = "$nl2 $(if ($nc2 -gt 0) { "($nc2)" } else { '(none)' })"
-        }
-        $navParts.Add("<a href='#$nk'>$nl2</a>")
+    # v2.89: grouped sidebar (Velociraptor/Defender-style reading guide) - groups cluster
+    # the sections; within a group links stay in document order. The flattened group order
+    # is pinned by test_v266 B1.
+    $navGroups = [ordered]@{
+        'Overview' = @('verdict','activity','leads','coverage')
+        'Findings' = @('attack','ioc','tactics','yara','processes','sigma','hunt')
+        'Context' = @('logons','useract','entities','persistence','filesystem','beacons','network','drivers')
+        'Host state' = @('snapshot','posture','timeline','focus')
+        'Reference' = @('recommendations','evidence')
     }
-    $null = $sb.AppendLine("<div class='nav'>$($navParts -join '')</div>")
+    $navParts = New-Object System.Collections.Generic.List[string]
+    $navParts.Add("<div class='nbrand'>OPHIRA<span>IR triage report</span></div>")
+    foreach ($ng in $navGroups.Keys) {
+        $navParts.Add("<div class='ngh'>$ng</div>")
+        foreach ($nk in $navGroups[$ng]) {
+            $nl2 = ConvertTo-HtmlEsc $nLabel[$nk]
+            if ($nCount.ContainsKey($nk)) {
+                $nc2 = [int]$nCount[$nk]
+                $nl2 = "$nl2 $(if ($nc2 -gt 0) { "($nc2)" } else { '(none)' })"
+            }
+            $navParts.Add("<a href='#$nk'>$nl2</a>")
+        }
+    }
+    $null = $sb.AppendLine("<div class='nav' id='snav'>$($navParts -join '')</div>")
 
     # ---------- assessment at a glance (v2.61: the banner answers "infected or not?") ----------
     $null = $sb.AppendLine("<a name='verdict'></a><h2>Assessment at a glance</h2>")
@@ -6277,6 +6312,30 @@ body.nosb .topbar{left:0}
             $null = $sb.AppendLine("</ul>")
         }
         $null = $sb.AppendLine("</div>")
+        # v2.89: at-a-glance stat tiles - the numbers an analyst scans first, each jumping
+        # to its section; counts come from the same rows the sections render
+        $hfHi = @($huntRows | Where-Object { "$($_.Severity)" -eq 'high' }).Count
+        $hfMed = @($huntRows | Where-Object { "$($_.Severity)" -eq 'medium' }).Count
+        $ldHot = @($leads | Where-Object { "$($_.Rank)" -match '^(crit|high)$' }).Count
+        $sgHi = @($hayRows | Where-Object { "$($_.Level)" -match '^(critical|high)$' }).Count
+        $pcHi = @($scored | Where-Object { "$($_.Verdict)" -match 'HIGH' }).Count
+        $bcN = $beacons.Count + $dnsBeacons.Count
+        # severity-colored only when non-zero - a red 0 reads as an alarm (beacons stays
+        # tOk when 0 because there 0 IS the good news)
+        $clsHi = if ($hfHi -gt 0) { 'tBad' } else { '' }
+        $clsMed = if ($hfMed -gt 0) { 'tWarn' } else { '' }
+        $clsPc = if ($pcHi -gt 0) { 'tInfo' } else { '' }
+        $clsLd = if ($ldHot -gt 0) { 'tWarn' } else { '' }
+        $clsSg = if ($sgHi -gt 0) { 'tInfo' } else { '' }
+        $tiles = New-Object System.Collections.Generic.List[string]
+        [void]$tiles.Add("<a class='tile $clsHi' href='#hunt'><b>$hfHi</b><span>high findings</span></a>")
+        [void]$tiles.Add("<a class='tile $clsMed' href='#hunt'><b>$hfMed</b><span>medium findings</span></a>")
+        [void]$tiles.Add("<a class='tile $clsPc' href='#processes'><b>$pcHi</b><span>flagged processes</span></a>")
+        [void]$tiles.Add("<a class='tile $clsLd' href='#leads'><b>$ldHot</b><span>hot leads</span></a>")
+        [void]$tiles.Add("<a class='tile $clsSg' href='#sigma'><b>$sgHi</b><span>sigma alerts</span></a>")
+        [void]$tiles.Add("<a class='tile $(if ($bcN -gt 0) { 'tBad' } else { 'tOk' })' href='#beacons'><b>$bcN</b><span>beacon candidates</span></a>")
+        [void]$tiles.Add("<a class='tile' href='#snapshot'><b>$(@($v.Caveats).Count)</b><span>caveats</span></a>")
+        $null = $sb.AppendLine("<div class='tiles'>$($tiles -join '')</div>")
     } else {
         $null = $sb.AppendLine("<div class='vbanner v0'><p class='vtitle'>VERDICT UNAVAILABLE</p><p class='vowner'>The verdict engine did not run - review the raw sections below.</p></div>")
     }
@@ -8370,6 +8429,10 @@ body.nosb .topbar{left:0}
       // v2.88: sidebar collapse - persisted like the theme; floating Menu button reopens it
       function sbToggle(){var b=document.body;if(b.classList.contains('nosb')){b.classList.remove('nosb');try{localStorage.setItem('oph_sb','1');}catch(e){}}else{b.classList.add('nosb');try{localStorage.setItem('oph_sb','0');}catch(e){}}}
       try{if(localStorage.getItem('oph_sb')==='0'){document.body.classList.add('nosb');}}catch(e){}
+      // v2.89: scrollspy - highlight the sidebar entry of the section being read
+      var spLinks=[].slice.call(document.querySelectorAll('.nav a[href^="#"]'));
+      var spSecs=spLinks.map(function(a){return document.querySelector("a[name='"+a.getAttribute('href').slice(1)+"']");});
+      window.addEventListener('scroll',function(){var y=window.scrollY+90,cur=-1;for(var i=0;i<spSecs.length;i++){if(spSecs[i]&&spSecs[i].offsetTop<=y){cur=i;}}spLinks.forEach(function(a,i){a.classList.toggle('act',i===cur);});},{passive:true});
       var fullSaved=[];
       function showFullToggle(btn){
         if(fullSaved.length>0){

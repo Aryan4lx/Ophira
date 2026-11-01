@@ -1,5 +1,11 @@
 ﻿# Changelog
 
+## v2.89
+- Report UI overhaul wave 2: grouped sidebar (Overview/Findings/Context/Host state/Reference) with scrollspy active-section highlight, collapsible via hamburger (state remembered)
+- At-a-glance stat tiles under the verdict banner (high/medium findings, flagged processes, hot leads, sigma alerts, beacon candidates, caveats) - severity-colored only when non-zero, each tile jumps to its section
+- Deepened palette, row hover, focus-visible outlines, selection color, reduced-motion support
+- Version bump v2.89; drift-pin test updates (v266 nav extraction + grouped-order pin, v267 window, v278 nav extraction)
+
 ## v2.88
 - **Correlation wave (report + engines)**: binary entity cards gain Company/Description, merged `live at flash: PIDs a, b` evidence, per-source evidence diversity caps and HIGH-first sort; leaf-identity merge joins same-hash copies under one card; duplicate-name cards carry a verify-by-hash hint; account-activity and remote-endpoint cards get their own master-timeline trails; connections (with DNS-resolved domains) now woven into the supertimeline.
 - **Ran-as attribution**: every binary card shows the accounts that ran it, resolved via the 4688 -> 4624 logon-session map (honest `not captured` when process auditing is off).
