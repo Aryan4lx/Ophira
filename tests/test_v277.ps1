@@ -20,7 +20,7 @@ function Check([string]$label, [bool]$ok) {
 $stamp = Get-Date -Format 'HHmmss'
 function New-Csv { param($Path, [string[]]$Header, [string[]]$Lines) ($Header + $Lines) | Set-Content -LiteralPath $Path -Encoding UTF8 }
 
-foreach ($n in @('Import-CaseCsv', 'ConvertTo-SafeInt', 'ConvertTo-SafeDbl', 'Get-IpCloudClass', 'Get-TriageLeads', 'New-VtLink', 'Split-TagList', 'Get-TacticLabel', 'New-HtmlReport')) {
+foreach ($n in @('Import-CaseCsv', 'ConvertTo-SafeInt', 'ConvertTo-SafeDbl', 'Get-IpCloudClass', 'Get-TriageLeads', 'New-ClipCell', 'New-VtLink', 'Split-TagList', 'Get-TacticLabel', 'New-HtmlReport')) {
     $m = [regex]::Match($src, "(?s)function $n \{.*?\r?\n\}")
     if (-not $m.Success) { throw "extract failed: $n" }
     Invoke-Expression $m.Value
@@ -191,7 +191,7 @@ $script:Verdict = & $mkV @()
 $null = New-HtmlReport
 $htmlB3 = Get-Content -LiteralPath (Join-Path $CaseDir 'report.html') -Raw
 Check "B3: leading locale stamp normalized to the Ophira dialect" ($htmlB3.Contains('2026-10-12 07:43: &quot;C:\WINDOWS\System32\WindowsPowerShell\v1.0\powershell.exe&quot;'))
-Check "B3: quoted command line INSIDE the cell keeps its verbatim shape after the stamp" ($htmlB3.Contains('-nop -w hidden -enc AA</td>'))
+Check "B3: quoted command line INSIDE the cell keeps its verbatim shape after the stamp" ($htmlB3.Contains('-nop -w hidden -enc AA</span></td>'))
 Check "B3: polarity - date-like token inside a quoted command line NOT rewritten" ($htmlB3.Contains('backup ran 10/12/2026 7:43:01 AM ok'))
 Check "B3: unparseable leading stamp text stays verbatim" ($htmlB3.Contains('99/99/2026 9:99:99 AM: unparseable leading text'))
 Check "B3: no leading locale stamp left on any hunt evidence cell" (-not $htmlB3.Contains('7:43:01 AM: "'))

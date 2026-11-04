@@ -374,7 +374,7 @@ Check "c6: FAILED: mid-data parsed as a normal row" ($mid.Count -eq 1 -and "$($m
 
 # 3) FAILED file through the evidence-index render -> 0 rows + the failure reason as why-empty
 'FAILED: disk full while writing prefetch rows' | Set-Content -LiteralPath (Join-Path $CsvDir 'fixture_failed.csv') -Encoding UTF8
-foreach ($n in @('ConvertTo-HtmlEsc', 'New-VtLink', 'Get-CompromiseVerdict', 'New-HtmlReport', 'New-AttackLayer', 'New-SiemExport', 'Get-LvlRank', 'Split-TagList', 'Get-TacticLabel')) {
+foreach ($n in @('ConvertTo-HtmlEsc', 'New-ClipCell', 'New-VtLink', 'Get-CompromiseVerdict', 'New-HtmlReport', 'New-AttackLayer', 'New-SiemExport', 'Get-LvlRank', 'Split-TagList', 'Get-TacticLabel')) {
     $m = [regex]::Match($src, "(?s)function $n \{.*?\r?\n\}")
     if (-not $m.Success) { throw "extract failed: $n" }
     Invoke-Expression $m.Value

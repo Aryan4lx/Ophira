@@ -92,7 +92,7 @@ $mTl = [regex]::Match($src, "(?s)function Get-TriageLeads \{.*?\r?\n\}")
 Check "task5: Get-TriageLeads extractable (column-0 brace)" ($mTl.Success)
 if (-not $mTl.Success) { throw 'extract failed: Get-TriageLeads' }
 Invoke-Expression $mTl.Value
-foreach ($n3 in @('ConvertTo-SafeInt', 'ConvertTo-SafeDbl', 'Get-IpCloudClass')) {
+foreach ($n3 in @('ConvertTo-SafeInt', 'ConvertTo-SafeDbl', 'Get-IpCloudClass', 'New-ClipCell')) {
     $m3 = [regex]::Match($src, "(?s)function $n3 \{.*?\r?\n\}")
     if ($m3.Success) { Invoke-Expression $m3.Value }
 }

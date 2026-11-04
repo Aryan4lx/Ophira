@@ -1,4 +1,4 @@
-﻿$repoScript = Join-Path (Split-Path -Parent $PSScriptRoot) "Ophira.ps1"
+$repoScript = Join-Path (Split-Path -Parent $PSScriptRoot) "Ophira.ps1"
 # v2.18 - entity correlation (binaries/accounts/remotes) + report Connections section + repo path guard
 $ErrorActionPreference = 'Stop'
 $src = Get-Content -LiteralPath "$repoScript" -Raw
@@ -101,7 +101,7 @@ Check "accounts: rdp-out keyed by SID account" (@($ea | Where-Object { "$($_.Rdp
 # PART 2 - report Connections section renders
 # ============================================================================
 $defs = ''
-foreach ($n in @('ConvertTo-HtmlEsc', 'New-VtLink', 'Import-CaseCsv', 'Get-CompromiseVerdict', 'New-HtmlReport', 'Get-LvlRank', 'Split-TagList', 'Get-TacticLabel')) {
+foreach ($n in @('ConvertTo-HtmlEsc', 'New-ClipCell', 'New-VtLink', 'Import-CaseCsv', 'Get-CompromiseVerdict', 'New-HtmlReport', 'Get-LvlRank', 'Split-TagList', 'Get-TacticLabel')) {
     $m = [regex]::Match($src, "(?s)function $n\b.*?\r?\n\}")
     if (-not $m.Success) { throw "extract failed: $n" }
     $defs += $m.Value + "`r`n"

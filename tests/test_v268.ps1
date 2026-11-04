@@ -1,4 +1,4 @@
-﻿# test_v268.ps1 - v2.68 robustness batch:
+# test_v268.ps1 - v2.68 robustness batch:
 #   B7 CoveragePercentUnadjusted was a lie - both verdict properties read the SAME corrected
 #       value ($coverageRaw, i.e. AFTER the non-elevated -15 weight correction). Now the
 #       unadjusted property carries the pre-correction fraction (same Round/Max math, same
@@ -173,7 +173,7 @@ Check "B17: no Write-Host line ends with an argument comma" (-not ([regex]::IsMa
 #   B16 the Process dossier is reachable from the task menu ([P]) - mandatory non-empty
 #       process prompt, then the exact -Mode Process CLI invocation (-Path $ParsePath -Indicator)
 . (Join-Path $PSScriptRoot '_casehelpers.ps1')
-foreach ($n2 in @('Import-CaseCsv', 'Test-CaseCsv', 'ConvertTo-HtmlEsc', 'New-VtLink', 'ConvertTo-CaseFileLink', 'Split-TagList', 'Get-TacticLabel', 'Get-LvlRank', 'New-HtmlReport')) {
+foreach ($n2 in @('Import-CaseCsv', 'Test-CaseCsv', 'ConvertTo-HtmlEsc', 'New-ClipCell', 'New-VtLink', 'ConvertTo-CaseFileLink', 'Split-TagList', 'Get-TacticLabel', 'Get-LvlRank', 'New-HtmlReport')) {
     $m2 = [regex]::Match($src, "(?s)function $n2 \{.*?\r?\n\}")
     if (-not $m2.Success) { throw "task2 extract failed: $n2" }
     Invoke-Expression $m2.Value

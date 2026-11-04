@@ -19,7 +19,7 @@ $ErrorActionPreference = 'Stop'
 $repo = Split-Path -Parent $PSScriptRoot
 $src = Get-Content -LiteralPath (Join-Path $repo 'Ophira.ps1') -Raw
 $defs = ''
-foreach ($n in @('ConvertTo-HtmlEsc', 'New-VtLink', 'Get-SectionAnchorForSource')) {
+foreach ($n in @('ConvertTo-HtmlEsc', 'New-ClipCell', 'New-VtLink', 'Get-SectionAnchorForSource')) {
     $m = [regex]::Match($src, "(?s)function $n \{.*?\r?\n\}")
     if (-not $m.Success) { throw "extract failed: $n" }
     $defs += $m.Value + "`r`n"
@@ -237,8 +237,8 @@ if ($lines4.Count -ge 6100) {
     # window shifted 6297..6897 -> 6340..6939 (v2.82: Get-DomainProvider + Azure IP rules
     # + connections_dns emptyWhy added upstream; same report region)
     # -> 6610..7255 (v2.86 activity-picture block added ~105 lines before the entities region -
-    #    markers now: Score 6692, rcCol 6985, SRUM 7430, Steps 7447; same report region)
-    $region4 = ($lines4[6650..7530] -join "`n")
+    #    markers now (v2.92): Score 6782, rcCol 7078, SRUM 7519, Steps 7536; same report region)
+    $region4 = ($lines4[6650..7620] -join "`n")
     Check "B5: no bare [int]quoted casts left in the report region" (-not $region4.Contains('[int]"$('))
     Check "B5: no bare [double]quoted casts left in the report region" (-not $region4.Contains('[double]"$('))
     Check "B5: no bare [long]quoted casts left in the report region" (-not $region4.Contains('[long]"$('))

@@ -1,5 +1,5 @@
 <#
-Ophira v2.91  -  Windows Incident Response Triage Toolkit
+Ophira v2.92  -  Windows Incident Response Triage Toolkit
 READ-ONLY by design: never modifies the system, only reads and copies data
 into its own output folder. Intended to be handed to a system owner or run
 by a responder during early triage / threat hunting.
@@ -363,7 +363,7 @@ param(
     [switch]$ExitVerdict
 )
 
-$ScriptVersion = "2.91"
+$ScriptVersion = "2.92"
 $ErrorActionPreference = 'Continue'
 $ProgressPreference = 'SilentlyContinue'
 
@@ -5502,6 +5502,23 @@ function ConvertTo-HtmlEsc {
     return ($s -replace '&', '&amp;' -replace '<', '&lt;' -replace '>', '&gt;' -replace '"', '&quot;' -replace "'", '&#39;')
 }
 
+function New-ClipCell {
+    # v2.92 (C7/B2): clip-cell builder - long text renders as a short preview with the full
+    # value riding in data-full (click = copy, show-all button = expand in place). The preview
+    # lives in a <span class='cpv'> so the JS show-all toggle swaps SPAN text and never
+    # touches the button itself - the v2.53 implementation saved cell textContent including
+    # the button label and wrote 'show all' back as literal cell text (B2 corruption).
+    param([string]$Text, [string]$TdClass = 'clip path', [int]$Threshold = 120, [int]$MaxFull = 4000)
+    $full = "$Text"
+    if ($full.Length -gt $MaxFull) { $full = $full.Substring(0, $MaxFull) + '...' }
+    if ($full.Length -gt $Threshold) {
+        $fullAttr = (ConvertTo-HtmlEsc $full) -replace '"', '&quot;'
+        $prev = ConvertTo-HtmlEsc ($full.Substring(0, $Threshold) + '...')
+        return "<td class='$TdClass' title='click = copy raw' data-full=""$fullAttr"" data-prevn=""$Threshold""><span class='cpv'>$prev</span></td>"
+    }
+    return "<td class='$TdClass'><span class='cpv'>$(ConvertTo-HtmlEsc $full)</span></td>"
+}
+
 function New-VtLink {
     # v2.67 (B1): file paths and executable/document filenames no longer become VT search
     # links - the old dotted-suffix test matched ANY dotted filename (OneDrive.exe rendered
@@ -5939,7 +5956,7 @@ details{margin:10px 0;padding:6px 10px;background:var(--bg2);border:1px solid va
 .tac.hi{background:#3d1418;color:#ff8789}.tac.md{background:#3a2d0e;color:#ffce6b}
 pre.ioc{background:var(--bg2);border:1px solid var(--line);border-radius:10px;padding:12px;font-family:Consolas,monospace;font-size:12px;white-space:pre-wrap;word-break:break-all}
 .rec{background:var(--bg2);border-left:4px solid var(--acc);border-radius:8px;padding:10px 14px;margin:8px 0}
-td.clip{cursor:copy}
+td.clip{cursor:copy}td.clip.open{white-space:normal;word-break:break-word}td.clip .swall{margin-top:3px}
 .clip.open{word-break:break-all}
 .swall{background:var(--bg3);border:1px solid var(--line2);color:var(--info);border-radius:4px;padding:1px 8px;cursor:pointer;font-size:11px;margin-top:3px}
 #copied{position:fixed;bottom:14px;right:14px;background:#12301e;color:#7ee2a8;padding:8px 14px;border-radius:8px;display:none;z-index:99;font-size:12px;font-weight:700}
@@ -5982,14 +5999,14 @@ a:focus-visible,button:focus-visible,summary:focus-visible{outline:2px solid var
 summary:hover{color:var(--acc)}
 h3{font-size:13.5px;margin:20px 0 8px;color:var(--tx)}
 @media (prefers-reduced-motion: reduce){*{transition:none!important;animation:none!important}}
-@media print{body{background:#fff;color:#111;font-size:11px;padding:6px}.nav,.topbar,#copied,.sbar,.pgr,.mkey,.tbtn,button,.tiles{display:none!important}h1,h2{color:#111;border-color:#999}pre.ioc{background:#f4f4f4;color:#111;border-color:#bbb}table{font-size:10px}th{background:#eee;color:#111;position:static}tr:nth-child(even){background:#fafafa}.vbanner,.lead,.rec,.card{background:#fafafa;border-color:#bbb}.meta,.foot{color:#444}a{color:#111;text-decoration:none}.swall{display:none!important}.heatcell{outline:1px solid #ccc}.lead-crit{border-left-color:#c0392b}.lead-med{border-left-color:#a3671a}}
+@media print{body{background:#fff;color:#111;font-size:11px;padding:6px}.nav,.topbar,#copied,.sbar,.pgr,.mkey,.tbtn,button,.tiles{display:none!important}h1,h2{color:#111;border-color:#999}pre.ioc{background:#f4f4f4;color:#111;border-color:#bbb}table{font-size:10px}th{background:#eee;color:#111;position:static}tr:nth-child(even){background:#fafafa}.vbanner,.lead,.rec,.card{background:#fafafa;border-color:#bbb}.meta,.foot{color:#444}a{color:#111;text-decoration:none}.swall{display:none!important}.heatcell{outline:1px solid #ccc}.lead-crit{border-left-color:#c0392b}.lead-med{border-left-color:#a3671a}tr[id^='ev_']{display:table-row!important}td.clip{white-space:normal!important;word-break:break-word}}
 </style>
 '@
 
     $sb = New-Object System.Text.StringBuilder
     $null = $sb.AppendLine("<!DOCTYPE html><html><head><meta charset='utf-8'><title>Ophira - $(ConvertTo-HtmlEsc $Computer)</title>$css</head><body>")
     # v2.86: fixed top bar - case identity + light/dark + show-full-values + print toggles
-    $null = $sb.AppendLine("<div class='topbar'><button id='sbb' class='tbtn' type='button' onclick='sbToggle()' title='Show / hide the section sidebar'>&#9776;</button><span class='brand'>$(ConvertTo-HtmlEsc $Computer)</span><span class='meta'>OPHIRA COMPROMISE ASSESSMENT</span><span class='tspacer'></span><button class='tbtn' type='button' onclick='themeToggle()'>Light / Dark</button><button class='tbtn' type='button' onclick='showFullToggle(this)'>Show full values</button><button class='tbtn' type='button' onclick='window.print()'>Print report</button></div>")
+    $null = $sb.AppendLine("<div class='topbar'><button id='sbb' class='tbtn' type='button' onclick='sbToggle()' title='Show / hide the section sidebar'>&#9776;</button><span class='brand'>$(ConvertTo-HtmlEsc $Computer)</span><span class='meta'>OPHIRA COMPROMISE ASSESSMENT</span><span class='tspacer'></span><button class='tbtn' type='button' onclick='themeToggle()'>Light / Dark</button><button class='tbtn' id='showFull' type='button' onclick='showFullToggle(this)'>Show full values</button><button class='tbtn' type='button' onclick='window.print()'>Print report</button></div>")
     $null = $sb.AppendLine("<h1>OPHIRA COMPROMISE ASSESSMENT REPORT</h1>")
     # v2.77: ONE case.json read drives the elevation label AND the provenance line (collector
     # tool, preset, log window). Per-field fallback: an old case without case.json (or without
@@ -6858,9 +6875,7 @@ h3{font-size:13.5px;margin:20px 0 8px;color:var(--tx)}
                 if ($c.PSObject.Properties[$p] -and "$($c.$p)") { $txt = "$($c.$p)"; break }
             }
             if (-not $txt) { $txt = ($c.PSObject.Properties | ForEach-Object { "$($_.Value)" }) -join ' ' }
-            $txtShow = if ($txt.Length -gt 400) { $txt.Substring(0, 400) + '...' } else { $txt }
-            $txtAttr = (ConvertTo-HtmlEsc $txt) -replace '"', '&quot;'
-            $null = $sb.AppendLine("<tr><td>$(ConvertTo-HtmlEsc $t)</td><td>$(ConvertTo-HtmlEsc $src)</td><td class='path clip' title='click = copy raw - show all expands' data-full=""$txtAttr"">$(ConvertTo-HtmlEsc $txtShow)</td></tr>")
+            $null = $sb.AppendLine("<tr><td>$(ConvertTo-HtmlEsc $t)</td><td>$(ConvertTo-HtmlEsc $src)</td>$(New-ClipCell -Text $txt -TdClass 'clip path' -Threshold 400)</tr>")
         }
         # v2.68 (B13): N == M must not imply hidden rows - "First 30" when 30 == total
         $psCap = if ($psCmds.Count -gt 30) { "First 30 of $($psCmds.Count)" } else { "All $($psCmds.Count)" }
@@ -6999,7 +7014,7 @@ h3{font-size:13.5px;margin:20px 0 8px;color:var(--tx)}
         $rkLbl = if ($runKeys.Count -gt 60) { "showing first 60 of $($runKeys.Count) entries" } else { "show $($runKeys.Count) entries" }
         $null = $sb.AppendLine("<h3>Run keys / startup entries</h3><details><summary>$rkLbl</summary><table><tr><th>Name</th><th>Command</th></tr>")
         foreach ($r in ($runKeys | Select-Object -First 60)) {
-            $null = $sb.AppendLine("<tr><td>$(ConvertTo-HtmlEsc $r.Name)</td><td class='path'>$(ConvertTo-HtmlEsc $r.Value)</td></tr>")
+            $null = $sb.AppendLine("<tr><td>$(ConvertTo-HtmlEsc $r.Name)</td>$(New-ClipCell -Text $r.Value -TdClass 'clip path' -Threshold 120)</tr>")
         }
         $null = $sb.AppendLine("</table></details>")
     }
@@ -7184,7 +7199,7 @@ h3{font-size:13.5px;margin:20px 0 8px;color:var(--tx)}
                     $ev2 = $ld.ToString('yyyy-MM-dd HH:mm') + $ev2.Substring($lm.Groups[1].Length)
                 }
             }
-            "<tr><td class='$sevCls'><span class='sevdot'></span><b>$(ConvertTo-HtmlEsc $h2.Severity)</b></td><td>$(ConvertTo-HtmlEsc $h2.Rule)</td><td>$(ConvertTo-HtmlEsc $h2.Attck)</td><td class='path'>$(ConvertTo-HtmlEsc $h2.Entity)</td><td class='path'>$(ConvertTo-HtmlEsc $ev2)</td></tr>"
+            "<tr><td class='$sevCls'><span class='sevdot'></span><b>$(ConvertTo-HtmlEsc $h2.Severity)</b></td><td>$(ConvertTo-HtmlEsc $h2.Rule)</td><td>$(ConvertTo-HtmlEsc $h2.Attck)</td><td class='path'>$(ConvertTo-HtmlEsc $h2.Entity)</td>$(New-ClipCell -Text $ev2 -TdClass 'clip path' -Threshold 120)</tr>"
         }
         $null = $sb.AppendLine("<table><tr><th>Severity</th><th>Rule</th><th>ATT&amp;CK</th><th>Entity</th><th>Evidence</th></tr>")
         foreach ($h2 in ($mainRows | Sort-Object { switch -Regex ("$($_.Severity)") { 'high' { 0 } 'medium' { 1 } default { 2 } } })) {
@@ -7418,7 +7433,7 @@ h3{font-size:13.5px;margin:20px 0 8px;color:var(--tx)}
                 $null = $sb.AppendLine("<table><tr><th>Time</th><th>Source</th><th>Type</th><th>Actor</th><th>Detail</th></tr>")
                 foreach ($t3 in $trail) {
                     $r3 = $t3.Row
-                    $null = $sb.AppendLine("<tr><td>$(ConvertTo-HtmlEsc $r3.Timestamp)</td><td>$(ConvertTo-HtmlEsc $r3.Source)</td><td>$(ConvertTo-HtmlEsc $r3.Type)</td><td>$(ConvertTo-HtmlEsc $r3.Actor)</td><td class='path'>$(ConvertTo-HtmlEsc ("$($r3.Entity) $($r3.Detail)".Trim()))</td></tr>")
+                    $null = $sb.AppendLine("<tr><td>$(ConvertTo-HtmlEsc $r3.Timestamp)</td><td>$(ConvertTo-HtmlEsc $r3.Source)</td><td>$(ConvertTo-HtmlEsc $r3.Type)</td><td>$(ConvertTo-HtmlEsc $r3.Actor)</td>$(New-ClipCell -Text "$($r3.Entity) $($r3.Detail)".Trim() -TdClass 'clip path' -Threshold 120)</tr>")
                 }
                 $null = $sb.AppendLine("</table>")
             }
@@ -8360,16 +8375,23 @@ h3{font-size:13.5px;margin:20px 0 8px;color:var(--tx)}
       var RULES = $ruleJsText;
       function esc(s){var d=document.createElement('div');d.textContent=s==null?'':String(s);return d.innerHTML;}
       function attr(s){return esc(s).replace(/"/g,'&quot;');}
+      // v2.92 (B4): honest clipboard - async API with a textarea/execCommand fallback and a
+      // FAILURE toast; the old code toasted 'copied N chars' even when the API was missing.
+      var cpTimer=null;
+      function ophToast(msg,ms){var n=document.getElementById('copied');if(!n)return;n.textContent=msg;n.style.display='block';if(cpTimer)clearTimeout(cpTimer);cpTimer=setTimeout(function(){n.style.display='none';},1600);}
+      function ophCopy(text){
+        var done=function(ok){ophToast(ok?('copied '+text.length+' chars to clipboard'):('copy failed - select the text manually ('+text.length+' chars)'));};
+        if(navigator.clipboard&&navigator.clipboard.writeText){navigator.clipboard.writeText(text).then(function(){done(true);},function(){done(ophCopyFallback(text));});}
+        else{done(ophCopyFallback(text));}
+      }
+      function ophCopyFallback(text){try{var ta=document.createElement('textarea');ta.value=text;ta.style.position='fixed';ta.style.left='-9999px';document.body.appendChild(ta);ta.select();var ok=document.execCommand('copy');document.body.removeChild(ta);return ok;}catch(e){return false;}}
+      // v2.92 (B7): one delegated click handler - copy on cell click (unless the click hit the
+      // show-all button). The old dblclick toggle is GONE: it had no visible effect (B1) and
+      // every double-click fired the copy handler twice.
       document.addEventListener('click',function(e){
-        var t=e.target.closest?e.target.closest('.clip'):null;
-        if(t){var f=t.getAttribute('data-full')||t.textContent;
-          if(navigator.clipboard&&navigator.clipboard.writeText){navigator.clipboard.writeText(f);}
-          var n=document.getElementById('copied'); if(n){n.textContent='copied '+f.length+' chars to clipboard'; n.style.display='block'; setTimeout(function(){n.style.display='none';},1200);}
-        }
-      });
-      document.addEventListener('dblclick',function(e){
-        var t=e.target.closest?e.target.closest('.clip'):null;
-        if(t){t.classList.toggle('open');}
+        if(e.target.closest&&e.target.closest('.swall'))return;
+        var t=e.target.closest?e.target.closest('td.clip[data-full]'):null;
+        if(t){ophCopy(t.getAttribute('data-full')||t.textContent);}
       });
       // v2.66 (B6+B7): deep links into the per-rule Sigma drill-downs (ATT&CK expansion rows,
       // lead cards). Jump to the Sigma section via the href, then open that rule's drill-down,
@@ -8416,28 +8438,44 @@ h3{font-size:13.5px;margin:20px 0 8px;color:var(--tx)}
         var h='<table><tr><th>Time</th><th>Computer</th><th>EID</th><th>Level</th><th>Event details - click = copy raw, show all = full text</th></tr>';
         for(i=(pg-1)*per;i<Math.min(pg*per,f.length);i++){var r2=f[i];
           var prev=r2.d.length>300?r2.d.substring(0,300)+'...':r2.d;
-          h+='<tr><td>'+esc(r2.t)+'</td><td>'+esc(r2.c)+'</td><td>'+esc(r2.e)+'</td><td class="'+esc(r2.lc)+'">'+esc(r2.l)+'</td><td class="clip path" data-full="'+attr(r2.d)+'" title="click = copy raw">'+esc(prev)+'</td></tr>';
+          h+='<tr><td>'+esc(r2.t)+'</td><td>'+esc(r2.c)+'</td><td>'+esc(r2.e)+'</td><td class="'+esc(r2.lc)+'">'+esc(r2.l)+'</td><td class="clip path" data-full="'+attr(r2.d)+'" data-prevn="300" title="click = copy raw">'+esc(prev)+'</td></tr>';
         }
         h+='</table>';
         var box=document.getElementById('b_'+id);
         if(box){box.innerHTML='<div class="pgr meta">'+f.length+' match(es), page '+pg+'/'+pages
-          +'<button onclick="pgRule(\''+id+'\',-1)">prev</button><button onclick="pgRule(\''+id+'\',1)">next</button></div>'+h;}
+          +'<button onclick="pgRule(\''+id+'\',-1)">prev</button><button onclick="pgRule(\''+id+'\',1)">next</button></div>'+h;
+          ophEnhance();}
       }
       Object.keys(RULES).forEach(function(k){renderRule(k);});
       // v2.66 (B12): one generic section filter (the timeline pattern) - filters any container's
       // items by substring and updates the section's count line. Bound per section below.
       function secFilter(box,wrap,sel,cnt){var q=document.getElementById(box).value.toLowerCase();var its=document.querySelectorAll('#'+wrap+' '+sel);var n=0;for(var i=0;i<its.length;i++){var hit=!q||its[i].textContent.toLowerCase().indexOf(q)>=0;its[i].style.display=hit?'':'none';if(hit)n++;}var c=document.getElementById(cnt);if(c)c.textContent=q?(n+' of '+its.length+' shown'):'';}
       document.querySelectorAll('input[data-secfilter]').forEach(function(b){b.addEventListener('input',function(){secFilter(b.id,b.getAttribute('data-wrap'),b.getAttribute('data-sel'),b.getAttribute('data-cnt'));});});
-      // v2.53: visible show-all toggle on every truncated cell (full text rides data-full)
-      document.querySelectorAll('td.clip[data-full]').forEach(function(t){
-        var f=t.getAttribute('data-full')||'';
-        if(f.length>t.textContent.length){
+      // v2.92 (B2/B5): show-all buttons rebuilt on a span-swap architecture. The preview text
+      // lives in span.cpv; expansion swaps SPAN text only, so the button (and any re-render)
+      // never loses it. data-prevn carries the server-side preview length. ophEnhance() runs
+      // at load AND after every renderRule rebuild (B5: drill-down rows lost buttons before).
+      function ophEnhance(){
+        document.querySelectorAll('td.clip[data-full]').forEach(function(t){
+          if(t.getAttribute('data-x'))return;
+          var f=t.getAttribute('data-full')||'';
+          var n=parseInt(t.getAttribute('data-prevn'))||120;
+          if(f.length<=n)return;
+          t.setAttribute('data-x','1');
+          var sp=document.createElement('span');sp.className='cpv';
+          var old=t.firstChild;if(old&&old.nodeType===1&&old.className==='cpv'){sp=old;}else{t.insertBefore(sp,t.firstChild);}
+          if(!sp.textContent)sp.textContent=f.substring(0,n)+'...';
           var br=document.createElement('br'),b=document.createElement('button');
           b.className='swall';b.textContent='show all';
-          b.addEventListener('click',function(e){e.stopPropagation();t.textContent=f;t.classList.add('open');});
+          b.addEventListener('click',function(e){e.stopPropagation();
+            var cur=t.getAttribute('data-open')==='1';
+            if(cur){sp.textContent=f.substring(0,n)+'...';t.removeAttribute('data-open');t.classList.remove('open');b.textContent='show all';}
+            else{sp.textContent=f;t.setAttribute('data-open','1');t.classList.add('open');b.textContent='show less';}
+          });
           t.appendChild(br);t.appendChild(b);
-        }
-      });
+        });
+      }
+      ophEnhance();
       // v2.86: top-bar toggles. themeToggle flips the light/dark variable set; showFullToggle
       // expands every truncated cell (server-side preview + full text in data-full) in place
       // and remembers the originals - also used to expand/restore around printing so paper
@@ -8450,32 +8488,37 @@ h3{font-size:13.5px;margin:20px 0 8px;color:var(--tx)}
       var spLinks=[].slice.call(document.querySelectorAll('.nav a[href^="#"]'));
       var spSecs=spLinks.map(function(a){return document.querySelector("a[name='"+a.getAttribute('href').slice(1)+"']");});
       window.addEventListener('scroll',function(){var y=window.scrollY+90,cur=-1;for(var i=0;i<spSecs.length;i++){if(spSecs[i]&&spSecs[i].offsetTop<=y){cur=i;}}spLinks.forEach(function(a,i){a.classList.toggle('act',i===cur);});},{passive:true});
-      var fullSaved=[];
-      function showFullToggle(btn){
-        if(fullSaved.length>0){
-          fullSaved.forEach(function(p){p.el.textContent=p.txt;p.el.classList.remove('open');});
-          fullSaved=[];document.body.removeAttribute('data-full');
-          if(btn)btn.textContent='Show full values';return;
-        }
-        document.querySelectorAll('td.clip[data-full]').forEach(function(t){
-          var f=t.getAttribute('data-full')||'';
-          if(f&&f.length>t.textContent.length){fullSaved.push({el:t,txt:t.textContent});t.textContent=f;t.classList.add('open');}
+      // v2.92: global expand/collapse without the save/restore corruption - state lives on
+      // body[data-full] and every swap targets the span only; button labels follow the state.
+      function ophFullState(on){
+        document.querySelectorAll('td.clip[data-x]').forEach(function(t){
+          var f=t.getAttribute('data-full')||'';var n=parseInt(t.getAttribute('data-prevn'))||120;
+          var sp=t.querySelector('span.cpv');if(!sp)return;
+          if(on){sp.textContent=f;t.setAttribute('data-open','1');t.classList.add('open');}
+          else{sp.textContent=f.length>n?f.substring(0,n)+'...':f;t.removeAttribute('data-open');t.classList.remove('open');}
+          var b=t.querySelector('button.swall');if(b)b.textContent=on?'show less':'show all';
         });
-        document.body.setAttribute('data-full','on');
-        if(btn)btn.textContent='Collapse full values';
+        var bt=document.getElementById('showFull')||btn;if(bt)bt.textContent=on?'Collapse full values':'Show full values';
+      }
+      function showFullToggle(btn){
+        var on=document.body.getAttribute('data-full')!=='on';
+        document.body.setAttribute('data-full',on?'on':'off');
+        ophFullState(on);
       }
       // v2.63: printing shows collapsed <details> content - open them for print, restore after
-      // v2.86: printing also expands every truncated clip cell the same way
-      var printClosed=[];
+      // v2.92: printing expands every clip cell via the same state machine (remembering whether
+      // it was already expanded); ATT&CK hidden evidence rows print too (C9, pure CSS in print).
+      var printClosed=[];var wasFull=false;
       window.addEventListener('beforeprint',function(){
         printClosed=[];
         document.querySelectorAll('details:not([open])').forEach(function(d){d.setAttribute('open','open');printClosed.push(d);});
-        if(fullSaved.length===0)showFullToggle(null);
+        wasFull=document.body.getAttribute('data-full')==='on';
+        if(!wasFull){document.body.setAttribute('data-full','on');ophFullState(true);}
       });
       window.addEventListener('afterprint',function(){
         printClosed.forEach(function(d){d.removeAttribute('open');});
         printClosed=[];
-        if(fullSaved.length>0)showFullToggle(null);
+        if(!wasFull){document.body.setAttribute('data-full','off');ophFullState(false);}
       });
       </script>
 "@)
@@ -13441,7 +13484,7 @@ function Invoke-FocusCore {
                     $tm = ''
                     foreach ($pn2 in @('LastLaunch', 'LastWrite', 'Timestamp', 'LastModified', 'LastWriteTime', 'CreationTime', 'KeyTimeStamp', 'Time')) { $p3 = $r.PSObject.Properties[$pn2]; if ($p3 -and "$($p3.Value)") { $tm = "$($p3.Value)"; break } }
                     $detail = ($r.PSObject.Properties | Where-Object { "$($_.Value)" -and "$($_.Name)" -ne 'Time' } | ForEach-Object { "$($_.Name)=$($_.Value)" }) -join ' | '
-                    if ($detail.Length -gt 300) { $detail = $detail.Substring(0, 300) + '...' }
+                    if ($detail.Length -gt 1200) { $detail = $detail.Substring(0, 1200) + '... (+ shorter preview only - full text: focus_hits.csv)' }
                     [pscustomobject]@{ Time = $tm; Kind = $kind; Source = $srcName; Detail = $detail }
                 }
             }
@@ -14114,7 +14157,8 @@ function Invoke-FocusCore {
             if ($secHits.Count -eq 0) { continue }
             [void]$h.AppendLine("<h2>$($sec.Title) ($($secHits.Count))</h2><table><tr><th>Time</th><th>Source</th><th>Matched on</th><th>Detail</th></tr>")
             foreach ($x in @($secHits | Sort-Object { "$($_.Time)" } | Select-Object -First 200)) {
-                [void]$h.AppendLine("<tr><td>$(& $esc $x.Time)</td><td>$(& $esc $x.Source)</td><td>$(& $esc $x.MatchedOn)</td><td>$(& $esc ("$($x.Detail)" -replace ' \| ', '<br>'))</td></tr>")
+                $brSeg = (("$($x.Detail)" -split ' \| ') | ForEach-Object { & $esc $_ }) -join '<br>'
+                [void]$h.AppendLine("<tr><td>$(& $esc $x.Time)</td><td>$(& $esc $x.Source)</td><td>$(& $esc $x.MatchedOn)</td><td>$brSeg</td></tr>")
             }
             [void]$h.AppendLine("</table>")
         }

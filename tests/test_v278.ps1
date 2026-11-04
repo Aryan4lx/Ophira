@@ -31,7 +31,7 @@ Check "T10: nav counts come from one precomputed table (no reads inside the nav 
 # ============================================================================
 # PART B - behavioral render (extract-and-stub harness)
 # ============================================================================
-foreach ($n in @('Import-CaseCsv', 'ConvertTo-SafeInt', 'ConvertTo-SafeDbl', 'Get-IpCloudClass', 'New-VtLink', 'Split-TagList', 'Get-TacticLabel', 'Get-LvlRank', 'New-HtmlReport')) {
+foreach ($n in @('Import-CaseCsv', 'ConvertTo-SafeInt', 'ConvertTo-SafeDbl', 'Get-IpCloudClass', 'New-ClipCell', 'New-VtLink', 'Split-TagList', 'Get-TacticLabel', 'Get-LvlRank', 'New-HtmlReport')) {
     $m = [regex]::Match($src, "(?s)function $n \{.*?\r?\n\}")
     if (-not $m.Success) { throw "extract failed: $n" }
     Invoke-Expression $m.Value

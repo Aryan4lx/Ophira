@@ -1,4 +1,4 @@
-﻿$repoScript = Join-Path (Split-Path -Parent $PSScriptRoot) "Ophira.ps1"
+$repoScript = Join-Path (Split-Path -Parent $PSScriptRoot) "Ophira.ps1"
 # v2.24 - master timeline weave (normalized schema, ~25 sources), MFT drive-letter fix,
 # entity-card +/-15min context rendering
 $ErrorActionPreference = 'Stop'
@@ -85,7 +85,7 @@ Check "evidence index: master timeline description updated" ($src -match 'MASTER
 # PART 3 - context window rendered in the report
 # ============================================================================
 $rd = ''
-foreach ($n in @('ConvertTo-HtmlEsc', 'New-VtLink', 'Import-CaseCsv', 'Get-CompromiseVerdict', 'New-HtmlReport', 'Get-LvlRank', 'Split-TagList', 'Get-TacticLabel')) {
+foreach ($n in @('ConvertTo-HtmlEsc', 'New-ClipCell', 'New-VtLink', 'Import-CaseCsv', 'Get-CompromiseVerdict', 'New-HtmlReport', 'Get-LvlRank', 'Split-TagList', 'Get-TacticLabel')) {
     $m = [regex]::Match($src, "(?s)function $n\b.*?\r?\n\}")
     if (-not $m.Success) { throw "extract failed: $n" }
     $rd += $m.Value + "`r`n"

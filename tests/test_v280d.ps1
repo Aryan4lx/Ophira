@@ -132,7 +132,7 @@ Check "F8: version.dll planted next to D:\Windows\System32 -> high finding" (@($
 # PART 3 - I4: escaper + New-VtLink single-quote seam
 # ============================================================================
 $i4 = ''
-foreach ($n in @('ConvertTo-HtmlEsc', 'New-VtLink')) {
+foreach ($n in @('ConvertTo-HtmlEsc', 'New-ClipCell', 'New-VtLink')) {
     $m = [regex]::Match($src, "(?s)function $n \{.*?\r?\n\}")
     if (-not $m.Success) { throw "extract failed: $n" }
     $i4 += $m.Value + "`r`n"

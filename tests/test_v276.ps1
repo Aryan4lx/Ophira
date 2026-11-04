@@ -177,7 +177,7 @@ Remove-Item -LiteralPath (Split-Path $dl -Parent) -Recurse -Force -ErrorAction S
 # low/info collapsed into a details block. Render harness mirrors the
 # test_v270 full-report pattern: real New-HtmlReport on a hand-built fixture.
 # ============================================================================
-foreach ($n2 in @('ConvertTo-SafeInt', 'ConvertTo-SafeDbl', 'Get-IpCloudClass', 'Get-TriageLeads', 'New-VtLink', 'Split-TagList', 'Get-TacticLabel', 'New-HtmlReport')) {
+foreach ($n2 in @('ConvertTo-SafeInt', 'ConvertTo-SafeDbl', 'Get-IpCloudClass', 'Get-TriageLeads', 'New-ClipCell', 'New-VtLink', 'Split-TagList', 'Get-TacticLabel', 'New-HtmlReport')) {
     $m2 = [regex]::Match($src, "(?s)function $n2\b.*?\r?\n\}")
     if (-not $m2.Success) { throw "render extract failed: $n2" }
     Invoke-Expression $m2.Value

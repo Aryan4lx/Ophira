@@ -1,4 +1,4 @@
-﻿# test_v266.ps1 - v2.66 report nav + linking pack:
+# test_v266.ps1 - v2.66 report nav + linking pack:
 #   B1 nav order mirrors the rendered H2/anchor order (was: Leads before Verdict, Timeline
 #       before Snapshot/Drivers/Hunt/Entities)
 #   B3 'Security posture gaps' + 'Credential material exposure' signal rows resolve to a
@@ -14,7 +14,7 @@ $ErrorActionPreference = 'Stop'
 $repo = Split-Path -Parent $PSScriptRoot
 $src = Get-Content -LiteralPath (Join-Path $repo 'Ophira.ps1') -Raw
 . (Join-Path $PSScriptRoot '_casehelpers.ps1')
-$names = @('ConvertTo-HtmlEsc', 'New-VtLink', 'Import-CaseCsv', 'Get-CompromiseVerdict', 'New-HtmlReport', 'Get-LvlRank', 'Split-TagList', 'Get-TacticLabel', 'ConvertTo-SafeInt', 'ConvertTo-SafeDbl', 'Get-IpCloudClass', 'Get-TriageLeads', 'Get-InvariantDate', 'Get-SafeRuleKey', 'Get-SafeRuleKeyMap', 'Resolve-SafeRuleKey')
+$names = @('ConvertTo-HtmlEsc', 'New-ClipCell', 'New-VtLink', 'Import-CaseCsv', 'Get-CompromiseVerdict', 'New-HtmlReport', 'Get-LvlRank', 'Split-TagList', 'Get-TacticLabel', 'ConvertTo-SafeInt', 'ConvertTo-SafeDbl', 'Get-IpCloudClass', 'Get-TriageLeads', 'Get-InvariantDate', 'Get-SafeRuleKey', 'Get-SafeRuleKeyMap', 'Resolve-SafeRuleKey')
 $defs = ''
 foreach ($n in $names) {
     $m = [regex]::Match($src, "(?s)function $n \{.*?\r?\n\}")

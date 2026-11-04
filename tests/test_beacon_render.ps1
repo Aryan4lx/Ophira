@@ -1,9 +1,9 @@
-﻿$repoScript = Join-Path (Split-Path -Parent $PSScriptRoot) "Ophira.ps1"
+$repoScript = Join-Path (Split-Path -Parent $PSScriptRoot) "Ophira.ps1"
 # v2.9 beaconing render + verdict fixture test
 $ErrorActionPreference = 'Stop'
 $src = Get-Content -LiteralPath "$repoScript" -Raw
 . (Join-Path $PSScriptRoot '_casehelpers.ps1')
-$names = @('ConvertTo-HtmlEsc', 'New-VtLink', 'Import-CaseCsv', 'Get-CompromiseVerdict', 'New-HtmlReport')
+$names = @('ConvertTo-HtmlEsc', 'New-ClipCell', 'New-VtLink', 'Import-CaseCsv', 'Get-CompromiseVerdict', 'New-HtmlReport')
 $defs = ''
 foreach ($n in $names) {
     $m = [regex]::Match($src, "(?s)function $n \{.*?\r?\n\}")

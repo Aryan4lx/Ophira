@@ -1,4 +1,13 @@
-﻿# Changelog
+﻿## v2.92 - interaction rebuild
+
+- Full-value story: every long value (command lines, paths, script blocks, sigma drill rows) renders as preview + client-side 'show all' toggle in the same cell (span-swap architecture; re-renders keep buttons). Click cell = copy full value with honest toast + execCommand fallback; top-bar toggle expands/collapses all; printing always carries full text. Double-click expand removed (was a no-op and double-fired copy).
+- Clipboard honesty: copy actions report real success/failure (navigator.clipboard + execCommand fallback path), never a fake 'copied'.
+- Focus report (post-review rebuild): search box + per-source filter + row expansion for truncated execution details, SVG nodes carry <title> tooltips, literal '<br>' rendering bug fixed.
+- ATT&CK evidence rows now print (hidden rows included in print CSS).
+- Sigma drill-down re-renders preserve show-all buttons and carry data-prevn so expand/collapse matches the 300-char preview.
+- +26 checks in tests\test_v292.ps1; 28 suites updated for the new clip-cell architecture.
+
+# Changelog
 
 ## v2.91
 - Master timeline timezone truth (A1): Z-less tool stamps (PECmd/LECmd/AmcacheParser/MFTECmd/RBCmd/SBECmd/IIS/W3C/browser) were parsed as analyst-local and shifted -3:30 vs the event-log rows already UTC - the chronology was split-brained and mis-sorted. New `$addUtc` path (AssumeUniversal) + per-source `-IsUtc` routing on all 12 UTC-dialect weaves; mixed-source sorts and +/-30min windows are now coherent.

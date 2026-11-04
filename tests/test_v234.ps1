@@ -1,4 +1,4 @@
-﻿$repoScript = Join-Path (Split-Path -Parent $PSScriptRoot) "Ophira.ps1"
+$repoScript = Join-Path (Split-Path -Parent $PSScriptRoot) "Ophira.ps1"
 # v2.34 - report timeline preview (client-side filter over the last 2000 supertimeline rows)
 # + release workflow (tag -> kit zip + SHA256SUMS + CHANGELOG notes) + hosts.txt.example.
 $ErrorActionPreference = 'Stop'
@@ -16,7 +16,7 @@ $stamp = Get-Date -Format 'HHmmss'
 # PART 1 - timeline preview rendered by the real New-HtmlReport
 # ============================================================================
 $rd = ''
-foreach ($n in @('ConvertTo-HtmlEsc', 'New-VtLink', 'Import-CaseCsv', 'Get-CompromiseVerdict', 'New-HtmlReport', 'Get-LvlRank', 'Split-TagList', 'Get-TacticLabel')) {
+foreach ($n in @('ConvertTo-HtmlEsc', 'New-ClipCell', 'New-VtLink', 'Import-CaseCsv', 'Get-CompromiseVerdict', 'New-HtmlReport', 'Get-LvlRank', 'Split-TagList', 'Get-TacticLabel')) {
     $m = [regex]::Match($src, "(?s)function $n\b.*?\r?\n\}")
     if (-not $m.Success) { throw "extract failed: $n" }
     $rd += $m.Value + "`r`n"

@@ -1,4 +1,4 @@
-﻿$repoScript = Join-Path (Split-Path -Parent $PSScriptRoot) "Ophira.ps1"
+$repoScript = Join-Path (Split-Path -Parent $PSScriptRoot) "Ophira.ps1"
 # v2.40 - focus engine: iterative entity expansion, multi-instance grouping per path+hash,
 # masquerade split, ProcessGuid instance attribution, activity chain, common-name guard
 $ErrorActionPreference = 'Stop'
@@ -272,7 +272,7 @@ New-Csv (Join-Path $csv 'entities_binaries.csv') '"Categories","CatCount","Name"
     '"verdict;running;hash;conn;beacon;yara;svc-persist","7","malware.exe","C:\Users\dev\AppData\Roaming\malware.exe","HIGH","","2026-10-05 14:02:11","2026-10-05 14:21:00","AAAABBBB","","runs-from-user-path"'
 )
 $rd = ''
-foreach ($n in @('ConvertTo-HtmlEsc', 'New-VtLink', 'Import-CaseCsv', 'Get-CompromiseVerdict', 'New-HtmlReport', 'Get-LvlRank', 'Split-TagList', 'Get-TacticLabel', 'ConvertTo-SafeInt', 'ConvertTo-SafeDbl', 'Get-IpCloudClass', 'Get-TriageLeads')) {
+foreach ($n in @('ConvertTo-HtmlEsc', 'New-ClipCell', 'New-VtLink', 'Import-CaseCsv', 'Get-CompromiseVerdict', 'New-HtmlReport', 'Get-LvlRank', 'Split-TagList', 'Get-TacticLabel', 'ConvertTo-SafeInt', 'ConvertTo-SafeDbl', 'Get-IpCloudClass', 'Get-TriageLeads')) {
     $m = [regex]::Match($src, "(?s)function $n\b.*?\r?\n\}")
     if (-not $m.Success) { throw "report extract failed: $n" }
     $rd += $m.Value + "`r`n"

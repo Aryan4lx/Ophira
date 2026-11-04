@@ -1,4 +1,4 @@
-﻿$repoScript = Join-Path (Split-Path -Parent $PSScriptRoot) "Ophira.ps1"
+$repoScript = Join-Path (Split-Path -Parent $PSScriptRoot) "Ophira.ps1"
 # v2.39 - collapsed-message 4624 parse fix, report UX: ATT&CK expandable technique rows,
 # sigma drill-down ALL events (in-report pager/search/copy), click-to-copy clip cells,
 # supertimeline = gathered evidence only (scanner outputs unwoven, no JS embed).
@@ -58,7 +58,7 @@ Check "4624 collapsed: 'NT AUTHORITY' domain kept intact" ("$($a2.AccountDomain)
 # PART 2 - report render: ATT&CK expandable, sigma in-report browser, clip cells
 # ============================================================================
 $rd = ''
-foreach ($n in @('ConvertTo-HtmlEsc', 'New-VtLink', 'Import-CaseCsv', 'Get-CompromiseVerdict', 'New-HtmlReport', 'Get-LvlRank', 'Split-TagList', 'Get-TacticLabel')) {
+foreach ($n in @('ConvertTo-HtmlEsc', 'New-ClipCell', 'New-VtLink', 'Import-CaseCsv', 'Get-CompromiseVerdict', 'New-HtmlReport', 'Get-LvlRank', 'Split-TagList', 'Get-TacticLabel')) {
     $m = [regex]::Match($src, "(?s)function $n\b.*?\r?\n\}")
     if (-not $m.Success) { throw "extract failed: $n" }
     $rd += $m.Value + "`r`n"
@@ -98,8 +98,8 @@ Check "sigma: RULES map embedded with ALL 30 rows of rule B" ($rendered -match '
 Check "sigma: per-rule search + level + page inputs" ($rendered -match 'q_Rule_B' -and $rendered -match 'l_Rule_B' -and $rendered -match 'p_Rule_B')
 Check "sigma: renderRule + pager functions present" ($rendered -match 'function renderRule' -and $rendered -match 'function pgRule' -and $rendered -match 'renderRule\(')
 Check "sigma: rows carry full detail + clip cell (click copy)" ($rendered -match 'data-full' -and $rendered -match 'class="clip path"')
-Check "report: copied toast + delegated click/dblclick handlers" ($rendered -match "id='copied'" -and $rendered -match "addEventListener\('click'" -and $rendered -match "addEventListener\('dblclick'")
-Check "report: pscmds truncated preview with FULL text in data-full" ($rendered -match "class='path clip'" -and $rendered -match [regex]::Escape('xxxxx'))
+Check "report: copied toast + delegated click copy (swall-guarded, dblclick removed per B7)" ($rendered -match "id='copied'" -and $rendered -match "addEventListener\('click'" -and $rendered -match [regex]::Escape("closest('td.clip[data-full]')") -and -not ($rendered -match "addEventListener\('dblclick'"))
+Check "report: pscmds truncated preview with FULL text in data-full" ($rendered -match "class='clip path'" -and $rendered -match [regex]::Escape('xxxxx') -and $rendered -match 'data-prevn="400"')
 Check "timeline: no JS preview in the report" ($rendered -notmatch 'var TL = ')
 Check "timeline: evidence-only pointer section" ($rendered -match 'Master timeline \(gathered evidence chronology\)' -and $rendered -match 'scanner conclusions')
 

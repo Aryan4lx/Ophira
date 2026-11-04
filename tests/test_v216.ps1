@@ -1,4 +1,4 @@
-﻿$repoScript = Join-Path (Split-Path -Parent $PSScriptRoot) "Ophira.ps1"
+$repoScript = Join-Path (Split-Path -Parent $PSScriptRoot) "Ophira.ps1"
 # v2.16 - sigma rule logs + report drill-down, Find-SigmaRuleFile, process pivot
 $ErrorActionPreference = 'Stop'
 $src = Get-Content -LiteralPath "$repoScript" -Raw
@@ -52,7 +52,7 @@ Check "regression: Get-LvlRank/Split-TagList/Get-TacticLabel defined at TOP leve
 # PART 2 - report drill-down renders per-rule details blocks
 # ============================================================================
 $defs = ''
-foreach ($n in @('ConvertTo-HtmlEsc', 'New-VtLink', 'Import-CaseCsv', 'Get-CompromiseVerdict', 'New-HtmlReport', 'Get-LvlRank', 'Split-TagList', 'Get-TacticLabel')) {
+foreach ($n in @('ConvertTo-HtmlEsc', 'New-ClipCell', 'New-VtLink', 'Import-CaseCsv', 'Get-CompromiseVerdict', 'New-HtmlReport', 'Get-LvlRank', 'Split-TagList', 'Get-TacticLabel')) {
     $m2 = [regex]::Match($src, "(?s)function $n\b.*?\r?\n\}")
     if (-not $m2.Success) { throw "extract failed: $n" }
     $defs += $m2.Value + "`r`n"
