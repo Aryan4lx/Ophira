@@ -1,5 +1,15 @@
 ﻿# Changelog
 
+## v2.91
+- Master timeline timezone truth (A1): Z-less tool stamps (PECmd/LECmd/AmcacheParser/MFTECmd/RBCmd/SBECmd/IIS/W3C/browser) were parsed as analyst-local and shifted -3:30 vs the event-log rows already UTC - the chronology was split-brained and mis-sorted. New `$addUtc` path (AssumeUniversal) + per-source `-IsUtc` routing on all 12 UTC-dialect weaves; mixed-source sorts and +/-30min windows are now coherent.
+- Defender fresh/stale time-bomb (new find during E2E): the 'active or in log window' cutoff used the ANALYST's wall clock - regenerating a case 3 days after collection silently flipped 3 fresh detections to stale and dropped the verdict SUSPICIOUS -> NO EVIDENCE OF COMPROMISE. Cutoff now anchors at case.json StartedUTC (collection instant), fallback Get-Date for legacy cases.
+- R37 ShimCache order-violation gated to pre-Win10 caches (A3): Win10+ ('10ts' signature) records carry file mtimes in insertion positions - the check flagged 54% of a healthy Win11 case as timestomping. Order check now runs only when no 10ts signature is present; scrub-survivor check unchanged.
+- R38 hour-of-day stacking (A2): buckets normalize naive-UTC sources to UTC (was: mixed clocks), 'first seen' = earliest stamp per binary (was: first CSV row to win the dedupe race), finding text says 'UTC' + warns the endpoint timezone may differ.
+- Get-IpCloudClass most-specific-first (A4): microsoft blocks shadowed google (34.64-127, 104.196-247, 199.36-159), akamai (104.64-127) and cloudflare (103.21-22, 198.41-64) ranges; specific overrides added ahead of the broad rules.
+- Get-DomainProvider user-hosting platforms removed (A5): evil.github.io -> 'microsoft', anything.pages.dev -> 'cloudflare' attribution is meaningless on free hosting; those suffixes no longer classify. Real MS-operated infra (github.com/usercontent) still microsoft.
+- Coverage honesty (A6): 'Execution artifact spine' now accepts execution_timeline.csv (endpoint packages carry chainsaw shimcache output, not shimcache.csv) - that artifact spine never read as covered before.
+- Tests: tests\test_v291.ps1 (28 checks - dialect splits, 10ts gate, earliest-stamp buckets, specific-first IP, provider removals, wiring); test_v281b/c TZ expectations updated (local-parse lies removed); pins updated.
+
 ## v2.90
 - Focus engine: ports no longer expand as new terms - shared-by-design ports (proxy listeners like 10808, ephemeral client ports) bridged unrelated processes and made dossiers drift (xray.exe pulled in every proxy client + browser/steam junk via port 10808); indicator ports still match exactly
 - Dossier trail is indicator-scoped: only rows mentioning the indicator leaf, its own path leaves or its hashes - expansion-discovered relations stay on the entity cards instead of reading as unrelated garbage

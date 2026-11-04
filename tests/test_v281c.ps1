@@ -62,11 +62,11 @@ $logA = Run-Hunt
 $r38a = @($script:saved | Where-Object { $_.Rule -eq $burstRule })
 Check "R38: 9 distinct at 03:00 -> exactly 1 burst finding" ($r38a.Count -eq 1)
 Check "R38: burst finding low severity, empty ATT&CK (report-only)" ($r38a[0].Severity -eq 'low' -and "$($r38a[0].Attck)" -eq '')
-Check "R38: burst entity '03:00-03:59'" ("$($r38a[0].Entity)" -eq '03:00-03:59')
-Check "R38: burst detail exact wording" ("$($r38a[0].Evidence)" -eq '9 distinct binaries first seen 03:00-03:59 (off-hours window 20:00-06:59)')
+Check "R38: burst entity '03:00-03:59 UTC'" ("$($r38a[0].Entity)" -eq '03:00-03:59 UTC')
+Check "R38: burst detail exact wording" ("$($r38a[0].Evidence)" -eq '9 distinct binaries first seen 03:00-03:59 UTC (off-hours window 20:00-06:59 UTC - endpoint timezone may differ)')
 Check "R38: no staging finding at 9 .exe" (0 -eq @($script:saved | Where-Object { $_.Rule -eq $stageRule }).Count)
 Check "R38: exactly one trace line for R38" (1 -eq @([regex]::Matches($logA, '(?m)^\[[\d:]+\] R38 ')).Count)
-Check "R38: trace placed AFTER its findings (counts 1 finding, 1 low)" ($logA -match [regex]::Escape('R38 execution hour-of-day stacking: amcache+prefetch_parsed+security_proc_events+sysmon_proc_create: 9 rows -> 9 first-seen binaries -> 1 off-hours burst + 0 staging findings -> 1 finding (1 low)'))
+Check "R38: trace placed AFTER its findings (counts 1 finding, 1 low)" ($logA -match [regex]::Escape('R38 execution hour-of-day stacking: amcache+prefetch_parsed+security_proc_events+sysmon_proc_create: 9 rows -> 9 first-seen binaries (UTC-normalized, earliest-stamp) -> 1 off-hours burst + 0 staging findings -> 1 finding (1 low)'))
 
 # ---- run B: same 9 binaries at 14:00 -> silent (daytime, under staging floor) ----
 $script:caseCsv = @{
@@ -74,7 +74,7 @@ $script:caseCsv = @{
 }
 $logB = Run-Hunt
 Check "R38: same 9 at 14:00 -> no burst, no staging" (0 -eq @($script:saved | Where-Object { $_.Rule -eq $burstRule -or $_.Rule -eq $stageRule }).Count)
-Check "R38: daytime trace counts 0 findings" ($logB -match [regex]::Escape('9 rows -> 9 first-seen binaries -> 0 off-hours burst + 0 staging findings -> 0 findings'))
+Check "R38: daytime trace counts 0 findings" ($logB -match [regex]::Escape('9 rows -> 9 first-seen binaries (UTC-normalized, earliest-stamp) -> 0 off-hours burst + 0 staging findings -> 0 findings'))
 
 # ---- run C: 10 first-seen .exe staged at 09:00 -> Mass binary staging ----
 $script:caseCsv = @{
@@ -83,8 +83,8 @@ $script:caseCsv = @{
 $logC = Run-Hunt
 $r38c = @($script:saved | Where-Object { $_.Rule -eq $stageRule })
 Check "R38: 10 .exe at 09:00 -> exactly 1 staging finding" ($r38c.Count -eq 1)
-Check "R38: staging low, entity '09:00-09:59', empty ATT&CK" ($r38c[0].Severity -eq 'low' -and "$($r38c[0].Entity)" -eq '09:00-09:59' -and "$($r38c[0].Attck)" -eq '')
-Check "R38: staging detail exact wording" ("$($r38c[0].Evidence)" -eq '10 first-seen .exe binaries staged 09:00-09:59')
+Check "R38: staging low, entity '09:00-09:59 UTC', empty ATT&CK" ($r38c[0].Severity -eq 'low' -and "$($r38c[0].Entity)" -eq '09:00-09:59 UTC' -and "$($r38c[0].Attck)" -eq '')
+Check "R38: staging detail exact wording" ("$($r38c[0].Evidence)" -eq '10 first-seen .exe binaries staged 09:00-09:59 UTC')
 Check "R38: no burst finding at 09:00 (not off-hours)" (0 -eq @($script:saved | Where-Object { $_.Rule -eq $burstRule }).Count)
 
 # ---- run D: 9 .exe + 2 .dll in one daytime hour -> silent (staging is .exe-only, floor 10) ----
@@ -94,7 +94,7 @@ $script:caseCsv = @{
 }
 $logD = Run-Hunt
 Check "R38: 9 .exe + 2 .dll -> no staging (dll excluded), no burst" (0 -eq @($script:saved | Where-Object { $_.Rule -eq $stageRule -or $_.Rule -eq $burstRule }).Count)
-Check "R38: dll rows counted as first-seen in trace (11 rows)" ($logD -match [regex]::Escape('11 rows -> 11 first-seen binaries -> 0 off-hours burst + 0 staging findings -> 0 findings'))
+Check "R38: dll rows counted as first-seen in trace (11 rows)" ($logD -match [regex]::Escape('11 rows -> 11 first-seen binaries (UTC-normalized, earliest-stamp) -> 0 off-hours burst + 0 staging findings -> 0 findings'))
 
 # ---- run E: non-.exe counts toward burst; window edges 20 fires / 07 silent; hour order ----
 $script:caseCsv = @{
@@ -106,8 +106,8 @@ $script:caseCsv = @{
 $logE = Run-Hunt
 $r38e = @($script:saved | Where-Object { $_.Rule -eq $burstRule })
 Check "R38: 7 .exe + 1 .dll at 23:00 + 8 .exe at 20:00 -> 2 bursts; hour 07 (>=7) silent" ($r38e.Count -eq 2)
-Check "R38: bursts ordered by hour (20 before 23)" ("$($r38e[0].Entity)" -eq '20:00-20:59' -and "$($r38e[1].Entity)" -eq '23:00-23:59')
-Check "R38: non-.exe binary counts toward burst (23:00 has 8 distinct incl. 1 dll)" ("$($r38e[1].Evidence)" -eq '8 distinct binaries first seen 23:00-23:59 (off-hours window 20:00-06:59)')
+Check "R38: bursts ordered by hour (20 before 23)" ("$($r38e[0].Entity)" -eq '20:00-20:59 UTC' -and "$($r38e[1].Entity)" -eq '23:00-23:59 UTC')
+Check "R38: non-.exe binary counts toward burst (23:00 has 8 distinct incl. 1 dll)" ("$($r38e[1].Evidence)" -eq '8 distinct binaries first seen 23:00-23:59 UTC (off-hours window 20:00-06:59 UTC - endpoint timezone may differ)')
 
 # ---- run F: unparseable/missing timestamps skipped; first-seen dedupe (same src across
 #      hours, cross-source within an hour); empty leaf skipped ----
@@ -127,10 +127,10 @@ $script:caseCsv = @{
 }
 $logF = Run-Hunt
 $r38f = @($script:saved | Where-Object { $_.Rule -eq $burstRule })
-Check "R38: unparseable + missing timestamps skipped, empty leaf skipped" ($r38f.Count -eq 1 -and "$($r38f[0].Entity)" -eq '02:00-02:59')
-Check "R38: first-seen wins within a source (r38d03 re-seen 22:30 does not split buckets)" ("$($r38f[0].Evidence)" -eq '8 distinct binaries first seen 02:00-02:59 (off-hours window 20:00-06:59)')
-Check "R38: cross-source same-leaf dedupe (r38m + case-insensitive re-run = 7 distinct at 04:00 -> silent)" (0 -eq @($r38f | Where-Object { "$($_.Entity)" -eq '04:00-04:59' }).Count -and 0 -eq @($script:saved | Where-Object { $_.Rule -eq $stageRule }).Count)
-Check "R38: broken rows never poison the trace counts (21 rows in, 16 first-seen)" ($logF -match [regex]::Escape('21 rows -> 16 first-seen binaries -> 1 off-hours burst + 0 staging findings -> 1 finding (1 low)'))
+Check "R38: unparseable + missing timestamps skipped, empty leaf skipped" ($r38f.Count -eq 1 -and "$($r38f[0].Entity)" -eq '02:00-02:59 UTC')
+Check "R38: earliest-stamp wins within a source (r38d03 re-seen 22:30 does not split buckets)" ("$($r38f[0].Evidence)" -eq '8 distinct binaries first seen 02:00-02:59 UTC (off-hours window 20:00-06:59 UTC - endpoint timezone may differ)')
+Check "R38: cross-source same-leaf dedupe (r38m + case-insensitive re-run = 7 distinct at 04:00 -> silent)" (0 -eq @($r38f | Where-Object { "$($_.Entity)" -eq '04:00-04:59 UTC' }).Count -and 0 -eq @($script:saved | Where-Object { $_.Rule -eq $stageRule }).Count)
+Check "R38: broken rows never poison the trace counts (21 rows in, 16 first-seen)" ($logF -match [regex]::Escape('21 rows -> 16 first-seen binaries (UTC-normalized, earliest-stamp) -> 1 off-hours burst + 0 staging findings -> 1 finding (1 low)'))
 
 # ============================================================================
 # PART 2 - report histogram: real Get-ExecHourBuckets + real render block

@@ -49,7 +49,7 @@ function ShimRow([string]$path, [string]$ts, [int]$n) {
         'Timeline Entry Number' = "$n"
         'Entry Type' = 'ShimcacheFileEntry'
         'Timestamp Description' = 'Last Modified (Registry)'
-        'Raw Entry' = ('{"cache_entry_position":' + ($n - 1) + ',"controlset":1,"entry_type":{"File":{"path":"' + ($path -replace '\\', '\\') + '"}},"executed":null,"last_modified_ts":"' + $ts + '","path_size":62,"signature":"10ts"}')
+        'Raw Entry' = ('{"cache_entry_position":' + ($n - 1) + ',"controlset":1,"entry_type":{"File":{"path":"' + ($path -replace '\\', '\\') + '"}},"executed":null,"last_modified_ts":"' + $ts + '","path_size":62,"signature":"MAM"}') # v2.91: Win7-era signature - 10ts caches skip the order check (see Run H)
     }
 }
 function RuleRows([string]$rule) { return @($script:saved | Where-Object { $_.Rule -eq $rule }) }
@@ -74,7 +74,7 @@ Check "R37a: severity low, entity execution_timeline, ATT&CK T1070.006" ($rA[0].
 Check "R37a: detail carries the real count (2)" ("$($rA[0].Evidence)" -eq 'ShimCache order violation: 2 out-of-order entries (timestomping or cache manipulation)')
 Check "R37b: system32 paths are never scrub survivors" ((RuleRows 'ShimCache scrub survivor').Count -eq 0)
 $huntLogText = Get-Content -LiteralPath $CaseLog -Raw
-Check "R37a: one trace line rows -> entries -> violations" ($huntLogText -match [regex]::Escape('R37 ShimCache order violation: execution_timeline: 5 rows -> 4 entries -> 2 out-of-order'))
+Check "R37a: one trace line rows -> entries -> violations" ($huntLogText -match [regex]::Escape('R37 ShimCache order violation: execution_timeline: 5 rows -> 4 entries (0 10ts) -> 2 out-of-order'))
 
 # ============================================================================
 # Run B - all in order (with an unparseable row mid-chain) -> no finding, chain intact
@@ -166,7 +166,29 @@ $script:saved = @()
 New-HuntFindings
 Check "R37: missing execution_timeline -> no findings, no crash" ((RuleRows 'ShimCache order violation').Count -eq 0 -and (RuleRows 'ShimCache scrub survivor').Count -eq 0)
 $huntLogText = Get-Content -LiteralPath $CaseLog -Raw
-Check "R37: both trace lines still present on the degrade path" ($huntLogText -match [regex]::Escape('R37 ShimCache order violation: execution_timeline: 0 rows -> 0 entries -> 0 out-of-order') -and $huntLogText -match [regex]::Escape('R37 ShimCache scrub survivor: corroboration amcache+prefetch_parsed+bam_lastexec: 0 paths -> 0 survivors -> 0 emitted'))
+Check "R37: both trace lines still present on the degrade path" ($huntLogText -match [regex]::Escape('R37 ShimCache order violation: execution_timeline: 0 rows -> 0 entries (0 10ts) -> 0 out-of-order') -and $huntLogText -match [regex]::Escape('R37 ShimCache scrub survivor: corroboration amcache+prefetch_parsed+bam_lastexec: 0 paths -> 0 survivors -> 0 emitted'))
+
+# ============================================================================
+# Run I (v2.91) - Win10+ 10ts cache: order check is VOID (mtimes are file mtimes,
+# not insertion order) -> NO finding, trace records the skip
+# ============================================================================
+function ShimRow10([string]$path, [string]$ts, [int]$n) {
+    $r = ShimRow $path $ts $n
+    $r.'Raw Entry' = ($r.'Raw Entry' -replace '"signature":"MAM"', '"signature":"10ts"')
+    return $r
+}
+$script:caseCsv = @{
+    'execution_timeline' = @(
+        (ShimRow10 'C:\Windows\System32\findstr.exe' '2026-09-28T02:09:56.236Z' 1),
+        (ShimRow10 'C:\Windows\System32\cmd.exe' '2026-09-20T01:00:00.000Z' 2),      # out of order - but 10ts cache, check is void
+        (ShimRow10 'C:\Windows\System32\ping.exe' '2026-09-25T01:00:00.000Z' 3)
+    )
+}
+$script:saved = @()
+New-HuntFindings
+Check "R37a: Win10 10ts cache -> NO order-violation finding (v2.91 gate)" ((RuleRows 'ShimCache order violation').Count -eq 0)
+$huntLogText = Get-Content -LiteralPath $CaseLog -Raw
+Check "R37a: 10ts trace records the skip with the why" ($huntLogText -match [regex]::Escape('3 entries (3 10ts) -> 0 out-of-order; Win10+ 10ts cache - order check skipped'))
 
 # ============================================================================
 # R37 is report-only: neither exact rule name may appear in Get-CompromiseVerdict source

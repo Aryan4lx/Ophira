@@ -1,5 +1,5 @@
 <#
-Ophira v2.90  -  Windows Incident Response Triage Toolkit
+Ophira v2.91  -  Windows Incident Response Triage Toolkit
 READ-ONLY by design: never modifies the system, only reads and copies data
 into its own output folder. Intended to be handed to a system owner or run
 by a responder during early triage / threat hunting.
@@ -363,7 +363,7 @@ param(
     [switch]$ExitVerdict
 )
 
-$ScriptVersion = "2.90"
+$ScriptVersion = "2.91"
 $ErrorActionPreference = 'Continue'
 $ProgressPreference = 'SilentlyContinue'
 
@@ -807,6 +807,16 @@ function Get-IpCloudClass {
     if ($ip.AddressFamily -ne 'InterNetwork') { return '' }
     $b = $ip.GetAddressBytes()
     $o1 = [int]$b[0]; $o2 = [int]$b[1]
+    # v2.91 (A4): narrow provider ranges that sit INSIDE broader rules below are checked
+    # FIRST - the broad owner's early return used to shadow them (google/akamai 104.x and
+    # cloudflare 103.x/198.41 rendered as 'microsoft', google 34.64-127 as 'amazon')
+    if ($o1 -eq 34 -and $o2 -ge 64 -and $o2 -le 127) { return 'google' }
+    if ($o1 -eq 104 -and $o2 -ge 16 -and $o2 -le 31) { return 'cloudflare' }
+    if ($o1 -eq 104 -and $o2 -ge 64 -and $o2 -le 127) { return 'akamai' }
+    if ($o1 -eq 104 -and $o2 -ge 196 -and $o2 -le 247) { return 'google' }
+    if ($o1 -eq 103 -and (($o2 -ge 21 -and $o2 -le 22) -or $o2 -eq 31 -or $o2 -eq 224 -or $o2 -eq 252)) { return 'cloudflare' }
+    if ($o1 -eq 198 -and $o2 -ge 41 -and $o2 -le 64) { return 'cloudflare' }
+    if ($o1 -eq 199 -and $o2 -ge 36 -and $o2 -le 159) { return 'google' }
     # Microsoft (Azure/O365/Defender cloud) - major published ranges
     # v2.82: Azure fills - 4.208.0.0/12, 13.64.0.0/11, 13.96.0.0/13 (a 4.213.x hit on a real
     # case surfaced as "unknown provider" because no octet-1 rule existed for 4.x)
@@ -853,16 +863,13 @@ function Get-IpCloudClass {
     if ($o1 -eq 13 -and $o2 -ge 226 -and $o2 -le 250) { return 'amazon' }
     if ($o1 -eq 15 -and $o2 -ge 176 -and $o2 -le 255) { return 'amazon' }
     if ($o1 -eq 18 -and $o2 -ge 32 -and $o2 -le 255) { return 'amazon' }
-    if ($o1 -eq 34 -and $o2 -ge 0 -and $o2 -le 255) { return 'amazon' }
     if ($o1 -eq 52 -and $o2 -ge 0 -and $o2 -le 95) { return 'amazon' }
     if ($o1 -eq 54 -and $o2 -ge 64 -and $o2 -le 255) { return 'amazon' }
     if ($o1 -eq 99 -and $o2 -ge 76 -and $o2 -le 159) { return 'amazon' }
     if ($o1 -eq 205 -and $o2 -ge 251 -and $o2 -le 255) { return 'amazon' }
-    # Google Cloud
+    # Google Cloud (specific ranges checked first above)
     if ($o1 -eq 8 -and $o2 -ge 0 -and $o2 -le 31) { return 'google' }
-    if ($o1 -eq 34 -and $o2 -ge 64 -and $o2 -le 127) { return 'google' }
     if ($o1 -eq 35 -and $o2 -ge 184 -and $o2 -le 255) { return 'google' }
-    if ($o1 -eq 104 -and $o2 -ge 196 -and $o2 -le 247) { return 'google' }
     if ($o1 -eq 107 -and $o2 -ge 180 -and $o2 -le 255) { return 'google' }
     if ($o1 -eq 142 -and $o2 -ge 250 -and $o2 -le 255) { return 'google' }
     if ($o1 -eq 146 -and $o2 -ge 148 -and $o2 -le 207) { return 'google' }
@@ -870,13 +877,8 @@ function Get-IpCloudClass {
     if ($o1 -eq 172 -and $o2 -ge 253 -and $o2 -le 255) { return 'google' }
     if ($o1 -eq 173 -and $o2 -ge 194 -and $o2 -le 255) { return 'google' }
     if ($o1 -eq 192 -and $o2 -ge 158 -and $o2 -le 31) { return 'google' }
-    if ($o1 -eq 199 -and $o2 -ge 36 -and $o2 -le 159) { return 'google' }
     if ($o1 -eq 209 -and $o2 -ge 85 -and $o2 -le 127) { return 'google' }
-    # Cloudflare
-    if ($o1 -eq 103 -and $o2 -ge 21 -and $o2 -le 22) { return 'cloudflare' }
-    if ($o1 -eq 103 -and $o2 -eq 31) { return 'cloudflare' }
-    if ($o1 -eq 103 -and $o2 -eq 224) { return 'cloudflare' }
-    if ($o1 -eq 104 -and $o2 -ge 16 -and $o2 -le 31) { return 'cloudflare' }
+    # Cloudflare (specific ranges checked first above)
     if ($o1 -eq 108 -and $o2 -eq 162) { return 'cloudflare' }
     if ($o1 -eq 131 -and $o2 -eq 107) { return 'cloudflare' }
     if ($o1 -eq 141 -and $o2 -ge 101 -and $o2 -le 107) { return 'cloudflare' }
@@ -886,11 +888,8 @@ function Get-IpCloudClass {
     if ($o1 -eq 188 -and $o2 -ge 114 -and $o2 -le 121) { return 'cloudflare' }
     if ($o1 -eq 190 -and $o2 -eq 93) { return 'cloudflare' }
     if ($o1 -eq 197 -and $o2 -eq 234) { return 'cloudflare' }
-    if ($o1 -eq 198 -and $o2 -ge 41 -and $o2 -le 64) { return 'cloudflare' }
-    if ($o1 -eq 103 -and $o2 -eq 252) { return 'cloudflare' }
-    # Akamai
+    # Akamai (104.64-127 checked first above - inside microsoft's broad 104.40-200)
     if ($o1 -eq 23 -and $o2 -ge 32 -and $o2 -le 255) { return 'akamai' }
-    if ($o1 -eq 104 -and $o2 -ge 64 -and $o2 -le 127) { return 'akamai' }
     if ($o1 -eq 118 -and $o2 -eq 6) { return 'akamai' }
     if ($o1 -eq 172 -and $o2 -ge 224 -and $o2 -le 252) { return 'akamai' }
     if ($o1 -eq 184 -and $o2 -ge 24 -and $o2 -le 51) { return 'akamai' }
@@ -909,10 +908,14 @@ function Get-DomainProvider {
     $h = "$Hostname".TrimEnd('.').ToLower()
     foreach ($e in @(
         # ordered list 'provider suffix' - first suffix match wins
-        'microsoft microsoft.com','microsoft windows.com','microsoft windowsupdate.com','microsoft update.microsoft.com','microsoft msn.com','microsoft office.com','microsoft office.net','microsoft live.com','microsoft microsoftonline.com','microsoft msftconnecttest.com','microsoft msedge.net','microsoft azure.com','microsoft azureedge.net','microsoft windowsazure.com','microsoft onedrive.com','microsoft sharepoint.com','microsoft sharepointonline.com','microsoft bing.com','microsoft xbox.com','microsoft visualstudio.com','microsoft github.com','microsoft githubusercontent.com','microsoft github.io','microsoft msocsp.com','microsoft msocsp.net','microsoft msft.net',
+        # v2.91 (A5): user-hosting platforms REMOVED on purpose - anyone can publish
+        # evil.github.io / anything.pages.dev, so calling them 'microsoft'/'cloudflare'
+        # laundered attacker infrastructure. github.com/githubusercontent.com stay (MS-operated
+        # code infra), github.io does not.
+        'microsoft microsoft.com','microsoft windows.com','microsoft windowsupdate.com','microsoft update.microsoft.com','microsoft msn.com','microsoft office.com','microsoft office.net','microsoft live.com','microsoft microsoftonline.com','microsoft msftconnecttest.com','microsoft msedge.net','microsoft azure.com','microsoft azureedge.net','microsoft windowsazure.com','microsoft onedrive.com','microsoft sharepoint.com','microsoft sharepointonline.com','microsoft bing.com','microsoft xbox.com','microsoft visualstudio.com','microsoft github.com','microsoft githubusercontent.com','microsoft msocsp.com','microsoft msocsp.net','microsoft msft.net',
         'amazon amazonaws.com','amazon amazon.com','amazon awsstatic.com','amazon cloudfront.net','amazon primevideo.com',
         'google google.com','google gstatic.com','google googleapis.com','google googleusercontent.com','google youtube.com','google ytimg.com','google googlevideo.com','google google-analytics.com','google doubleclick.net','google android.com','google googlemail.com',
-        'cloudflare cloudflare.com','cloudflare cloudflareclient.com','cloudflare cloudflareinsights.com','cloudflare pages.dev',
+        'cloudflare cloudflare.com','cloudflare cloudflareclient.com','cloudflare cloudflareinsights.com',
         'akamai akamai.com','akamai akamaihd.net','akamai akamaized.net','akamai akamai.net','akamai edgekey.net','akamai edgesuite.net'
     )) {
         $sp = $e.IndexOf(' ')
@@ -8492,6 +8495,14 @@ function New-SuperTimeline {
     # events (head-counting used to keep the oldest while the total cap kept the newest,
     # silently dropping the newest evidence on busy cases); hayabusa sort-csv dedupes overlaps.
     $rows = New-Object System.Collections.Generic.List[object]
+    # v2.91 (A1): TWO dialects reach this function and the old single parser lied about one
+    # of them. Zimmerman-tool exports (PECmd/LECmd/AmcacheParser/MFTECmd/RBCmd/SBECmd,
+    # browser history, IIS W3C, SRUM) are UTC *without a zone marker*; [datetime]::Parse
+    # yields Kind=Unspecified and .ToUniversalTime() then SUBTRACTS the machine offset
+    # (proven: a prefetch run 22:51:22 UTC rendered 19:21:22 on a +03:30 box). Event-log
+    # rows are genuinely endpoint-local and DO need the conversion. So: $add keeps local/
+    # offset-bearing handling, $addUtc interprets naive stamps AS UTC. Each weave declares
+    # its dialect; output is one true-UTC chronology.
     $add = {
         param($ts, [string]$source, [string]$type, [string]$actor, [string]$entity, [string]$detail)
         if (-not $ts) { return }
@@ -8502,8 +8513,23 @@ function New-SuperTimeline {
         if ($d.Length -gt 240) { $d = $d.Substring(0, 240) + '...' }
         $null = $rows.Add([pscustomobject]@{ Timestamp = $iso; Source = $source; Type = "$type"; Actor = "$actor"; Entity = "$entity"; Detail = $d })
     }
+    $addUtc = {
+        param($ts, [string]$source, [string]$type, [string]$actor, [string]$entity, [string]$detail)
+        if (-not $ts) { return }
+        $iso = "$ts"
+        try {
+            # AssumeUniversal+AdjustToUniversal: naive stamp = UTC (no shift); a stamp that
+            # carries its own offset/Z is converted by its offset instead - both land true
+            $dtU = [datetime]::Parse("$ts", [System.Globalization.CultureInfo]::InvariantCulture, [System.Globalization.DateTimeStyles]::AssumeUniversal -bor [System.Globalization.DateTimeStyles]::AdjustToUniversal)
+            if ($dtU -gt [datetime]::MinValue) { $iso = $dtU.ToString('yyyy-MM-dd HH:mm:ss') }
+        } catch { }
+        $d = ("$detail" -replace '\s+', ' ').Trim()
+        if ($d.Length -gt 240) { $d = $d.Substring(0, 240) + '...' }
+        $null = $rows.Add([pscustomobject]@{ Timestamp = $iso; Source = $source; Type = "$type"; Actor = "$actor"; Entity = "$entity"; Detail = $d })
+    }
     $keepNewest = {
         # per-source cap: buffer all mapped rows, keep the NEWEST $cap by parsed timestamp
+        # (dialect-consistent within one buffer, so ordering is sound per source)
         param($buf, [int]$cap)
         # comma operator: survive PS one-level output unroll (a bare single-row return
         # would make the caller iterate the row's fields instead of the rows)
@@ -8511,14 +8537,18 @@ function New-SuperTimeline {
         ,@($buf | Sort-Object { Get-InvariantDate $_[0] } -Descending | Select-Object -First $cap)
     }
     $weave = {
-        param([string]$name, [int]$cap, [scriptblock]$map)
+        # v2.91: [bool]$isUtc declares the CSV's stamp dialect (see $addUtc above) so the
+        # timeline stops mixing shifted and unshifted clocks
+        param([string]$name, [int]$cap, [scriptblock]$map, [bool]$isUtc = $false)
         $buf = New-Object System.Collections.Generic.List[object]
         foreach ($r in (Import-CaseCsv $name)) {
             $m = $null
             try { $m = & $map $r } catch { }
             if ($m -and "$($m[0])") { $buf.Add(@("$($m[0])", $m[1], $m[2], $m[3], $m[4])) }
         }
-        foreach ($m in (& $keepNewest $buf $cap)) { & $add $m[0] $name $m[1] $m[2] $m[3] $m[4] }
+        foreach ($m in (& $keepNewest $buf $cap)) {
+            if ($isUtc) { & $addUtc $m[0] $name $m[1] $m[2] $m[3] $m[4] } else { & $add $m[0] $name $m[1] $m[2] $m[3] $m[4] }
+        }
     }
     $leaf = { param($p) try { if ("$p") { (Split-Path "$p" -Leaf) } else { '' } } catch { "$p" } }
 
@@ -8601,7 +8631,7 @@ function New-SuperTimeline {
     }
     $pfT = { param($r) $c = @($r.PSObject.Properties.Name | Where-Object { $_ -match '(?i)lastrun' } | Select-Object -First 1)[0]; if ($c) { "$($r.$c)" } else { '' } }
     $pfE = { param($r) $c = @($r.PSObject.Properties.Name | Where-Object { $_ -match '(?i)executable|^name$' } | Select-Object -First 1)[0]; if ($c) { "$($r.$c)" } else { '' } }
-    & $weave 'prefetch_parsed' 2000 { param($r) $rc = ''; foreach ($pn in @($r.PSObject.Properties.Name)) { if ($pn -match '(?i)runcount|^run') { $rc = "$($r.$pn)"; break } } @((& $pfT $r), 'prefetch run', (& $leaf (& $pfE $r)), (& $pfE $r), "run count $rc") }
+    & $weave 'prefetch_parsed' 2000 { param($r) $rc = ''; foreach ($pn in @($r.PSObject.Properties.Name)) { if ($pn -match '(?i)runcount|^run') { $rc = "$($r.$pn)"; break } } @((& $pfT $r), 'prefetch run', (& $leaf (& $pfE $r)), (& $pfE $r), "run count $rc") } -IsUtc $true
     & $weave 'amcache' 2000 {
         param($r)
         $t = $null
@@ -8610,11 +8640,11 @@ function New-SuperTimeline {
         }
         $nm = ''; foreach ($pn in @('Name', 'ApplicationName', 'SourceSimpleName')) { $p2 = $r.PSObject.Properties[$pn]; if ($p2 -and "$($p2.Value)") { $nm = "$($p2.Value)"; break } }
         @($(if ($t) { $t.ToString('yyyy-MM-dd HH:mm:ss') } else { '' }), 'amcache entry', $nm, $nm, "source $($r.SourceFile)")
-    }
-    & $weave 'mft_recent' 3000 { param($r) @("$($r.Created)", 'file created ($MFT $Si)', '', "$($r.Path)", "FILE_NAME birth $($r.CreatedFN) | $($r.Flags)") }
-    & $weave 'usn_write_bursts' 200 { param($r) @("$($r.WindowStart)", 'mass file modification (USN burst)', '', "$($r.Drive)", "$($r.WriteEvents) writes / $($r.DistinctFiles) files$(if ("$($r.RansomExt)") { " RANSOM-EXT $($r.RansomExt)" })") }
+    } -IsUtc $true
+    & $weave 'mft_recent' 3000 { param($r) @("$($r.Created)", 'file created ($MFT $Si)', '', "$($r.Path)", "FILE_NAME birth $($r.CreatedFN) | $($r.Flags)") } -IsUtc $true
+    & $weave 'usn_write_bursts' 200 { param($r) @("$($r.WindowStart)", 'mass file modification (USN burst)', '', "$($r.Drive)", "$($r.WriteEvents) writes / $($r.DistinctFiles) files$(if ("$($r.RansomExt)") { " RANSOM-EXT $($r.RansomExt)" })") } -IsUtc $true
     & $weave 'bam_lastexec' 2000 { param($r) @("$($r.LastWrite)", "last exec ($($r.Source))", (& $leaf $r.Executable), "$($r.Executable)", "sid $($r.Sid)") }
-    & $weave 'startup_info' 1000 { param($r) @("$($r.LastRun)", 'app launch (StartupInfo)', (& $leaf $r.App), "$($r.App)", "count $($r.Count)") }
+    & $weave 'startup_info' 1000 { param($r) @("$($r.LastRun)", 'app launch (StartupInfo)', (& $leaf $r.App), "$($r.App)", "count $($r.Count)") } -IsUtc $true
     & $weave 'wer_reports' 1000 { param($r) @("$($r.Time)", 'app crash (WER)', "$($r.App)", "$($r.Module)", "$($r.File)") }
     & $weave 'office_mru' 500 { param($r) @("$($r.LastWrite)", 'office document (MRU)', "$($r.App)", (& $leaf $r.Document), "$($r.Document)") }
     $anyT = {
@@ -8624,19 +8654,19 @@ function New-SuperTimeline {
         }
         $fallback
     }
-    & $weave 'lnk_parsed' 1000 { param($r) @((& $anyT $r ''), 'LNK opened', '', (& $leaf $r.Target), "$($r.Path) -> $($r.Target)") }
-    & $weave 'shellbags' 1000 { param($r) @((& $anyT $r ''), 'folder accessed (ShellBag)', '', (& $leaf ($r.PSObject.Properties['Path'].Value)), "$($r.PSObject.Properties['Path'].Value)") }
-    & $weave 'recyclebin_index' 1000 { param($r) @((& $anyT $r ''), 'file deleted (recycle bin)', '', (& $leaf ($r.PSObject.Properties['OriginalPath'].Value)), "$($r.PSObject.Properties['OriginalPath'].Value)") }
+    & $weave 'lnk_parsed' 1000 { param($r) @((& $anyT $r ''), 'LNK opened', '', (& $leaf $r.Target), "$($r.Path) -> $($r.Target)") } -IsUtc $true
+    & $weave 'shellbags' 1000 { param($r) @((& $anyT $r ''), 'folder accessed (ShellBag)', '', (& $leaf ($r.PSObject.Properties['Path'].Value)), "$($r.PSObject.Properties['Path'].Value)") } -IsUtc $true
+    & $weave 'recyclebin_index' 1000 { param($r) @((& $anyT $r ''), 'file deleted (recycle bin)', '', (& $leaf ($r.PSObject.Properties['OriginalPath'].Value)), "$($r.PSObject.Properties['OriginalPath'].Value)") } -IsUtc $true
     & $weave 'browser_history' 2000 {
         param($r)
         $u = ''; foreach ($pn in @('URL', 'Url', 'url')) { $p2 = $r.PSObject.Properties[$pn]; if ($p2 -and "$($p2.Value)") { $u = "$($p2.Value)"; break } }
         @((& $anyT $r ''), 'browser visit', '', $u, ("$($r.PSObject.Properties['Title'].Value)"))
-    }
+    } -IsUtc $true
     & $weave 'browser_downloads' 1000 {
         param($r)
         $tp = ''; foreach ($pn in @('TargetFilePath', 'TargetPath', 'DownloadPath', 'FullPath', 'Path')) { $p2 = $r.PSObject.Properties[$pn]; if ($p2 -and "$($p2.Value)") { $tp = "$($p2.Value)"; break } }
         @((& $anyT $r ''), 'browser download', '', (& $leaf $tp), "$($r.PSObject.Properties['URL'].Value)")
-    }
+    } -IsUtc $true
     # v2.59: SRUM per-app network history (deep SrumECmd parse) - zero-traffic usage rows are
     # skipped so the cap is spent on real events
     & $weave 'srum_usage' 2000 {
@@ -8646,8 +8676,8 @@ function New-SuperTimeline {
         try { $br = [long]"$($r.BytesReceived)" } catch { }
         if (($bs + $br) -le 0) { return $null }
         @("$($r.Timestamp)", 'app network usage (SRUM)', "$($r.User)", (& $leaf $r.Application), "sent $bs / recv $br bytes")
-    }
-    & $weave 'iis_requests' 1000 { param($r) @("$($r.Time)", "web request (IIS) $("$($r.Method)")", '', "$($r.ClientIp) -> $("$($r.Uri)")", "status $($r.Status) ua=$("$($r.UserAgent)")") }
+    } -IsUtc $true
+    & $weave 'iis_requests' 1000 { param($r) @("$($r.Time)", "web request (IIS) $("$($r.Method)")", '', "$($r.ClientIp) -> $("$($r.Uri)")", "status $($r.Status) ua=$("$($r.UserAgent)")") } -IsUtc $true
     # scanner/derived outputs (hayabusa Sigma results, hunt findings, session attribution,
     # logging-gap analysis) are deliberately NOT woven here - the timeline is gathered
     # evidence only; conclusions live in their own report sections.
@@ -10622,19 +10652,29 @@ function New-HuntFindings {
         }
         $null = $r37Entries.Add(@{ Path = $r37Path; Ts = $r37Ts })
     }
+    # v2.91 (A3): Win10+ shimcache records carry signature '10ts' and store FILE mtimes in
+    # insertion position - the cache is NOT ordered by time there, so the order-violation
+    # check is void (it flagged 54% of a healthy Win11 case as timestomping). Run it only
+    # for Win7-era caches whose signature is not 10ts. Scrub-survivor (b) stays for all.
+    $r37IsWin10 = 0
+    foreach ($r in $r37In) { if ("$($r.'Raw Entry')" -match '"signature"\s*:\s*"10ts"') { $r37IsWin10++ } }
     # (a) unparseable timestamps are skipped WITHOUT updating the baseline (a broken row must not
     # become the comparison point - the chain simply bridges over it to the last good entry)
     $r37Viol = 0
-    $r37Prev = $null
-    foreach ($e in $r37Entries.ToArray()) {
-        if ($null -eq $e.Ts) { continue }
-        if ($null -ne $r37Prev -and $e.Ts -lt $r37Prev) { $r37Viol++ }
-        $r37Prev = $e.Ts
+    if ($r37IsWin10 -gt 0) {
+        # Win10+ cache shape - skip silently (the trace records why)
+    } else {
+        foreach ($e in $r37Entries.ToArray()) {
+            if ($null -eq $e.Ts) { continue }
+            if ($null -ne $r37Prev -and $e.Ts -lt $r37Prev) { $r37Viol++ }
+            $r37Prev = $e.Ts
+        }
     }
     if ($r37Viol -gt 0) {
         & $find 'ShimCache order violation' 'low' 'execution_timeline' "ShimCache order violation: $r37Viol out-of-order entries (timestomping or cache manipulation)" 'T1070.006'
     }
-    & $trace 'R37' 'ShimCache order violation' "execution_timeline: $($r37In.Count) rows -> $($r37Entries.Count) entries -> $r37Viol out-of-order"
+    $r37OrdNote = if ($r37IsWin10 -gt 0) { '; Win10+ 10ts cache - order check skipped (mtimes are file mtimes, not insertion order)' } else { '' }
+    & $trace 'R37' 'ShimCache order violation' "execution_timeline: $($r37In.Count) rows -> $($r37Entries.Count) entries ($r37IsWin10 10ts) -> $r37Viol out-of-order$r37OrdNote"
     # (b) distinct paths (first occurrence keeps original case for the report entity); a path is
     # corroborated when its FULL path or its LEAF name appears in any other execution source
     $r37Seen = @{}
@@ -10673,19 +10713,22 @@ function New-HuntFindings {
     }
     & $trace 'R37' 'ShimCache scrub survivor' "corroboration amcache+prefetch_parsed+bam_lastexec: $($r37Paths.Count) paths -> $($r37Surv.Count) survivors -> $r37Emit emitted"
 
-    # ---------- R38: execution hour-of-day stacking (v2.81 - report-only, NO verdict signal) ----------
-    # First-seen hour-of-day per distinct binary (deduped on src|leaf; a src|leaf only becomes
-    # seen once a row with a usable timestamp carries it, so broken timestamps never poison the
-    # slot). Off-hours bursts (20:00-06:59) and mass .exe staging inside one hour are timing
-    # tells for hands-on-keyboard / staging activity - timing alone is low-precision, so both
-    # stay low / report-only. The report's hour histogram recomputes the same buckets itself.
-    $r38Seen = @{}
-    $r38All = @{}   # hour -> @{ leaf = $true } - every first-seen binary (burst counter)
-    $r38Exe = @{}   # hour -> @{ leaf = $true } - .exe only (mass-staging counter)
+    # ---------- R38: execution hour-of-day stacking (v2.81; v2.91: UTC-normalized + earliest-stamp) ----------
+    # First-seen hour-of-day per distinct binary (src|leaf key). v2.91 fixes two lies:
+    # (a) amcache/prefetch stamps are naive UTC while 4688/Sysmon stamps are endpoint-local -
+    #     everything normalizes to UTC before bucketing so mixed sources share one clock;
+    # (b) 'first seen' = EARLIEST stamp per binary, not whichever CSV row sorted first.
+    # Hours are UTC and the finding says so - the analyst clock may differ from the endpoint's
+    # timezone. Off-hours bursts (20:00-06:59 UTC) and mass .exe staging inside one hour are
+    # timing tells for hands-on-keyboard / staging activity - timing alone is low-precision,
+    # so both stay low / report-only. The report's hour histogram recomputes its own buckets
+    # from the (now true-UTC) master timeline.
+    $r38Min = @{}   # src|leaf -> earliest stamp, normalized to UTC wall clock
     $r38In = 0
     foreach ($r38Src in @('amcache', 'prefetch_parsed', 'security_proc_events', 'sysmon_proc_create')) {
         $r38Rows = @(Import-CaseCsv $r38Src)
         $r38In += $r38Rows.Count
+        $r38IsUtc = @('amcache', 'prefetch_parsed') -contains $r38Src
         foreach ($r in $r38Rows) {
             try {
                 $r38Raw = $null
@@ -10699,18 +10742,26 @@ function New-HuntFindings {
                 $r38Ts = $null
                 foreach ($pn in (@($r.PSObject.Properties.Name) | Where-Object { $_ -match '(?i)timestamp|time$|lastrun|^time' })) {
                     $r38Dt = Get-InvariantDate "$($r.$pn)"
-                    if ($r38Dt -gt [datetime]::MinValue) { $r38Ts = $r38Dt; break }
+                    if ($r38Dt -gt [datetime]::MinValue) {
+                        # naive-UTC sources keep their wall clock (it IS UTC); local sources shift
+                        $r38Ts = if ($r38IsUtc) { $r38Dt } else { $r38Dt.ToUniversalTime() }
+                        break
+                    }
                 }
                 if (-not $r38Ts) { continue }
                 $r38Key = "$r38Src|$r38Leaf"
-                if ($r38Seen.ContainsKey($r38Key)) { continue }
-                $r38Seen[$r38Key] = $true
-                $r38H = $r38Ts.Hour
-                if (-not $r38All.ContainsKey($r38H)) { $r38All[$r38H] = @{}; $r38Exe[$r38H] = @{} }
-                $r38All[$r38H][$r38Leaf] = $true
-                if ($r38Leaf.EndsWith('.exe')) { $r38Exe[$r38H][$r38Leaf] = $true }
+                if (-not $r38Min.ContainsKey($r38Key) -or $r38Ts -lt $r38Min[$r38Key]) { $r38Min[$r38Key] = $r38Ts }
             } catch { }
         }
+    }
+    $r38All = @{}   # hour(UTC) -> @{ leaf = $true } - every first-seen binary (burst counter)
+    $r38Exe = @{}   # hour(UTC) -> @{ leaf = $true } - .exe only (mass-staging counter)
+    foreach ($r38K in @($r38Min.Keys)) {
+        $r38H = $r38Min[$r38K].Hour
+        $r38Leaf = ($r38K -split '\|', 2)[1]
+        if (-not $r38All.ContainsKey($r38H)) { $r38All[$r38H] = @{}; $r38Exe[$r38H] = @{} }
+        $r38All[$r38H][$r38Leaf] = $true
+        if ($r38Leaf.EndsWith('.exe')) { $r38Exe[$r38H][$r38Leaf] = $true }
     }
     $r38Burst = 0
     foreach ($r38H in @(0..23)) {
@@ -10719,7 +10770,7 @@ function New-HuntFindings {
         $r38N = $r38All[$r38H].Count
         if ($r38N -lt 8) { continue }
         $r38Win = '{0:00}:00-{0:00}:59' -f $r38H
-        & $find 'Off-hours execution burst' 'low' $r38Win "$r38N distinct binaries first seen $r38Win (off-hours window 20:00-06:59)" ''
+        & $find 'Off-hours execution burst' 'low' "$r38Win UTC" "$r38N distinct binaries first seen $r38Win UTC (off-hours window 20:00-06:59 UTC - endpoint timezone may differ)" ''
         $r38Burst++
     }
     $r38Stage = 0
@@ -10728,10 +10779,10 @@ function New-HuntFindings {
         $r38N = $r38Exe[$r38H].Count
         if ($r38N -lt 10) { continue }
         $r38Win = '{0:00}:00-{0:00}:59' -f $r38H
-        & $find 'Mass binary staging' 'low' $r38Win "$r38N first-seen .exe binaries staged $r38Win" ''
+        & $find 'Mass binary staging' 'low' "$r38Win UTC" "$r38N first-seen .exe binaries staged $r38Win UTC" ''
         $r38Stage++
     }
-    & $trace 'R38' 'execution hour-of-day stacking' "amcache+prefetch_parsed+security_proc_events+sysmon_proc_create: $r38In rows -> $($r38Seen.Count) first-seen binaries -> $r38Burst off-hours burst + $r38Stage staging findings"
+    & $trace 'R38' 'execution hour-of-day stacking' "amcache+prefetch_parsed+security_proc_events+sysmon_proc_create: $r38In rows -> $($r38Min.Count) first-seen binaries (UTC-normalized, earliest-stamp) -> $r38Burst off-hours burst + $r38Stage staging findings"
 
     # ---------- R45: TaskCache tamper - hidden/orphaned scheduled tasks (v2.83, reshaped v2.87) ----------
     # Three distinct shapes: SD gone + still Tree-linked = true hidden task (high);
@@ -11254,7 +11305,24 @@ function Get-CompromiseVerdict {
     # evtx-history (v2.55+ merge) outside the window drops to weight 1 report-only, so an old
     # cleaned detection can no longer ride the two-weight-2-signals escalation to LIKELY
     # COMPROMISED. Schema-less rows (pre-v2.55 cases) default fresh - legacy behavior preserved.
-    $defWinCutoff = (Get-Date).AddHours(-$(if ($LogHours -gt 0) { $LogHours } else { 168 }))
+    # v2.91 (truth-first): the fresh/stale cutoff anchors at the CASE's collection instant
+    # (case.json StartedUTC), not the analyst's wall clock - regenerating a shelf-aged case
+    # must not silently flip 'active' detections to 'stale' (observed: SUSPICIOUS 7 signals at
+    # collection -> NEOC 6 signals on regen 3 days later; stale bucket 4 -> 7). Local time is
+    # kept so the comparison semantics vs DetectedUTC strings stay identical to v2.90.
+    $defNow = $null
+    try {
+        $cjDefPath = Join-Path (Split-Path -Parent $script:CsvDir) 'case.json'
+        if (Test-Path -LiteralPath $cjDefPath) {
+            $cjDef = Get-Content -LiteralPath $cjDefPath -Raw | ConvertFrom-Json
+            if ("$($cjDef.StartedUTC)") {
+                $dDef = [datetime]::MinValue
+                if ([datetime]::TryParse("$($cjDef.StartedUTC)", [System.Globalization.CultureInfo]::InvariantCulture, [System.Globalization.DateTimeStyles]::RoundtripKind, [ref]$dDef)) { $defNow = $dDef.ToLocalTime() }
+            }
+        }
+    } catch { }
+    if (-not $defNow) { $defNow = Get-Date }
+    $defWinCutoff = $defNow.AddHours(-$(if ($LogHours -gt 0) { $LogHours } else { 168 }))
     $defFresh = New-Object System.Collections.Generic.List[object]
     $defStale = New-Object System.Collections.Generic.List[object]
     foreach ($t in $def) {
@@ -11326,7 +11394,7 @@ function Get-CompromiseVerdict {
     Add-Cov 'Remote access sweep (tunnels/RA tools/SSH keys)' (Test-CaseCsv 'remote_access') 2
     Add-Cov 'Structured telemetry (4688 / Sysmon 2-13)' ((Test-CaseCsv 'security_proc_events') -or (Test-CaseCsv 'sysmon_process_access') -or (Test-CaseCsv 'sysmon_file_create')) 3
     Add-Cov 'Injection/pipe telemetry (Sysmon 8/17/18)' ((Test-CaseCsv 'sysmon_remote_thread') -or (Test-CaseCsv 'sysmon_pipes')) 2
-    Add-Cov 'Execution artifact spine (prefetch/amcache/BAM/shimcache)' ((Test-CaseCsv 'prefetch_index') -or (Test-CaseCsv 'amcache') -or (Test-CaseCsv 'bam_lastexec') -or (Test-CaseCsv 'shimcache')) 3
+    Add-Cov 'Execution artifact spine (prefetch/amcache/BAM/shimcache)' ((Test-CaseCsv 'prefetch_index') -or (Test-CaseCsv 'amcache') -or (Test-CaseCsv 'bam_lastexec') -or (Test-CaseCsv 'shimcache') -or (Test-CaseCsv 'execution_timeline')) 3 # v2.91 (A6): endpoint packages carry execution_timeline.csv (chainsaw shimcache), not shimcache.csv - that miss read as a permanent coverage hole
     Add-Cov 'Kerberos/DS telemetry (DC role)' ((Test-CaseCsv 'security_kerberos') -or (Test-CaseCsv 'security_ds_access')) 3
     Add-Cov 'Web telemetry (IIS)' (Test-CaseCsv 'iis_requests') 2
     Add-Cov 'Session attribution + process lineage' ((Test-CaseCsv 'session_activity') -or (Test-CaseCsv 'process_chains')) 2
