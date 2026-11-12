@@ -88,6 +88,8 @@ foreach ($empty in @('flash_ioc_hits', 'yara_hits', 'ioc_hits_amcache', 'yara_sc
 '@ | Set-Content -LiteralPath (Join-Path $csvDir 'hunt_findings.csv') -Encoding UTF8
 
 # 32 scored processes -> Processes (32) + heading cap 'showing 30 of 32'
+# v2.93: nav links carry a title attribute (inventory-vs-display honesty note)
+$navT = " title='$0 evidence rows collected - the section shows a capped view'"
 $procLines = New-Object System.Collections.Generic.List[string]
 $null = $procLines.Add('"Name","Path","PID","Verdict","Score","Evidence","Signer"')
 1..32 | ForEach-Object { $null = $procLines.Add(('"proc{0}.exe","C:\Windows\System32\p{0}.exe","{0}","MEDIUM","3","score: review items",""' -f $_)) }
@@ -138,22 +140,24 @@ $null = New-HtmlReport
 $html = Get-Content -LiteralPath (Join-Path $CaseDir 'report.html') -Raw
 
 # ---- T10: nav counts (populated + empty sections) ----
-Check "T10: populated section shows its count - Processes (32)" ($html.Contains("<a href='#processes'>Processes (32)</a>"))
-Check "T10: populated section shows its count - Hunt (2)" ($html.Contains("<a href='#hunt'>Hunt (2)</a>"))
-Check "T10: populated section shows its count - Leads (2)" ($html.Contains("<a href='#leads'>Leads (2)</a>"))
-Check "T10: populated section shows its count - Sigma (3)" ($html.Contains("<a href='#sigma'>Sigma (3)</a>"))
-Check "T10: med+ only - Findings by tactic (2)" ($html.Contains("<a href='#tactics'>Findings by tactic (2)</a>"))
-Check "T10: distinct techniques - ATT&CK (2) with the escaped ampersand" ($html.Contains("<a href='#attack'>ATT&amp;CK (2)</a>"))
-Check "T10: populated section shows its count - IOCs (1)" ($html.Contains("<a href='#ioc'>IOCs (1)</a>"))
-Check "T10: populated section shows its count - Timeline (4)" ($html.Contains("<a href='#timeline'>Timeline (4)</a>"))
-Check "T10: focus dossier row count from focus_terms.json - Focus (7)" ($html.Contains("<a href='#focus'>Focus (7)</a>"))
-Check "T10: coverage rows + gaps - Coverage (3)" ($html.Contains("<a href='#coverage'>Coverage (3)</a>"))
-Check "T10: 4648 rows counted - Logons (2)" ($html.Contains("<a href='#logons'>Logons (2)</a>"))
-Check "T10: multi-source binaries only - Entities (1)" ($html.Contains("<a href='#entities'>Entities (1)</a>"))
-Check "T10: populated snapshot source counted - Snapshot (1)" ($html.Contains("<a href='#snapshot'>Snapshot (1)</a>"))
+# v2.93: nav links carry a title attribute (inventory-vs-display honesty note) - match the
+# link text, not the exact tag.
+Check "T10: populated section shows its count - Processes (32)" ($html -match "<a href='#processes'[^>]*>Processes \(32\)</a>")
+Check "T10: populated section shows its count - Hunt (2)" ($html -match "<a href='#hunt'[^>]*>Hunt \(2\)</a>")
+Check "T10: populated section shows its count - Leads (2)" ($html -match "<a href='#leads'[^>]*>Leads \(2\)</a>")
+Check "T10: populated section shows its count - Sigma (3)" ($html -match "<a href='#sigma'[^>]*>Sigma \(3\)</a>")
+Check "T10: med+ only - Findings by tactic (2)" ($html -match "<a href='#tactics'[^>]*>Findings by tactic \(2\)</a>")
+Check "T10: distinct techniques - ATT&CK (2) with the escaped ampersand" ($html -match "<a href='#attack'[^>]*>ATT&amp;CK \(2\)</a>")
+Check "T10: populated section shows its count - IOCs (1)" ($html -match "<a href='#ioc'[^>]*>IOCs \(1\)</a>")
+Check "T10: populated section shows its count - Timeline (4)" ($html -match "<a href='#timeline'[^>]*>Timeline \(4\)</a>")
+Check "T10: focus dossier row count from focus_terms.json - Focus (7)" ($html -match "<a href='#focus'[^>]*>Focus \(7\)</a>")
+Check "T10: coverage rows + gaps - Coverage (3)" ($html -match "<a href='#coverage'[^>]*>Coverage \(3\)</a>")
+Check "T10: 4648 rows counted - Logons (2)" ($html -match "<a href='#logons'[^>]*>Logons \(2\)</a>")
+Check "T10: multi-source binaries only - Entities (1)" ($($html -match "<a href='#entities'[^>]*>Entities \(1\)</a>"))
+Check "T10: populated snapshot source counted - Snapshot (1)" ($($html -match "<a href='#snapshot'[^>]*>Snapshot \(1\)</a>"))
 Check "T10: credential sweep table renders from the populated CSV" (($html.Contains('<h3>Credential exposure sweep</h3>')) -and ($html.Contains('WLAN key (NETGEAR-GUEST)')))
-Check "T10: empty section shows the (none) marker - YARA" ($html.Contains("<a href='#yara'>YARA (none)</a>"))
-Check "T10: empty section shows the (none) marker - Drivers" ($html.Contains("<a href='#drivers'>Drivers (none)</a>"))
+Check "T10: empty section shows the (none) marker - YARA" ($($html -match "<a href='#yara'[^>]*>YARA \(none\)</a>"))
+Check "T10: empty section shows the (none) marker - Drivers" ($($html -match "<a href='#drivers'[^>]*>Drivers \(none\)</a>"))
 
 # nav counts must not break the v2.66 B1 contract: every link still targets a real anchor
 $navHtml278 = [regex]::Match($html, "(?m)^<div class='nav' id='snav'>(.*)$").Groups[1].Value
@@ -169,7 +173,7 @@ Check "T10: truncated section states the cap in the heading (showing 30 of 32)" 
 $null = New-HtmlReport
 $htmlFew = Get-Content -LiteralPath (Join-Path $CaseDir 'report.html') -Raw
 Check "T10: untruncated/empty section keeps the plain heading (no cap text)" (($htmlFew.Contains('<h2>Process verdicts (correlation scored)</h2>')) -and (-not ($htmlFew.Contains('correlation scored) - showing'))))
-Check "T10: nav count follows the data - Processes (none)" ($htmlFew.Contains("<a href='#processes'>Processes (none)</a>"))
+Check "T10: nav count follows the data - Processes (none)" (($htmlFew -match "<a href='#processes'[^>]*>Processes \(none\)</a>"))
 
 # restore a small scored set -> cap must stay absent, count updates
 @'
@@ -179,7 +183,7 @@ Check "T10: nav count follows the data - Processes (none)" ($htmlFew.Contains("<
 '@ | Set-Content -LiteralPath (Join-Path $csvDir 'flash_process_scored.csv') -Encoding UTF8
 $null = New-HtmlReport
 $html12 = Get-Content -LiteralPath (Join-Path $CaseDir 'report.html') -Raw
-Check "T10: 2 scored rows -> Processes (2), no cap text" (($html12.Contains("<a href='#processes'>Processes (2)</a>")) -and (-not ($html12.Contains('correlation scored) - showing'))))
+Check "T10: 2 scored rows -> Processes (2), no cap text" ((($html12 -match "<a href='#processes'[^>]*>Processes \(2\)</a>")) -and (-not ($html12.Contains('correlation scored) - showing'))))
 
 # ---- T9: draft collapse (behavioral) + Recommendations anchor resolution ----
 $null = New-HtmlReport

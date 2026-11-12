@@ -1,4 +1,14 @@
-﻿## v2.92 - interaction rebuild
+﻿## v2.93 - honest counts
+
+- Nav sidebar: counts are labeled as evidence inventory (tooltip + sidebar legend: 'counts = evidence collected; sections show capped views') so 'Sigma (302)' can't read as '302 rows below'.
+- Every capped section now states its cap: 37 tables/details render 'showing first N of M' with the source CSV named when truncation happens (leads, entities, sigma, persistence, snapshot, timeline, hunt, focus dossier).
+- Entity trail + account trail + dossier trail say 'showing N of the matching event(s)' instead of reporting capped views as totals.
+- Entity cards: empty First seen falls back to 'earliest trail event <stamp>'; 'not captured (process auditing off)' renders once as a section-level note instead of 12 times per card.
+- Sigma stamps: hayabusa ' +00:00' suffix trimmed at import (tables + drill-downs + CSV agree).
+- Timeline noise: the v2.82 cmdletization filter extended to the other two boilerplate forms (Cmdletization.GeneratedTypes, bare ParameterSetName parameter lists).
+- test_v278 nav checks updated for the title attribute.
+
+## v2.92 - interaction rebuild
 
 - Full-value story: every long value (command lines, paths, script blocks, sigma drill rows) renders as preview + client-side 'show all' toggle in the same cell (span-swap architecture; re-renders keep buttons). Click cell = copy full value with honest toast + execCommand fallback; top-bar toggle expands/collapses all; printing always carries full text. Double-click expand removed (was a no-op and double-fired copy).
 - Clipboard honesty: copy actions report real success/failure (navigator.clipboard + execCommand fallback path), never a fake 'copied'.
