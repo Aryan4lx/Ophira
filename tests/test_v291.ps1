@@ -22,6 +22,7 @@ $Check = { param($n, $o) Check $n $o }
 
 # shared helper the timeline/hunt code calls
 . ([ScriptBlock]::Create((Get-Extracted 'Get-InvariantDate')))
+. ([ScriptBlock]::Create((Get-Extracted 'Convert-LocalNaiveToUtc')))
 . ([ScriptBlock]::Create((Get-Extracted 'New-HuntFindings')))
 . ([ScriptBlock]::Create((Get-Extracted 'Get-IpCloudClass')))
 . ([ScriptBlock]::Create((Get-Extracted 'Get-DomainProvider')))
@@ -47,6 +48,7 @@ New-Item -ItemType Directory -Path $script:tmpDir -Force | Out-Null
 $tl = Get-Extracted 'New-SuperTimeline'
 $tlFix = @'
 # fixture injection
+$script:TzOverride = 'Iran Standard Time'
 $script:caseCsv['prefetch_parsed'] = @(
     [pscustomobject]@{ ExecutableName = 'WWAHOST.EXE'; RunCount = '3'; LastRun = '2026-08-18 22:51:22' }
 )

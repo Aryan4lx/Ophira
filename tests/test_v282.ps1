@@ -22,7 +22,7 @@ $stamp = Get-Date -Format 'HHmmss'
 
 # ---- extract the real functions ----
 $defs = ''
-foreach ($n in @('Get-IpCloudClass', 'Get-DomainProvider', 'New-ConnectionDns', 'New-CaseManifest', 'New-SuperTimeline', 'Get-InvariantDate')) {
+foreach ($n in @('Get-IpCloudClass', 'Get-DomainProvider', 'New-ConnectionDns', 'New-CaseManifest', 'New-SuperTimeline', 'Convert-LocalNaiveToUtc', 'Get-InvariantDate')) {
     $m = [regex]::Match($src, "(?s)function $n \{.*?\r?\n\}")
     if (-not $m.Success) { throw "extract failed: $n" }
     $defs += $m.Value + "`r`n"

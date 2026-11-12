@@ -17,7 +17,7 @@ function New-Csv { param($Path, [string[]]$Header, [string[]]$Lines) ($Header + 
 # PART 1 - master timeline weave through the real New-SuperTimeline
 # ============================================================================
 $defs = ''
-foreach ($n in @('Import-CaseCsv', 'New-SuperTimeline')) {
+foreach ($n in @('Import-CaseCsv', 'New-SuperTimeline', 'Convert-LocalNaiveToUtc')) {
     $m = [regex]::Match($src, "(?s)function $n\b.*?\r?\n\}")
     if (-not $m.Success) { throw "extract failed: $n" }
     $defs += $m.Value + "`r`n"

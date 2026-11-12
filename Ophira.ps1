@@ -2603,7 +2603,7 @@ function Test-WebshellContent {
 
 $script:SharedFunctions = @(
     'Get-KitRoot', 'Get-ToolsDir', 'Copy-LockedFile', 'Get-LogStart', 'Get-IocList', 'Test-TrustedPublisher',
-    'Get-CaseCsvPath', 'Test-CaseCsv', 'Get-CaseCsvFullPath',
+    'Get-CaseCsvPath', 'Test-CaseCsv', 'Get-CaseCsvFullPath', 'Convert-LocalNaiveToUtc',
     'Save-Rows', 'Out-RawText', 'Invoke-ExeCapture', 'Invoke-NativeTool', 'Get-WmiOrCim', 'Convert-WmiDate', 'Get-InvariantDate',
     'Test-IsPublicIp', 'Test-IsUserWritablePath', 'Get-SignatureInfo', 'Get-SysmonState',
     'Get-UserProfileList', 'Get-UserAssistRows', 'ConvertTo-Rot13', 'Get-FilteredEvents', 'Export-Evtx',
@@ -8700,6 +8700,13 @@ h3{font-size:13.5px;margin:20px 0 8px;color:var(--tx)}
     return $reportPath
 }
 
+function Convert-LocalNaiveToUtc {
+    # v2.95: naive local-dialect stamps convert via TimeZoneInfo.Local - untestable on CI (UTC box).
+    # $script:TzOverride (a Windows TZ id) lets tests pin the endpoint zone; collections leave it null (= Local).
+    param([datetime]$dt)
+    if ($script:TzOverride) { try { return [TimeZoneInfo]::ConvertTimeToUtc($dt, [TimeZoneInfo]::FindSystemTimeZoneById($script:TzOverride)) } catch { } }
+    return $dt.ToUniversalTime()
+}
 function New-SuperTimeline {
     # v2.24 MASTER TIMELINE: every artifact source woven into ONE chronological CSV with a
     # normalized schema (Timestamp, Source, Type, Actor, Entity, Detail) so the analyst can
@@ -8721,7 +8728,7 @@ function New-SuperTimeline {
         if (-not $ts) { return }
         $iso = "$ts"
         $dt = Get-InvariantDate $ts
-        if ($dt -gt [datetime]::MinValue) { $iso = $dt.ToUniversalTime().ToString('yyyy-MM-dd HH:mm:ss') }
+        if ($dt -gt [datetime]::MinValue) { $iso = (Convert-LocalNaiveToUtc $dt).ToString('yyyy-MM-dd HH:mm:ss') }
         $d = ("$detail" -replace '\s+', ' ').Trim()
         if ($d.Length -gt 240) { $d = $d.Substring(0, 240) + '...' }
         $null = $rows.Add([pscustomobject]@{ Timestamp = $iso; Source = $source; Type = "$type"; Actor = "$actor"; Entity = "$entity"; Detail = $d })

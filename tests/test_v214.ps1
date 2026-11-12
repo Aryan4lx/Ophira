@@ -153,6 +153,7 @@ function Invoke-NativeTool { param($ExePath, $ToolArgs, $WorkingDirectory, [swit
     }
     return 0
 }
+function Convert-LocalNaiveToUtc { param([datetime]$dt) return $dt.ToUniversalTime() }
 Invoke-Expression $mST.Value
 $null = New-SuperTimeline
 $stPath214 = Join-Path $CsvDir 'supertimeline.csv'

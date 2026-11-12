@@ -50,6 +50,7 @@ function Test-CaseCsv([string]$n) { return ($script:presentCsvs -contains $n) }
 
 # ---- M7: Get-InvariantDate ----
 Invoke-Expression (Get-Extracted 'Get-InvariantDate')
+Invoke-Expression (Get-Extracted 'Convert-LocalNaiveToUtc')
 $gd = Get-InvariantDate '02/03/2026'
 Check "M7: '02/03/2026' parses invariant MM/dd/yyyy (Feb 3 - no locale flip)" ($gd.Month -eq 2 -and $gd.Day -eq 3 -and $gd.Year -eq 2026)
 Check "M7: ISO-ish '2026-01-05 10:00:00' parses" ((Get-InvariantDate '2026-01-05 10:00:00') -eq [datetime]'2026-01-05 10:00:00')
