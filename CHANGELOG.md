@@ -3,6 +3,15 @@
 - Re-parsing an aged case re-ran hayabusa with a RELATIVE 'last 168h' window anchored at the analyst's now - once the case was older than the window, detection re-runs returned 0 Sigma rows and the verdict silently lost its Sigma input (observed: 7-signal case dropped to 6 eleven days after collection). Also: hayabusa 4.x silently rejects --start-timeline (usage error -> 0 rows), so the explicit-window branch never worked.
 - Fix: case.json now always materializes the absolute collection window (even for the relative default), and pre-v2.94 cases are anchored to their collection time on open. hayabusa is given a now-relative offset that covers the anchored span.
 
+
+## v2.95 - collection expansion + robustness (batches E + D8)
+
+- New evtx exports: WMI-Activity/Operational (5857/5860/5861), Windows AppLocker (8002/8003/8004 + 8001 EXE dll, 8006/8007), Microsoft-Windows-WinRM/Operational (91/163), Security NTLM (8001/8002) + Schannel (36880/36888), Microsoft-Windows-Bits-Client/Operational (59/60), Microsoft-Windows-WDAC/Operational (3076/3077). New module 4.14 parses them into wmi_activity.csv, applocker_events.csv, winrm_events.csv, ntlm_events.csv, bits_events.csv, wdac_events.csv (honest 'source absent' when the log does not exist).
+- Defender posture: module 6.5 reads Defender preferences (ASR rules + actions, tamper protection, real-time behavior) into defender_posture.csv; report snapshot gets a 'Defender posture' h3 with per-rule pass/fail chips.
+- Robustness: Invoke-NativeTool gained -TimeoutSec (default 900; kills hung child + logs 'timeout'); winpmem memory capture now goes through Invoke-NativeTool; security auth parsing no longer locale-fragile (NTLog parse via invariant parse with en-US fallback).
+- Coverage table: +2 rows (secondary security logs w3, defender posture w2) - 33 entries / 175 weight. Verdict coverage honesty updated; A7 test math re-derived (76% uncovered scenario).
+- Collection index + evidence index + coverage pages include the new artifacts; supertimeline weave unchanged (new sources stay standalone CSVs until signal demand).
+
 ## v2.94 - joins and parsers
 
 - One path normalizer: Convert-ToWinPath strips \?\?, \\?\, \Device\HarddiskVolumeN and \Volume{...} prefixes everywhere (entity correlation, loldrivers, exec stacks, SRUM display) - device-path evidence used to fall out of joins or show as raw mapper paths.
