@@ -3645,9 +3645,12 @@ $script:Modules = @(
             $hayArgs = @('dfir-timeline', '-p', 'verbose', '-d', "$evtxDir", '-o', "$out", '-H', "$html", '-q', '-w', '-U', '-C', '-K', '-m', 'low', '-E')
             $huntNote = 'full range'
             if ($script:LogStartDT) {
-                $hayArgs += @('--start-timeline', $script:LogStartDT.ToString('yyyy-MM-dd HH:mm:ss'))
-                if ($script:LogEndDT) { $hayArgs += @('--end-timeline', $script:LogEndDT.ToString('yyyy-MM-dd HH:mm:ss')) }
-                $huntNote = "from $($script:LogStartDT.ToString('yyyy-MM-dd HH:mm'))$(if ($script:LogEndDT) { " to $($script:LogEndDT.ToString('yyyy-MM-dd HH:mm'))" })"
+                # v2.94: hayabusa 4.x has NO --start-timeline (silent usage error -> 0 rows);
+                # express the absolute window as a now-relative offset that still covers the
+                # whole anchored span (superset - keeps everything from the anchor onward)
+                $offH = [math]::Ceiling(((Get-Date) - $script:LogStartDT).TotalHours)
+                $hayArgs += @('--time-offset', "$([math]::Max($offH, 1))h")
+                $huntNote = "anchored from $($script:LogStartDT.ToString('yyyy-MM-dd HH:mm')) (+$offH h span)"
                 # v2.64: worker-seeded script var - an unscoped read here is only
                 # value-correct via inline dynamic scoping, not by construction
             } elseif ($script:LogHours -gt 0) { $hayArgs += @('--time-offset', "$($script:LogHours)h"); $huntNote = "last $($script:LogHours)h" }
@@ -12378,8 +12381,12 @@ function New-Package {
         AdminElevated = (Test-IsAdmin)
         SysmonPresent = (Get-SysmonState)
         LogHours = $LogHours
-        LogStart = $(if ($script:LogStartDT) { $script:LogStartDT.ToUniversalTime().ToString('o') } else { '' })
-        LogEnd = $(if ($script:LogEndDT) { $script:LogEndDT.ToUniversalTime().ToString('o') } else { '' })
+        # v2.94: materialize the resolved window even when the relative default was used -
+        # an empty LogStart makes every re-parse re-anchor 'last 168h' at the ANALYST's now,
+        # which silently empties detection re-runs (hayabusa --time-offset) once the case
+        # ages past the window (observed: 0 Sigma rows 11 days after collection)
+        LogStart = $(if ($script:LogStartDT) { $script:LogStartDT.ToUniversalTime().ToString('o') } elseif ($LogHours -gt 0) { (Get-Date).AddHours(-1 * $LogHours).ToUniversalTime().ToString('o') } else { '' })
+        LogEnd = $(if ($script:LogEndDT) { $script:LogEndDT.ToUniversalTime().ToString('o') } else { (Get-Date).ToUniversalTime().ToString('o') })
         DotNet = (Get-DotNetRelease)
         OutputFolder = $CaseDir
     }
@@ -12785,6 +12792,17 @@ function Open-CaseSession {
     $script:LogEndDT = $null
     try { if ("$($meta.LogStart)") { $script:LogStartDT = [datetime]$meta.LogStart } } catch { }
     try { if ("$($meta.LogEnd)") { $script:LogEndDT = [datetime]$meta.LogEnd } } catch { }
+    # v2.94: pre-v2.94 case.json leaves LogStart/LogEnd empty when the collection used the
+    # relative default window - anchor to the collection moment instead of NOW, or every
+    # detection re-run (hayabusa --time-offset) slides past the case data as the case ages
+    if (-not $script:LogStartDT -and $script:LogHours -gt 0 -and "$($meta.StartedUTC)") {
+        try {
+            $anch = [datetimeoffset]::Parse("$($meta.StartedUTC)", [System.Globalization.CultureInfo]::InvariantCulture, [System.Globalization.DateTimeStyles]::RoundtripKind)
+            $script:LogStartDT = $anch.UtcDateTime.AddHours(-1 * $script:LogHours)
+            $script:LogEndDT = $anch.UtcDateTime
+            Write-CaseLog "    window: case.json has no absolute window - anchored to collection time ($($script:LogStartDT.ToString('yyyy-MM-dd HH:mm')) - $($script:LogEndDT.ToString('yyyy-MM-dd HH:mm')) UTC)" 'DarkGray'
+        } catch { }
+    }
     $script:Sysmon = [bool]$meta.SysmonPresent
     # v2.67 (B3): legacy (pre-v2.55) case.json records AdminElevated as null (unknown) -
     # [bool]$null collapsed it to $false, so the verdict took the non-admin -15 coverage

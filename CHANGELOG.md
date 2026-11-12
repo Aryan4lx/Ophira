@@ -1,4 +1,9 @@
-﻿## v2.94 - joins and parsers
+﻿### v2.94 follow-up - parse-time window time-bomb (same family as the v2.91 Defender fix)
+
+- Re-parsing an aged case re-ran hayabusa with a RELATIVE 'last 168h' window anchored at the analyst's now - once the case was older than the window, detection re-runs returned 0 Sigma rows and the verdict silently lost its Sigma input (observed: 7-signal case dropped to 6 eleven days after collection). Also: hayabusa 4.x silently rejects --start-timeline (usage error -> 0 rows), so the explicit-window branch never worked.
+- Fix: case.json now always materializes the absolute collection window (even for the relative default), and pre-v2.94 cases are anchored to their collection time on open. hayabusa is given a now-relative offset that covers the anchored span.
+
+## v2.94 - joins and parsers
 
 - One path normalizer: Convert-ToWinPath strips \?\?, \\?\, \Device\HarddiskVolumeN and \Volume{...} prefixes everywhere (entity correlation, loldrivers, exec stacks, SRUM display) - device-path evidence used to fall out of joins or show as raw mapper paths.
 - Sysmon EID 3 now captures DestHostname + direction (INBOUND), EID 13 captures Details + User, EID 1 captures bare SHA256 Hash + ParentCommandLine - deeper joins when Sysmon is installed.

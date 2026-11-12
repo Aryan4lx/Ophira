@@ -93,7 +93,7 @@ Check "endcap: no EndTime key when unset; StartTime still honored" (-not $script
 # PART 3 - wiring: worker seed, hayabusa, case.json, adopt, menu, deploy, wizard
 # ============================================================================
 Check "workers: LogStartDT/LogEndDT seeded into preamble" (($src -match '\$script:LogStartDT = \$\(' -and $src -match '\$script:LogEndDT = \$\('))
-Check "hayabusa: --start-timeline/--end-timeline with explicit window" ($src -match "'--start-timeline'" -and $src -match "'--end-timeline'")
+Check "hayabusa: anchored window expressed as now-relative offset (4.x has no --start-timeline)" ($src -notmatch "'--start-timeline'" -and $src.Contains('$hayArgs += @(''--time-offset'', "$([math]::Max($offH, 1))h")'))
 Check "hayabusa: time-offset retained for hours mode" ($src -match "'--time-offset'")
 Check "case.json: LogStart/LogEnd recorded" (($src -match 'LogStart = \$\(' -and $src -match 'LogEnd = \$\('))
 Check "parse adopt: window restored from case.json" ($src -match [regex]::Escape('if ("$($meta.LogStart)") { $script:LogStartDT = [datetime]$meta.LogStart }'))

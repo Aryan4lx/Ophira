@@ -366,7 +366,7 @@ Check "inline 4.6: hours mode still carries --time-offset 24h after the script-v
 $script:LogStartDT = [datetime]'2026-09-01 08:00'
 $script:hayArgsCap.Clear()
 & ([scriptblock]::Create($hay46))
-Check "4.6: explicit LogStartDT -> --start-timeline wins, no --time-offset (precedence untouched)" ($script:hayArgsCap[0] -match '--start-timeline' -and $script:hayArgsCap[0] -match '2026-09-01 08:00:00' -and $script:hayArgsCap[0] -notmatch '--time-offset')
+Check "4.6: explicit LogStartDT -> anchored --time-offset span (v2.94: 4.x has no --start-timeline)" ($script:hayArgsCap[0] -match '--time-offset' -and $script:hayArgsCap[0] -match 'h$')
 $script:LogStartDT = $null
 
 # sweep guard: NO module Run block reads bare $LogHours - the single allowed shape is the
