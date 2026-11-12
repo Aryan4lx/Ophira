@@ -1,5 +1,5 @@
 <#
-Ophira v2.92  -  Windows Incident Response Triage Toolkit
+Ophira v2.94  -  Windows Incident Response Triage Toolkit
 READ-ONLY by design: never modifies the system, only reads and copies data
 into its own output folder. Intended to be handed to a system owner or run
 by a responder during early triage / threat hunting.
@@ -363,7 +363,7 @@ param(
     [switch]$ExitVerdict
 )
 
-$ScriptVersion = "2.92"
+$ScriptVersion = "2.94"
 $ErrorActionPreference = 'Continue'
 $ProgressPreference = 'SilentlyContinue'
 
@@ -770,9 +770,52 @@ function Get-InvariantDate {
     # Culture-invariant datetime parse for persisted CSV values ('02/03/2026' must not flip
     # meaning with the OS locale); returns [datetime]::MinValue when unparseable so callers
     # can filter. Shared with pool workers via $script:SharedFunctions.
+    # v2.94: numeric epochs too - chainsaw can emit shimcache last_modified_ts as raw epoch
+    # numbers (unix seconds/ms or FILETIME ticks) which used to be silently unparsable and
+    # excluded those rows from time-stacking/window analysis.
     param([object]$Value)
     if ($Value -is [datetime]) { return $Value }
-    try { return [datetime]::Parse("$Value", [System.Globalization.CultureInfo]::InvariantCulture) } catch { return [datetime]::MinValue }
+    $s = "$Value".Trim()
+    if ($s -match '^\d+$') {
+        try {
+            if ($s.Length -ge 16) { return [datetimeoffset]::FromFileTime([long]$s).LocalDateTime }
+            if ($s.Length -ge 13) { return [datetimeoffset]::FromUnixTimeMilliseconds([long]$s).LocalDateTime }
+            if ($s.Length -ge 10) { return [datetimeoffset]::FromUnixTimeSeconds([long]$s).LocalDateTime }
+        } catch { return [datetime]::MinValue }
+    }
+    try { return [datetime]::Parse($s, [System.Globalization.CultureInfo]::InvariantCulture) } catch { return [datetime]::MinValue }
+}
+
+function Convert-ToWinPath {
+    # v2.94 (D2): ONE path normalizer for every source (entity correlation, loldrivers,
+    # exec stacks, SRUM display). Strips device-mapper prefixes and unifies separators;
+    # callers add their own lowercasing/version-collapse rules on top.
+    param([string]$P)
+    $x = ("$P").Trim().Trim('"')
+    if (-not $x) { return '' }
+    $x = $x -replace '(?i)^\\{1,2}\?\?\\', ''                    # \??\C:\... (NT object-manager form)
+$x = $x -replace '(?i)^\\\\\?\\', ''                      # \\?\C:\...  (doubled)
+    $x = $x -replace '(?i)^\\\?\\', ''                        #  \?\C:\...  (single)
+    $x = $x -replace '(?i)^\\\\device\\\\harddiskvolume\d+', 'C:'   # \\DEVICE\\... (doubled)
+    $x = $x -replace '(?i)^\\device\\harddiskvolume\d+', 'C:'       #  \Device\...  (single)
+    $x = $x -replace '(?i)^\\([a-z]):', '$1:'                      #  \C:\...    (boxed drive)
+    $x = $x -replace '(?i)\\volume\{[a-z0-9-]+\}', ''
+    $x = $x -replace '/', '\'
+    return $x
+}
+
+function Get-SidName {
+    # v2.94 (D4): resolve an account SID (S-1-5-21-...) to DOMAIN\name; cached, and returns
+    # '' when unresolvable (deleted profile / foreign SID) so callers keep the SID as-is.
+    param([string]$Sid)
+    $s = ("$Sid").Trim()
+    if ($s -notmatch '^S-1-5-') { return $s }
+    if (-not $script:OphiraSidCache) { $script:OphiraSidCache = @{} }
+    if ($script:OphiraSidCache.ContainsKey($s)) { return $script:OphiraSidCache[$s] }
+    $nm = ''
+    try { $nm = (New-Object System.Security.Principal.SecurityIdentifier($s)).Translate([System.Security.Principal.NTAccount]).Value } catch { $nm = '' }
+    $script:OphiraSidCache[$s] = $nm
+    return $nm
 }
 
 function Test-IsPublicIp {
@@ -1006,11 +1049,14 @@ function Get-ConnectionTable {
     if ($tcp) {
         $rows = foreach ($c in $tcp) {
             $procPath = $pmap[[int]$c.OwningProcess]
+            # v2.94 (D7f): strip the IPv4-mapped IPv6 prefix so one address is one group
+            $la2 = "$($c.LocalAddress)" -replace '(?i)^::ffff:', ''
+            $ra2 = "$($c.RemoteAddress)" -replace '(?i)^::ffff:', ''
             [pscustomobject]@{
-                Proto = 'TCP'; LocalAddress = $c.LocalAddress; LocalPort = $c.LocalPort
-                RemoteAddress = $c.RemoteAddress; RemotePort = $c.RemotePort; State = $c.State
+                Proto = 'TCP'; LocalAddress = $la2; LocalPort = $c.LocalPort
+                RemoteAddress = $ra2; RemotePort = $c.RemotePort; State = $c.State
                 PID = $c.OwningProcess; ProcessPath = $procPath
-                Public = (Test-IsPublicIp "$($c.RemoteAddress)")
+                Public = (Test-IsPublicIp $ra2)
             }
         }
     } else {
@@ -1020,8 +1066,8 @@ function Get-ConnectionTable {
             $proto = $t[0]
             $local = ($t[1] -split ':')[0]; $lport = ($t[1] -split ':')[-1]
             $remote = ''; $rport = ''; $state = ''
-            if ($proto -eq 'TCP') { $remote = ($t[2] -split ':')[0]; $rport = ($t[2] -split ':')[-1]; $state = $t[3]; $pid = $t[4] }
-            else { $remote = $t[2]; $state = ''; $pid = $t[3] }
+            if ($proto -eq 'TCP') { $remote = (($t[2] -split ':')[0] -replace '(?i)^::ffff:', ''); $rport = ($t[2] -split ':')[-1]; $state = $t[3]; $pid = $t[4] }
+            else { $remote = ("$($t[2])" -replace '(?i)^::ffff:', ''); $state = ''; $pid = $t[3] }
             $procPath = $pmap[[int]$pid]
             [pscustomobject]@{
                 Proto = $proto; LocalAddress = $local; LocalPort = $lport
@@ -2367,7 +2413,9 @@ function Get-TaskDeletionRows {
 }
 
 function Invoke-NativeTool {
-    param([string]$ExePath, [string[]]$ToolArgs, [string]$WorkingDir = '', [switch]$QuietLog, [switch]$CaptureOut)
+    # v2.94 (D8): optional timeout - one hung yr.exe/PECmd used to pin a pool slot forever
+    # (4 slots; 4 hangs froze phases B/C). Kill after $TimeoutSec and report.
+    param([string]$ExePath, [string[]]$ToolArgs, [string]$WorkingDir = '', [switch]$QuietLog, [switch]$CaptureOut, [int]$TimeoutSec = 1800)
     $out = ''; $err = ''
     try {
         $psi = New-Object System.Diagnostics.ProcessStartInfo
@@ -2383,7 +2431,14 @@ function Invoke-NativeTool {
         $null = $p.Start()
         $tOut = $p.StandardOutput.ReadToEndAsync()
         $tErr = $p.StandardError.ReadToEndAsync()
-        $p.WaitForExit()
+        if (-not $p.WaitForExit($TimeoutSec * 1000)) {
+            try { $p.Kill() } catch { }
+            Write-CaseLog "      native tool exceeded ${TimeoutSec}s - killed (partial output kept)" 'Yellow'
+            $out = try { "$($tOut.Result)" } catch { '' }
+            $err = try { "$($tErr.Result)" } catch { '' }
+            if ($CaptureOut) { return [pscustomobject]@{ ExitCode = $p.ExitCode; StdOut = $out; StdErr = $err } }
+            return -2
+        }
         $out = "$($tOut.Result)"
         $err = "$($tErr.Result)"
         if (-not $QuietLog) {
@@ -3444,10 +3499,14 @@ $script:Modules = @(
                     $x = [xml]$e.ToXml()
                     $d = @{}
                     $x.Event.EventData.Data | ForEach-Object { $d[$_.Name] = $_.'#text' }
+                    # v2.94 (D1): keep the useful half of EID 3 - DestinationHostname/PortName
+                    # (C2 over host names), Initiated (outbound vs inbound), SourceIp (pairing
+                    # with firewall/auth data) and User (attribution)
                     $net += [pscustomobject]@{
                         Time = $e.TimeCreated; Image = $d['Image']; DestIp = $d['DestinationIp']
-                        DestPort = $d['DestinationPort']; Protocol = $d['Protocol']
-                        ProcessGuid = $d['ProcessGuid']; ProcessId = $d['ProcessId']
+                        DestPort = $d['DestinationPort']; DestHostname = $d['DestinationHostname']; DestPortName = $d['DestinationPortName']
+                        Initiated = $d['Initiated']; SourceIp = $d['SourceIp']; Protocol = $d['Protocol']
+                        User = $d['User']; ProcessGuid = $d['ProcessGuid']; ProcessId = $d['ProcessId']
                     }
                 }
             } catch { }
@@ -3491,21 +3550,26 @@ $script:Modules = @(
             $pa = Get-EventDataRows -LogName 'Microsoft-Windows-Sysmon/Operational' -Id @(10) -Start $start -Cap 3000 -Fields ([ordered]@{ SourceImage = 'SourceImage'; TargetImage = 'TargetImage'; GrantedAccess = 'GrantedAccess'; CallTrace = 'CallTrace' })
             Save-Rows -Name 'sysmon_process_access' -Rows $pa
             if ($pa.Count -ge 3000) { Write-CaseLog "    EID 10 process access: capped at 3000 - widen the Sysmon ProcessAccess filter" 'DarkGray' }
-            $reg = Get-EventDataRows -LogName 'Microsoft-Windows-Sysmon/Operational' -Id @(13) -Start $start -Cap 5000 -Fields ([ordered]@{ EventType = 'EventType'; TargetObject = 'TargetObject'; Image = 'Image'; ProcessId = 'ProcessId'; ProcessGuid = 'ProcessGuid' })
+            $reg = Get-EventDataRows -LogName 'Microsoft-Windows-Sysmon/Operational' -Id @(13) -Start $start -Cap 5000 -Fields ([ordered]@{ EventType = 'EventType'; TargetObject = 'TargetObject'; Details = 'Details'; User = 'User'; Image = 'Image'; ProcessId = 'ProcessId'; ProcessGuid = 'ProcessGuid' })
             Save-Rows -Name 'sysmon_registry' -Rows $reg
             $ft = Get-EventDataRows -LogName 'Microsoft-Windows-Sysmon/Operational' -Id @(2) -Start $start -Cap 1000 -Fields ([ordered]@{ Image = 'Image'; TargetFilename = 'TargetFilename'; CreationUtcTime = 'CreationUtcTime'; PreviousCreationUtcTime = 'PreviousCreationUtcTime'; ProcessId = 'ProcessId'; ProcessGuid = 'ProcessGuid' })
             Save-Rows -Name 'sysmon_file_time' -Rows $ft
             if ($ft.Count -gt 0) { Write-CaseLog "    EID 2 file creation-time changes: $($ft.Count) (timestomping data source)" 'Yellow' }
             # v2.27: EID 1 process create - OriginalFileName vs Image feeds the renamed-LOLBIN at-rest rule
-            $pc = Get-EventDataRows -LogName 'Microsoft-Windows-Sysmon/Operational' -Id @(1) -Start $start -Cap 5000 -Fields ([ordered]@{ Image = 'Image'; OriginalFileName = 'OriginalFileName'; CommandLine = 'CommandLine'; User = 'User'; ProcessId = 'ProcessId'; ProcessGuid = 'ProcessGuid'; ParentImage = 'ParentImage'; ParentProcessGuid = 'ParentProcessGuid' })
+            # v2.94 (D1): Hashes/ParentCommandLine/CurrentDirectory kept; Hash column = the
+            # bare SHA256 so entity correlation + focus join on it like process_hashes
+            $pc = Get-EventDataRows -LogName 'Microsoft-Windows-Sysmon/Operational' -Id @(1) -Start $start -Cap 5000 -Fields ([ordered]@{ Image = 'Image'; OriginalFileName = 'OriginalFileName'; CommandLine = 'CommandLine'; User = 'User'; ProcessId = 'ProcessId'; ProcessGuid = 'ProcessGuid'; ParentImage = 'ParentImage'; ParentProcessGuid = 'ParentProcessGuid'; ParentCommandLine = 'ParentCommandLine'; CurrentDirectory = 'CurrentDirectory'; Hashes = 'Hashes' })
+            foreach ($p5 in $pc) { $h5 = "$($p5.Hashes)"; if ($h5 -match '(?i)SHA256=([0-9A-F]{64})') { $null = Add-Member -InputObject $p5 NotePropertyName 'Hash' -NotePropertyValue $Matches[1] -Force } }
             Save-Rows -Name 'sysmon_proc_create' -Rows $pc
             # v2.43: EID 11 file create + EID 23/26 file delete (26 = FileDeleteDetected, the
             # no-archive variant hosts emit instead of 23) - the per-instance
             # "what files did this process drop / clean up" sources (ProcessGuid joins into Focus)
             $fc = Get-EventDataRows -LogName 'Microsoft-Windows-Sysmon/Operational' -Id @(11) -Start $start -Cap 5000 -Fields ([ordered]@{ Image = 'Image'; TargetFilename = 'TargetFilename'; CreationUtcTime = 'CreationUtcTime'; ProcessId = 'ProcessId'; ProcessGuid = 'ProcessGuid'; Hashes = 'Hashes' })
+            foreach ($f5 in $fc) { $h5 = "$($f5.Hashes)"; if ($h5 -match '(?i)SHA256=([0-9A-F]{64})') { $null = Add-Member -InputObject $f5 NotePropertyName 'Hash' -NotePropertyValue $Matches[1] -Force } }
             Save-Rows -Name 'sysmon_file_create' -Rows $fc
             if ($fc.Count -ge 5000) { Write-CaseLog "    EID 11 file creates: capped at 5000 - busy box or noisy filter" 'DarkGray' }
             $fdel = Get-EventDataRows -LogName 'Microsoft-Windows-Sysmon/Operational' -Id @(23, 26) -Start $start -Cap 2000 -Fields ([ordered]@{ Image = 'Image'; TargetFilename = 'TargetFilename'; ProcessId = 'ProcessId'; ProcessGuid = 'ProcessGuid'; Hashes = 'Hashes'; Archived = 'Archived' })
+            foreach ($d5 in $fdel) { $h5 = "$($d5.Hashes)"; if ($h5 -match '(?i)SHA256=([0-9A-F]{64})') { $null = Add-Member -InputObject $d5 NotePropertyName 'Hash' -NotePropertyValue $Matches[1] -Force } }
             Save-Rows -Name 'sysmon_file_delete' -Rows $fdel
             if ($fdel.Count -gt 0) { Write-CaseLog "    EID 23/26 file deletions: $($fdel.Count) (anti-forensics / cleanup evidence)" 'Yellow' }
             # v2.48: EID 8 CreateRemoteThread - the cross-process injection edge (R28, Focus INJECT)
@@ -4160,7 +4224,9 @@ $script:Modules = @(
             $dump = Join-Path $MemDir 'physmem.raw'
             Write-CaseLog "    Capturing memory with $($tool.Name) ..." 'Cyan'
             $sw = [System.Diagnostics.Stopwatch]::StartNew()
-            & $tool.FullName "$dump" 2>&1 | ForEach-Object { Write-CaseLog "      $_" 'DarkGray' }
+            # v2.94 (D8b): console-less wrapper (was a raw & call - console window + no capture)
+            $pmOut = Invoke-NativeTool -ExePath $tool.FullName -ToolArgs @("$dump") -CaptureOut
+            foreach ($ln in @($pmOut)) { if ("$ln") { Write-CaseLog "      $ln" 'DarkGray' } }
             $sw.Stop()
             if (Test-Path $dump) {
                 $gb = [math]::Round((Get-Item $dump).Length / 1GB, 1)
@@ -4295,7 +4361,27 @@ public class OphiraDump {
                     $files = Get-ChildItem -LiteralPath $rb -Recurse -Filter '$I*' -File -ErrorAction SilentlyContinue
                     foreach ($f in $files) {
                         $sidDir = Split-Path $f.DirectoryName -Leaf
-                        $rbRows += [pscustomobject]@{ Drive = $drv.Name; OwnerSid = $sidDir; File = $f.Name; Bytes = $f.Length; Deleted = $f.LastWriteTime }
+                        # v2.94 (D7a): parse the $I metadata blob - bytes 8-15 = original size,
+                        # 16-23 = delete time (UTC FILETIME), 28+ = original path (UTF-16;
+                        # v2 layout has a 4-byte name length at 24). The weave and report can
+                        # then show WHAT was deleted and WHEN, not just the $I file mtime.
+                        $rbSize = $f.Length; $rbUtc = ''; $rbOrig = ''
+                        try {
+                            $ib = [IO.File]::ReadAllBytes($f.FullName)
+                            if ($ib.Length -ge 24) {
+                                $rbSize = [BitConverter]::ToUInt64($ib, 8)
+                                $rbUtc = [DateTime]::FromFileTime([BitConverter]::ToInt64($ib, 16)).ToUniversalTime().ToString('yyyy-MM-dd HH:mm:ss')
+                                if ($ib.Length -ge 28) {
+                                    $nl = [BitConverter]::ToInt32($ib, 24)
+                                    if ($nl -gt 0 -and $nl -le 1040 -and $ib.Length -ge (28 + $nl * 2)) {
+                                        $rbOrig = ([Text.Encoding]::Unicode.GetString($ib, 28, $nl * 2)).TrimEnd([char]0)
+                                    } elseif ($nl -eq 0 -and $ib.Length -gt 28) {
+                                        $rbOrig = ([Text.Encoding]::Unicode.GetString($ib, 28, $ib.Length - 28)).TrimEnd([char]0)
+                                    }
+                                }
+                            }
+                        } catch { }
+                        $rbRows += [pscustomobject]@{ Drive = $drv.Name; OwnerSid = $sidDir; File = $f.Name; Bytes = $rbSize; Deleted = $f.LastWriteTime; DeletedUTC = $rbUtc; OriginalPath = $rbOrig }
                         $sub = Join-Path $rbDest "$($drv.Name)_$sidDir"
                         if (-not (Test-Path $sub)) { New-Item -ItemType Directory -Path $sub -Force | Out-Null }
                         try { Copy-Item -LiteralPath $f.FullName -Destination $sub -Force -ErrorAction Stop } catch { }
@@ -4777,9 +4863,11 @@ public class OphiraDump {
             if ($drvRows.Count -eq 0) { Write-CaseLog "    no drivers.csv (module 1.6 skipped) - nothing to check" 'DarkGray'; return }
             $hits = @()
             $checked = 0
+            $relSkip = 0
             foreach ($dr in $drvRows) {
                 if ($checked -ge 600) { break }
-                $p = "$($dr.PathName)" -replace '^\\{1,2}\?\?\\', ''
+                $p = Convert-ToWinPath "$($dr.PathName)"
+            if ($p -and $p -notmatch '[\\/]') { $relSkip++; continue }
         if (-not $p -or -not (Test-Path -LiteralPath $p -PathType Leaf -ErrorAction SilentlyContinue)) { continue }
                 $hash = $null
                 try { $hash = (Get-FileHash -LiteralPath $p -Algorithm SHA256 -ErrorAction Stop).Hash.ToLower() } catch { continue }
@@ -4790,6 +4878,7 @@ public class OphiraDump {
                 if ($status) { $hits += [pscustomobject]@{ Status = $status; Name = "$($dr.Name)"; DisplayName = "$($dr.DisplayName)"; Path = $p; SHA256 = $hash } }
             }
             Save-Rows -Name 'loldrivers_hits' -Rows $hits
+            if ($relSkip -gt 0) { Write-CaseLog "    $relSkip driver row(s) with relative/unresolvable paths skipped (no full path to hash-check)" 'DarkGray' }
             $mal = @($hits | Where-Object { $_.Status -eq 'malicious' }).Count
             $vul = @($hits | Where-Object { $_.Status -eq 'vulnerable' }).Count
             if ($hits.Count -gt 0) {
@@ -5193,7 +5282,9 @@ function Get-FilteredEvents {
         $rows = foreach ($e in $events) {
             $msg = ''
             try { $msg = ($e.Message -replace '\s+', ' '); if ($msg.Length -gt $MaxMsg) { $msg = $msg.Substring(0, $MaxMsg) + '...' } } catch { }
-            [pscustomobject]@{ TimeCreated = $e.TimeCreated; Id = $e.Id; Provider = $e.ProviderName; Level = $e.LevelDisplayName; Message = $msg }
+            # v2.94 (D8c): invariant ISO stamps - Export-Csv would render DateTime in the
+            # machine culture, breaking the InvariantCulture parsers on non-en-US hosts
+            [pscustomobject]@{ TimeCreated = $e.TimeCreated.ToString('yyyy-MM-dd HH:mm:ss', [Globalization.CultureInfo]::InvariantCulture); Id = $e.Id; Provider = $e.ProviderName; Level = $e.LevelDisplayName; Message = $msg }
         }
         return $rows
     } catch { return @() }
@@ -5231,7 +5322,8 @@ function Get-EventDataRows {
                 $x = [xml]$e.ToXml()
                 $x.Event.EventData.Data | ForEach-Object { $d[$_.Name] = $_.'#text' }
             } catch { }
-            $o = [ordered]@{ Time = $e.TimeCreated; EventId = $e.Id }
+            # v2.94 (D8c): invariant ISO stamp (see Get-FilteredEvents note)
+            $o = [ordered]@{ Time = $e.TimeCreated.ToString('yyyy-MM-dd HH:mm:ss', [Globalization.CultureInfo]::InvariantCulture); EventId = $e.Id }
             foreach ($k in $Fields.Keys) { $o[$k] = "$($d[$Fields[$k]])" }
             $null = $rows.Add([pscustomobject]$o)
         }
@@ -8704,12 +8796,13 @@ function New-SuperTimeline {
     & $weave 'security_ds_access' 3000 { param($r) @("$($r.Time)", "directory service (EID $($r.EventId))", "$($r.Account)", "$($r.Object)$("$($r.ObjectDN)")", "$("$($r.Properties)" -replace '\s+', ' ') | $($r.Attribute)=$($r.Value)") }
     & $weave 'defender_config_events' 500 { param($r) @("$($r.Time)", "defender config (EID $($r.EventId))", '', '', "$($r.Detail)") }
     # sysmon structured
-    & $weave 'sysmon_network' 5000 { param($r) @("$($r.Time)", 'network connection (Sysmon 3)', (& $leaf $r.Image), "$($r.DestIp):$($r.DestPort)", "proto $($r.Protocol)") }
+    # v2.94 (D1): hostname + direction now captured on EID 3 rows
+    & $weave 'sysmon_network' 5000 { param($r) @("$($r.Time)", 'network connection (Sysmon 3)', (& $leaf $r.Image), "$($r.DestIp):$($r.DestPort)", "proto $($r.Protocol)$(if ("$($r.DestHostname)") { " host=$($r.DestHostname)" })$(if ("$($r.Initiated)" -eq 'false') { ' INBOUND' })") }
     & $weave 'sysmon_dns' 5000 { param($r) @("$($r.Time)", 'DNS query (Sysmon 22)', (& $leaf $r.Image), "$($r.QueryName)", "resolved $($r.QueryResults)") }
     & $weave 'sysmon_image_load' 3000 { param($r) @("$($r.Time)", 'image load (Sysmon 7)', (& $leaf $r.Process), (& $leaf $r.Dll), "signed=$($r.Signed) $($r.Signature)") }
     & $weave 'sysmon_proc_create' 5000 { param($r) @("$($r.Time)", 'process create (Sysmon 1)', (& $leaf $r.Image), '', $(if ("$($r.OriginalFileName)" -and ((Split-Path "$($r.Image)" -Leaf) -ne "$($r.OriginalFileName)")) { "ORIGINAL NAME: $($r.OriginalFileName) | $($r.CommandLine)" } else { "$($r.CommandLine)" })) }
     & $weave 'sysmon_process_access' 3000 { param($r) @("$($r.Time)", 'process access (Sysmon 10)', (& $leaf $r.SourceImage), (& $leaf $r.TargetImage), "granted=$($r.GrantedAccess) trace=$(("$($r.CallTrace)" -replace '\+.*', ''))") }
-    & $weave 'sysmon_registry' 3000 { param($r) @("$($r.Time)", "registry event (Sysmon 13)", (& $leaf $r.Image), "$($r.TargetObject)", "$($r.EventType)") }
+    & $weave 'sysmon_registry' 3000 { param($r) @("$($r.Time)", "registry event (Sysmon 13)", (& $leaf $r.Image), "$($r.TargetObject)", "$($r.EventType)$(if ("$($r.Details)") { " | $($r.Details)" })") }
     & $weave 'sysmon_file_time' 1000 { param($r) @("$($r.Time)", 'file creation time changed (Sysmon 2)', (& $leaf $r.Image), (& $leaf $r.TargetFilename), "$($r.PreviousCreationUtcTime) -> $($r.CreationUtcTime)") }
     & $weave 'sysmon_file_create' 3000 { param($r) @("$($r.Time)", 'file created (Sysmon 11)', (& $leaf $r.Image), (& $leaf $r.TargetFilename), "$($r.TargetFilename)") }
     & $weave 'sysmon_file_delete' 1000 { param($r) @("$($r.Time)", 'file deleted (Sysmon 23)', (& $leaf $r.Image), (& $leaf $r.TargetFilename), 'deleted by process - anti-forensics / cleanup lead') }
@@ -8913,9 +9006,13 @@ function New-EntityCorrelation {
             if ($p2 -and "$($p2.Value)") { return (& $binNew $p2.Value) }
         }
         # 'Path'/'PathName' are only trusted when they name a real binary (service/task rows abuse these for names)
+        # v2.94 (D3): quoted-or-argged service paths ("C:\x\svc.exe" -k foo) now resolve too
         foreach ($pn in @('PathName', 'SourceFile', 'Path')) {
             $p2 = $r.PSObject.Properties[$pn]
-            if ($p2 -and "$($p2.Value)" -match '\.(exe|dll|sys|ps1|bat|js|vbs|hta|com|ocx|drv)$') { return (& $binNew $p2.Value) }
+            if (-not ($p2 -and "$($p2.Value)")) { continue }
+            $pv = "$($p2.Value)" -replace '"', ''
+            if ($pv -match '(?i)([a-z]:\\[^\s]+\.(exe|dll|sys|ps1|bat|js|vbs|hta|com|ocx|drv))(\s|$)') { return (& $binNew $Matches[1]) }
+            if ($pv -match '\.(exe|dll|sys|ps1|bat|js|vbs|hta|com|ocx|drv)$') { return (& $binNew $pv) }
         }
         foreach ($pn in @('Actions', 'Value', 'Details', 'Command')) {
             $p2 = $r.PSObject.Properties[$pn]
@@ -8954,6 +9051,13 @@ function New-EntityCorrelation {
         if ($pg.Desc -and -not $pg.B.Desc) { $pg.B.Desc = $pg.Desc }
     }
     foreach ($r in (& $rowsOf 'process_hashes')) { $b = & $binFromRow $r; if ($b) { $null = $b.Hashes.Add("$($r.SHA256)"); & $binAdd $b 'hash' "$($r.SHA256)" '' } }
+    # v2.94 (D1): Sysmon EID 1 process creates join the entity story - bare SHA256 (parsed
+    # at collection into the Hash column) + one exec-evidence line per capture
+    foreach ($r in (& $rowsOf 'sysmon_proc_create')) {
+        $b = & $binFromRow $r
+        if ($b -and $r.PSObject.Properties['Hash'] -and "$($r.Hash)" -match '^[0-9A-Fa-f]{64}$' -and ($b.Hashes -notcontains "$($r.Hash)")) { $null = $b.Hashes.Add("$($r.Hash)") }
+        & $binAdd $b 'sysmon-exec' "process created (Sysmon 1)$(if ("$($r.User)") { " as $($r.User)" })" "$($r.Time)"
+    }
     foreach ($src in @('services', 'services_flagged')) {
         foreach ($r in (& $rowsOf $src)) {
             $b = & $binFromRow $r
@@ -8965,6 +9069,8 @@ function New-EntityCorrelation {
     foreach ($src in @('autoruns_runkeys', 'asep_sweep')) {
         foreach ($r in (& $rowsOf $src)) { & $binAdd (& $binFromRow $r) 'autorun-persist' "$($r.Location) / $($r.Name)" '' }
     }
+    # v2.94 (D3): services with quoted/argged ImagePath join the entity story
+    foreach ($r in (& $rowsOf 'services')) { & $binAdd (& $binFromRow $r) 'service-persist' "service $($r.Name) ($($r.StartMode))" '' }
     foreach ($r in (& $rowsOf 'sysmon_network')) { & $binAdd (& $binFromRow $r) 'conn' "$($r.DestIp):$($r.DestPort)" "$($r.Time)" }
     foreach ($r in (& $rowsOf 'flash_public_connections')) { & $binAdd (& $binFromRow $r) 'conn' "public $($r.RemoteAddress):$($r.RemotePort)" '' }
     foreach ($r in (& $rowsOf 'beacon_candidates')) { & $binAdd (& $binFromRow $r) 'beacon' "[$($r.Severity)] -> $($r.RemoteIp):$($r.Port) every ~$($r.MedianIntervalSec)s" '' }
@@ -9000,6 +9106,9 @@ function New-EntityCorrelation {
     $acctGet = {
         param([string]$name)
         $a2 = ("$name").Trim()
+        # v2.94 (D4): SIDs (rdp_client_targets, autoruns HKU, bam) resolve to DOMAIN\name so
+        # they join the same account card as the auth-event names; unresolvable SID = skip
+        if ($a2 -match '^S-1-5-') { $r5 = Get-SidName $a2; if ($r5 -and $r5 -ne $a2) { $a2 = $r5 } else { return $null } }
         if (-not $a2 -or $a2 -match '^(-|\$|DWM-|UMFD-)$' -or @('SYSTEM', 'LOCAL SERVICE', 'NETWORK SERVICE', 'ANONYMOUS LOGON') -contains $a2) { return $null }
         $lk = $a2.ToLower()
         if (-not $accts.ContainsKey($lk)) {
@@ -9419,12 +9528,8 @@ function New-ExecStacks {
     $byName = @{}; $byPath = @{}
     $norm = {
         param([string]$p)
-        $x = "$p".Trim()
+        $x = Convert-ToWinPath $p
         if (-not $x) { return '' }
-        $x = $x -replace '(?i)^\\\\\?\\', ''
-        $x = $x -replace '(?i)^\\device\\harddiskvolume\d+', 'C:'
-        $x = $x -replace '(?i)\\volume\{[a-z0-9-]+\}', ''
-        $x = $x -replace '/', '\'
         # v2.88: collapse version-number segments (\140.0.3485.66, \v4.0.30319) so 'one name,
         # many paths' counts distinct LOCATIONS, not app updates; display keeps first-seen dir
         $x = $x -replace '(?i)\\v?\d+(\.\d+)+(?=\\|$)', ''
@@ -9467,7 +9572,8 @@ function New-ExecStacks {
         # executions under '(unknown path)' so run counts still stack
         $t0 = & $parseTs "$($r.LastRun)"
         & $addExec '' "$($r.ExecutableName)" $t0
-        foreach ($pn in 0..6) {
+        foreach ($pn in 0..7) {
+            # v2.94 (D7c): 0..7 to match TCorr (prefetch stores 8 run times)
             $pt = & $parseTs "$($r."PreviousRun$pn")"
             if ($pt -gt [datetime]::MinValue) { & $addExec '' "$($r.ExecutableName)" $pt }
         }
@@ -11517,6 +11623,10 @@ function Get-CompromiseVerdict {
     Add-Cov 'Execution artifact spine (prefetch/amcache/BAM/shimcache)' ((Test-CaseCsv 'prefetch_index') -or (Test-CaseCsv 'amcache') -or (Test-CaseCsv 'bam_lastexec') -or (Test-CaseCsv 'shimcache') -or (Test-CaseCsv 'execution_timeline')) 3 # v2.91 (A6): endpoint packages carry execution_timeline.csv (chainsaw shimcache), not shimcache.csv - that miss read as a permanent coverage hole
     Add-Cov 'Kerberos/DS telemetry (DC role)' ((Test-CaseCsv 'security_kerberos') -or (Test-CaseCsv 'security_ds_access')) 3
     Add-Cov 'Web telemetry (IIS)' (Test-CaseCsv 'iis_requests') 2
+    # v2.94 (D5): parsed artifacts that had no coverage voice
+    Add-Cov 'Deleted-file index (recycle bin $I)' (Test-CaseCsv 'recyclebin_index') 2
+    Add-Cov 'ShellBags folder history' (Test-CaseCsv 'shellbags') 2
+    Add-Cov 'JumpLists' (Test-CaseCsv 'jumplist_parsed') 2
     Add-Cov 'Session attribution + process lineage' ((Test-CaseCsv 'session_activity') -or (Test-CaseCsv 'process_chains')) 2
     Add-Cov 'Host extras (WER/StartupInfo/QuickAssist/GPO)' ((Test-CaseCsv 'wer_reports') -or (Test-CaseCsv 'startup_info')) 2
     $iocsLoaded = $false

@@ -1,4 +1,4 @@
-﻿$repoScript = Join-Path (Split-Path -Parent $PSScriptRoot) "Ophira.ps1"
+$repoScript = Join-Path (Split-Path -Parent $PSScriptRoot) "Ophira.ps1"
 # v2.14 - DNS beaconing (4.8), LOLDrivers xref (8.10), -Mode Tune, supertimeline dedupe, verdict wiring
 $ErrorActionPreference = 'Stop'
 $src = Get-Content -LiteralPath "$repoScript" -Raw
@@ -33,6 +33,7 @@ $Sysmon = $true; $LogHours = 168
 $saved = @{}
 function Save-Rows { param([string]$Name, $Rows) $script:saved[$Name] = $Rows }
 function Write-CaseLog { param([string]$Message, [string]$Color = 'Gray') }
+function Convert-ToWinPath { param([string]$p) return ("$p" -replace '^\\{1,2}\?\?\\', '') } # v2.94: loldrivers normalizes via this helper - fixture mirror (strips the \\?\ device prefix)
 function Import-CaseCsv {
     param([string]$Name)
     if ($Name -notmatch '\.csv$') { $Name = "$Name.csv" }

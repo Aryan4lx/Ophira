@@ -30,6 +30,7 @@ New-Item -ItemType Directory -Path $CsvDir -Force | Out-Null
 $saved = @{}
 function Save-Rows { param([string]$Name, $Rows) $script:saved[$Name] = $Rows }
 function Write-CaseLog { param([string]$Message, [string]$Color = 'Gray') }
+function Get-SidName { param([string]$s) if ("$s" -eq 'S-1-5-21-1000') { return 'admin' } return $null } # v2.94: acctGet resolves SIDs via this helper - fixture SID maps to the fixture account SIDs via this helper - fixture SID mapped to the auth-event account
 
 New-Csv (Join-Path $CsvDir 'flash_process_scored.csv') '"Name","Path","Verdict","Score","Evidence","Signer"' @(
     '"evil.exe","C:\Users\u\AppData\Roaming\evil.exe","HIGH",90,"user path;unsigned",""'

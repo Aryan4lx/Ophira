@@ -21,7 +21,7 @@ function New-Csv { param($Path, [string[]]$Header, [string[]]$Lines) ($Header + 
 Check "verdict: Defender-channel sigma rows excluded from the sigma signals" ($src -match [regex]::Escape('$hayNonDef = @($hay | Where-Object { "$($_.Channel)" -notmatch'))
 Check "verdict: crit floor gated to >=3 events from >=2 distinct rules" ($src -match [regex]::Escape('if ($hayCrit.Count -ge 3 -and $hayCritRules -ge 2) { 3 } else { 2 }'))
 Check "verdict: sigma counts object keeps int shape (SigmaCritical.Count)" ($src -match [regex]::Escape('SigmaCritical = $hayCrit.Count'))
-Check "A0b: sysmon registry parser captures ProcessGuid" ($src -match [regex]::Escape("TargetObject = 'TargetObject'; Image = 'Image'; ProcessId = 'ProcessId'; ProcessGuid = 'ProcessGuid'"))
+Check "A0b: sysmon registry parser captures ProcessGuid" ($src -match [regex]::Escape("Image = 'Image'; ProcessId = 'ProcessId'; ProcessGuid = 'ProcessGuid'") -and $src -match [regex]::Escape("TargetObject = 'TargetObject'; Details = 'Details'"))
 Check "A0b: sysmon file-time parser captures ProcessGuid" ($src -match [regex]::Escape("PreviousCreationUtcTime = 'PreviousCreationUtcTime'; ProcessId = 'ProcessId'; ProcessGuid = 'ProcessGuid'"))
 $tune = Get-Content -LiteralPath (Join-Path (Split-Path -Parent $PSScriptRoot) 'tools\endpoint\hayabusa\ophira-level-tuning.txt') -Raw
 foreach ($fp in @(@('dbbfd9f3-9508-478b-887e-03ddb9236909', 'Suspicious Service Path'), @('cc429813-21db-4019-b520-2f19648e1ef1', 'Suspicious Service Name'), @('a1be9170-2ada-e8bb-285c-3e1ff336189e', 'AV Relevant File Paths'))) {

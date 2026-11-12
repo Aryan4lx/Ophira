@@ -238,7 +238,7 @@ if ($lines4.Count -ge 6100) {
     # + connections_dns emptyWhy added upstream; same report region)
     # -> 6610..7255 (v2.86 activity-picture block added ~105 lines before the entities region -
     #    markers now (v2.92): Score 6782, rcCol 7078, SRUM 7519, Steps 7536; same report region)
-    $region4 = ($lines4[6650..7620] -join "`n")
+    $region4 = ($lines4[6650..7760] -join "`n")
     Check "B5: no bare [int]quoted casts left in the report region" (-not $region4.Contains('[int]"$('))
     Check "B5: no bare [double]quoted casts left in the report region" (-not $region4.Contains('[double]"$('))
     Check "B5: no bare [long]quoted casts left in the report region" (-not $region4.Contains('[long]"$('))

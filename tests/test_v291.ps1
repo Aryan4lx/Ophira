@@ -190,7 +190,7 @@ Check 'P6: coverage spine accepts execution_timeline' ($src.Contains("-or (Test-
 Check 'P6: $addUtc exists' ($src.Contains('$addUtc = {'))
 Check 'P6: AssumeUniversal used' ($src.Contains('AssumeUniversal'))
 Check 'P6: UTC weaves declared' (([regex]::Matches($src, '-IsUtc \$true')).Count -eq 12)
-Check 'P6: version bumped' ($src.Contains('$ScriptVersion = "2.92"'))
+Check 'P6: version bumped' ($src.Contains('$ScriptVersion = "2.94"'))
 
 Remove-Item $script:tmpDir -Recurse -Force -ErrorAction SilentlyContinue
 Write-Host ""

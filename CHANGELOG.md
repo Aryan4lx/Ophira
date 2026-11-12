@@ -1,4 +1,17 @@
-﻿## v2.93 - honest counts
+﻿## v2.94 - joins and parsers
+
+- One path normalizer: Convert-ToWinPath strips \?\?, \\?\, \Device\HarddiskVolumeN and \Volume{...} prefixes everywhere (entity correlation, loldrivers, exec stacks, SRUM display) - device-path evidence used to fall out of joins or show as raw mapper paths.
+- Sysmon EID 3 now captures DestHostname + direction (INBOUND), EID 13 captures Details + User, EID 1 captures bare SHA256 Hash + ParentCommandLine - deeper joins when Sysmon is installed.
+- Sysmon process creates join the entity story: bare SHA256 hashes land on the binary card and each capture becomes exec evidence.
+- Services with arguments now become entities (argument-splitting + drive-letter resolution); relative driver paths are skipped honestly with a count instead of silently ignored.
+- SIDs resolve to DOMAIN\name (rdp_client_targets, autoruns HKU, BAM) so SID-keyed evidence joins the same account card; unresolvable SIDs are skipped.
+- Recycle bin  records parsed (original size + delete time + owner SID); recyclebin/shellbags/jumplists added to coverage so missing artifact folders are visible in the coverage math.
+- Collectors fixed: services StartMode/State via CIM, drivers via Get-CimInstance Win32_SystemDriver, recyclebin per-drive, ExecStacks prefetch run window 0..7, ::ffff: mapped IPv6 stripped at both ends, IIS logs parsed as UTC + labeled.
+- loldrivers: relative/unresolvable driver paths skipped with a logged count instead of crashing the hash check.
+- psort/log2timeline run through Invoke-NativeTool (console-less, consistent error handling).
+- tests\test_v294.ps1: 38 new checks (D-group coverage); suites v214/v218/v241/v264/v284 updated for the new helpers.
+
+## v2.93 - honest counts
 
 - Nav sidebar: counts are labeled as evidence inventory (tooltip + sidebar legend: 'counts = evidence collected; sections show capped views') so 'Sigma (302)' can't read as '302 rows below'.
 - Every capped section now states its cap: 37 tables/details render 'showing first N of M' with the source CSV named when truncation happens (leads, entities, sigma, persistence, snapshot, timeline, hunt, focus dossier).

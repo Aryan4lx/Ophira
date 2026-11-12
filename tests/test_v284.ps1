@@ -16,6 +16,7 @@ function Check([string]$label, [bool]$ok) {
 }
 $stamp = Get-Date -Format 'HHmmss'
 function Write-CaseLog { param([string]$Message, [string]$Color = 'Gray') }
+function Convert-ToWinPath { param([string]$p) $p = "$p"; if ($p -match '(?i)^\\device\\harddiskvolume\d+(\\.*)$') { return "C:$($Matches[1])" }; return ($p -replace '^\\\\\\?\\\\', '') } # v2.94: ExecStacks normalizes via this helper - fixture mirror of the Ophira.ps1 implementation
 function QuietLog { param($Message) }
 $script:saved = @{}
 function Save-Rows { param([string]$Name, $Rows) $script:saved[$Name] = @($Rows) }
@@ -174,7 +175,7 @@ Check "wire: report stacking h3 present" ($src.Contains('Execution stacks - one 
 Check "wire: report window h3 present" ($src.Contains('Investigation-window time-stacking (what ran ONLY inside the window)'))
 Check "wire: report no-window note stays honest" ($src.Contains('a made-up window would fabricate signal'))
 Check "wire: report imports for the three artifacts" ($src.Contains("Import-CaseCsv 'exec_stacks_byname.csv'") -and $src.Contains("Import-CaseCsv 'exec_stacks_bypath.csv'") -and $src.Contains("Import-CaseCsv 'exec_window_ratio.csv'"))
-Check "wire: version bumped to 2.92" ($src.Contains('$ScriptVersion = "2.92"'))
+Check "wire: version bumped to 2.92" ($src.Contains('$ScriptVersion = "2.94"'))
 
 # ============================================================================
 Write-Host ""

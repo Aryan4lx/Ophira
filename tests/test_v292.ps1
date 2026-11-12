@@ -65,7 +65,7 @@ Check 'P5: escaped replace no longer nests <br> inside esc' (-not $src.Contains(
 Check 'P5: focus detail cap raised to 1200 with csv pointer' ($src.Contains('Substring(0, 1200)') -and $src.Contains('full text: focus_hits.csv'))
 
 Write-Host "== P6: version =="
-Check 'P6: version bumped' ($src.Contains('$ScriptVersion = "2.92"'))
+Check 'P6: version bumped' ($src.Contains('$ScriptVersion = "2.94"'))
 
 Write-Host ""
 Write-Host "RESULT: $passed passed, $failed failed"
