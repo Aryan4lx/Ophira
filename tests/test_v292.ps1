@@ -1,4 +1,4 @@
-# test_v292.ps1 - v2.92 interaction rebuild:
+# test_v292.ps1 - v2.95 interaction rebuild:
 #   B1/B2 span-swap clip cells (New-ClipCell helper: preview in span.cpv, full in data-full,
 #        data-prevn carries preview length - no button-text corruption possible)
 #   B4 honest clipboard (fallback + failure toast in JS)
@@ -65,7 +65,7 @@ Check 'P5: escaped replace no longer nests <br> inside esc' (-not $src.Contains(
 Check 'P5: focus detail cap raised to 1200 with csv pointer' ($src.Contains('Substring(0, 1200)') -and $src.Contains('full text: focus_hits.csv'))
 
 Write-Host "== P6: version =="
-Check 'P6: version bumped' ($src.Contains('$ScriptVersion = "2.94"'))
+Check 'P6: version bumped' ($src.Contains('$ScriptVersion = "2.95"'))
 
 Write-Host ""
 Write-Host "RESULT: $passed passed, $failed failed"

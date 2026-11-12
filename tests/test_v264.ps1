@@ -219,19 +219,19 @@ Check "A6: HIGH score 6 + YARA hit present -> corroborated, weight 2" (@($vA6c.S
 function Get-IocList { return @{ Hashes = @{ 'deadbeef' = $true }; Ips = @{}; Domains = @{}; Names = @{} } }
 $Sysmon = $true
 New-Item -ItemType Directory -Path $MemDir -Force | Out-Null
-$allCovCsvs = @('flash_process_scored','flash_public_connections','autoruns_runkeys','hayabusa_timeline','amcache','prefetch_index','usn_write_bursts','mft_recent','asep_sweep','browser_files','defender_status','yara_scanned','sysmon_dns','entities_binaries','hunt_findings','svchost_audit','remote_access','security_proc_events','sysmon_remote_thread','security_kerberos','iis_requests','session_activity','wer_reports','loldrivers_hits','recyclebin_index','shellbags','jumplist_parsed')
+$allCovCsvs = @('flash_process_scored','flash_public_connections','autoruns_runkeys','hayabusa_timeline','amcache','prefetch_index','usn_write_bursts','mft_recent','asep_sweep','browser_files','defender_status','yara_scanned','sysmon_dns','entities_binaries','hunt_findings','svchost_audit','remote_access','security_proc_events','sysmon_remote_thread','security_kerberos','iis_requests','session_activity','wer_reports','loldrivers_hits','recyclebin_index','shellbags','jumplist_parsed','wmi_activity')
 
 # A7a: 11 sources uncovered -> 21/32 collected, 133/172 weight -> 77% (old capped sum said 100%)
 $script:fixtureRows = @{}
 $script:presentCsvs = @('flash_process_scored','autoruns_runkeys','hayabusa_timeline','amcache','prefetch_index','usn_write_bursts','asep_sweep','defender_status','yara_scanned','entities_binaries','hunt_findings','svchost_audit','remote_access','security_proc_events','wer_reports','loldrivers_hits')
 $vA7a = Get-CompromiseVerdict
-Check "A7: 11 sources uncovered -> coverage 77% (133/172 rounded), not the old capped 100%" ($vA7a.ConfidencePercent -eq 77 -and $vA7a.CoveragePercentUnadjusted -eq 77)
-Check "A7: verdict object carries N/M sources (21/32)" ($vA7a.CoverageSourcesCollected -eq 21 -and $vA7a.CoverageSourcesTotal -eq 32)
+Check "A7: 12 sources uncovered -> coverage 76% (133/175 rounded), not the old capped 100%" ($vA7a.ConfidencePercent -eq 76 -and $vA7a.CoveragePercentUnadjusted -eq 76)
+Check "A7: verdict object carries N/M sources (21/33)" ($vA7a.CoverageSourcesCollected -eq 21 -and $vA7a.CoverageSourcesTotal -eq 33)
 
 # A7b: every source collected -> 100
 $script:presentCsvs = $allCovCsvs
 $vA7b = Get-CompromiseVerdict
-Check "A7: all 32 sources collected -> 100%" ($vA7b.ConfidencePercent -eq 100 -and $vA7b.CoverageSourcesCollected -eq 32 -and $vA7b.CoverageSourcesTotal -eq 32)
+Check "A7: all 33 sources collected -> 100%" ($vA7b.ConfidencePercent -eq 100 -and $vA7b.CoverageSourcesCollected -eq 33 -and $vA7b.CoverageSourcesTotal -eq 33)
 
 # A7c: non-admin -15 applies to the collected sum BEFORE the division. The evtx export dir
 # is set aside so tiny coverage is reachable (the stubs still give IOC 2 + Sysmon 5 + RAM 3).
@@ -269,7 +269,7 @@ $CsvDir = Join-Path $tmp 'csv'
 $script:Verdict = $vA7a
 $draftA7 = @(Get-CaseNarrative)
 $assessA7 = @($draftA7 | Where-Object { $_ -like 'ASSESSMENT*' })[0]
-Check "A7 draft line exact-string: same 80% fraction + 21/29 sources + v2.55 wording" ($assessA7 -eq 'ASSESSMENT: NO EVIDENCE OF COMPROMISE (evidence coverage 77% of expected sources - 21/32 sources, not a probability of compromise). No signs of compromise were found.')
+Check "A7 draft line exact-string: same 76% fraction + 21/33 sources + v2.55 wording" ($assessA7 -eq 'ASSESSMENT: NO EVIDENCE OF COMPROMISE (evidence coverage 76% of expected sources - 21/33 sources, not a probability of compromise). No signs of compromise were found.')
 
 # ---- A8: clean-check predicates align to the post-Task-1/2 verdict signal inputs ----
 $m8 = [regex]::Match($src, "(?s)function Get-CleanCheckSummary \{.*?\r?\n\}")

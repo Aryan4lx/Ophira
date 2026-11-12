@@ -1,4 +1,4 @@
-# tests\test_v294.ps1 - v2.94 D-group: joins, parsers, normalizers, honesty
+# tests\test_v294.ps1 - v2.95 D-group: joins, parsers, normalizers, honesty
 $ErrorActionPreference = 'Stop'
 $repo = Split-Path -Parent $PSScriptRoot
 $srcPath = Join-Path $repo 'Ophira.ps1'
@@ -121,8 +121,8 @@ Check 'D8c: Get-FilteredEvents invariant' ($src.Contains("TimeCreated = `$e.Time
 Check 'D7f: mapped-prefix strip count' (([regex]::Matches($src, [regex]::Escape('(?i)^::ffff:'))).Count -ge 3)
 
 # ---- P7: version
-Check 'version: header bumped' ($src.Contains('Ophira v2.94'))
-Check 'version: ScriptVersion 2.94' ($src.Contains('$ScriptVersion = "2.94"'))
+Check 'version: header bumped' ($src.Contains('Ophira v2.95'))
+Check 'version: ScriptVersion 2.95' ($src.Contains('$ScriptVersion = "2.95"'))
 
 Write-Host ''
 Write-Host "v294: $script:pass passed, $script:fail failed" -ForegroundColor $(if ($script:fail -eq 0) { 'Green' } else { 'Red' })

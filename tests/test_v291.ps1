@@ -1,4 +1,4 @@
-# test_v291.ps1 - v2.91 truth-first batch:
+# test_v291.ps1 - v2.95 truth-first batch:
 #   A1 supertimeline UTC-dialect split ($addUtc + -IsUtc weave routing)
 #   A2 R38 UTC-normalized earliest-stamp hour buckets
 #   A3 R37 Win10 (10ts) order-check gate
@@ -192,7 +192,7 @@ Check 'P6: coverage spine accepts execution_timeline' ($src.Contains("-or (Test-
 Check 'P6: $addUtc exists' ($src.Contains('$addUtc = {'))
 Check 'P6: AssumeUniversal used' ($src.Contains('AssumeUniversal'))
 Check 'P6: UTC weaves declared' (([regex]::Matches($src, '-IsUtc \$true')).Count -eq 12)
-Check 'P6: version bumped' ($src.Contains('$ScriptVersion = "2.94"'))
+Check 'P6: version bumped' ($src.Contains('$ScriptVersion = "2.95"'))
 
 Remove-Item $script:tmpDir -Recurse -Force -ErrorAction SilentlyContinue
 Write-Host ""

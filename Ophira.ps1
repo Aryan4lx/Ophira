@@ -1,5 +1,5 @@
 <#
-Ophira v2.94  -  Windows Incident Response Triage Toolkit
+Ophira v2.95  -  Windows Incident Response Triage Toolkit
 READ-ONLY by design: never modifies the system, only reads and copies data
 into its own output folder. Intended to be handed to a system owner or run
 by a responder during early triage / threat hunting.
@@ -363,7 +363,7 @@ param(
     [switch]$ExitVerdict
 )
 
-$ScriptVersion = "2.94"
+$ScriptVersion = "2.95"
 $ErrorActionPreference = 'Continue'
 $ProgressPreference = 'SilentlyContinue'
 
@@ -595,6 +595,8 @@ $script:CsvCatMap = @{
     # DEFENDER
     'defender_status' = 'defender'; 'defender_threats' = 'defender'; 'defender_preferences' = 'defender'
     'defender_events' = 'defender'; 'defender_config_events' = 'defender'
+    # v2.95: secondary security logs + defender hardening posture
+    'wmi_activity' = 'logs'; 'winrm_events' = 'logs'; 'bits_transfers' = 'logs'; 'ntlm_events' = 'logs'; 'applocker_events' = 'logs'; 'wdac_events' = 'logs'; 'defender_posture' = 'defender'
     # MEMORY
     'memory_live_scan' = 'memory'; 'memory_malfind' = 'memory'; 'memory_netscan' = 'memory'
     # CONTEXT
@@ -3457,7 +3459,7 @@ $script:Modules = @(
             $procEv = Get-EventDataRows -LogName 'Security' -Id @(4688) -Start $start -Cap 4000 -Fields ([ordered]@{ Account = 'SubjectUserName'; LogonId = 'SubjectLogonId'; NewProcess = 'NewProcessName'; CommandLine = 'CommandLine'; ParentProcess = 'ParentProcessName'; NewProcessId = 'NewProcessId'; CreatorPid = 'ProcessId' })
             Save-Rows -Name 'security_proc_events' -Rows $procEv
             if ($procEv.Count -gt 0) { Write-CaseLog "    4688 process creations: $($procEv.Count) (empty CommandLine = cmdline audit off)" 'Gray' }
-            $taskEv = Get-EventDataRows -LogName 'Security' -Id @(4698) -Start $start -Cap 500 -Fields ([ordered]@{ Account = 'SubjectUserName'; TaskName = 'TaskName'; TaskContent = 'TaskContent' })
+            $taskEv = Get-EventDataRows -LogName 'Security' -Id @(4698, 4702) -Start $start -Cap 500 -Fields ([ordered]@{ Account = 'SubjectUserName'; TaskName = 'TaskName'; TaskContent = 'TaskContent' })
             foreach ($t in $taskEv) {
                 $cmd = ''
                 if ("$($t.TaskContent)" -match '<Command>([^<]+)</Command>') { $cmd = $Matches[1] }
@@ -3465,7 +3467,7 @@ $script:Modules = @(
                 $t.PSObject.Properties.Remove('TaskContent')
             }
             Save-Rows -Name 'security_task_install' -Rows $taskEv
-            if ($taskEv.Count -gt 0) { Write-CaseLog "    4698 scheduled task installs: $($taskEv.Count)" 'Gray' }
+            if ($taskEv.Count -gt 0) { Write-CaseLog "    4698/4702 scheduled task installs/updates: $($taskEv.Count)" 'Gray' }
             $shareEv = Get-EventDataRows -LogName 'Security' -Id @(5140, 5145) -Start $start -Cap 8000 -Fields ([ordered]@{ Account = 'SubjectUserName'; LogonId = 'SubjectLogonId'; ShareName = 'ShareName'; RelativeTargetName = 'RelativeTargetName'; SourceIp = 'IpAddress'; AccessList = 'AccessList' })
             Save-Rows -Name 'security_share_access' -Rows $shareEv
             if ($shareEv.Count -ge 8000) { Write-CaseLog "    share access: capped at 8000 rows - wide file-share activity (file server?)" 'DarkGray' }
@@ -3476,10 +3478,10 @@ $script:Modules = @(
             Export-Evtx -LogName 'Microsoft-Windows-TaskScheduler/Operational' -FileName 'TaskScheduler_Operational.evtx'
             Export-Evtx -LogName 'Security' -FileName 'Security.evtx'
         } }
-    [pscustomobject]@{ Id = '4.2'; Cat = 'LOGS'; Name = 'PowerShell operational log (4104 script blocks)'; Default = $true; Quick = $false;
+    [pscustomobject]@{ Id = '4.2'; Cat = 'LOGS'; Name = 'PowerShell operational log (4103 module loads, 4104 script blocks)'; Default = $true; Quick = $false;
         Run = {
             $start = Get-LogStart
-            $ev = Get-FilteredEvents -LogName 'Microsoft-Windows-PowerShell/Operational' -Ids @(4104, 400, 600) -Start $start -MaxMsg 2000
+            $ev = Get-FilteredEvents -LogName 'Microsoft-Windows-PowerShell/Operational' -Ids @(4103, 4104, 400, 600) -Start $start -MaxMsg 2000
             Save-Rows -Name 'powershell_events' -Rows $ev
             Export-Evtx -LogName 'Microsoft-Windows-PowerShell/Operational' -FileName 'PowerShell_Operational.evtx'
         } }
@@ -3881,6 +3883,36 @@ $script:Modules = @(
             Save-Rows -Name 'esent_ntds' -Rows (Get-EsentNtdsRows $start)
             Export-Evtx -LogName 'Application' -FileName 'Application.evtx'
         } }
+    # v2.95 (E-group): secondary security logs - quiet unless abused (WMI persistence,
+    # remote PS, BITS downloads, NTLM downgrade, AppLocker/WDAC execution blocks)
+    [pscustomobject]@{ Id = '4.11'; Cat = 'LOGS'; Name = 'Secondary security logs (WMI/WinRM/BITS/NTLM/AppLocker/WDAC)'; Default = $true; Quick = $false;
+        Run = {
+            $start = Get-LogStart
+            $wmi = Get-FilteredEvents -LogName 'Microsoft-Windows-WMI-Activity/Operational' -Ids @(5857, 5859, 5860, 5861) -Start $start
+            Save-Rows -Name 'wmi_activity' -Rows $wmi
+            if ($wmi.Count -gt 0) { Write-CaseLog "    WMI-Activity events: $($wmi.Count) (5861 = temporary event consumer registration - a persistence trick)" 'Gray' }
+            $winrm = Get-FilteredEvents -LogName 'Microsoft-Windows-WinRM/Operational' -Ids @(91, 163) -Start $start
+            Save-Rows -Name 'winrm_events' -Rows $winrm
+            if ($winrm.Count -gt 0) { Write-CaseLog "    WinRM remote-management events: $($winrm.Count) - remote PowerShell reached this host" 'Yellow' }
+            $bits = Get-FilteredEvents -LogName 'Microsoft-Windows-Bits-Client/Operational' -Ids @(59, 60) -Start $start
+            Save-Rows -Name 'bits_transfers' -Rows $bits
+            if ($bits.Count -gt 0) { Write-CaseLog "    BITS transfer events: $($bits.Count) - background download trail" 'Gray' }
+            $ntlm = Get-FilteredEvents -LogName 'Microsoft-Windows-NTLM/Operational' -Ids @(8001, 8002) -Start $start
+            Save-Rows -Name 'ntlm_events' -Rows $ntlm
+            if ($ntlm.Count -gt 0) { Write-CaseLog "    NTLM auth events: $($ntlm.Count) (8002 = clear-text credential risk)" 'Yellow' }
+            $al = @()
+            foreach ($alLog in @('Microsoft-Windows-AppLocker/EXE and DLL', 'Microsoft-Windows-AppLocker/MSI and Script')) {
+                $al += @(Get-FilteredEvents -LogName $alLog -Ids @(8000, 8001, 8002, 8003, 8004, 8005, 8006, 8007, 8020, 8021, 8022, 8023, 8024, 8025) -Start $start)
+            }
+            Save-Rows -Name 'applocker_events' -Rows $al
+            if ($al.Count -gt 0) { Write-CaseLog "    AppLocker execution-control events: $($al.Count) (8003/8004 = blocked/allowed)" 'Gray' }
+            $wdac = Get-FilteredEvents -LogName 'Microsoft-Windows-CodeIntegrity/Operational' -Ids @(3076, 3077) -Start $start
+            Save-Rows -Name 'wdac_events' -Rows $wdac
+            if ($wdac.Count -gt 0) { Write-CaseLog "    WDAC/CodeIntegrity audit+block events: $($wdac.Count)" 'Yellow' }
+            Export-Evtx -LogName 'Microsoft-Windows-WMI-Activity/Operational' -FileName 'WMI_Activity.evtx'
+            Export-Evtx -LogName 'Microsoft-Windows-Bits-Client/Operational' -FileName 'Bits_Client.evtx'
+            Export-Evtx -LogName 'Microsoft-Windows-AppLocker/EXE and DLL' -FileName 'AppLocker_EXE_DLL.evtx'
+        } }
     [pscustomobject]@{ Id = '5.1'; Cat = 'ARTIFACTS'; Name = 'Prefetch files'; Default = $true; Quick = $false;
         Run = {
             $pf = Join-Path $env:SystemRoot 'Prefetch'
@@ -4132,6 +4164,7 @@ $script:Modules = @(
                         RealTimeProtection = $s.RealTimeProtectionEnabled; IOfficeAntiVirus = $s.IoavProtectionEnabled
                         AntivirusSigAgeDays = if ($s.AntivirusSignatureAge -ne $null) { $s.AntivirusSignatureAge } else { '' }
                         QuickScanAge = $s.QuickScanAge; FullScanAge = $s.FullScanAge; LastQuickScan = $s.QuickScanStartTime
+                        TamperProtection = $s.IsTamperProtected
                     }
                 }
             } catch { }
@@ -4150,6 +4183,14 @@ $script:Modules = @(
                         DisableRealtime = $p.DisableRealtimeMonitoring
                         SubmitSamplesConsent = $p.SubmitSamplesConsent
                     }
+                    # v2.95: ASR rules posture - which attack-surface rules exist and in what mode
+                    $asrIds = @($p.AttackSurfaceReductionRules_Ids); $asrActs = @($p.AttackSurfaceReductionRules_Actions)
+                    $asr = @()
+                    for ($ai = 0; $ai -lt $asrIds.Count; $ai++) {
+                        $actN = ''; try { $actN = @('keep-off', 'block', 'audit', 'warn')[[int]"$($asrActs[$ai])"] } catch { $actN = "$($asrActs[$ai])" }
+                        $asr += [pscustomobject]@{ Rule = "$($asrIds[$ai])"; Action = $actN }
+                    }
+                    Save-Rows -Name 'defender_posture' -Rows $asr
                 }
             } catch { }
             Save-Rows -Name 'defender_status' -Rows $status
@@ -8226,6 +8267,13 @@ h3{font-size:13.5px;margin:20px 0 8px;color:var(--tx)}
     'exec_window_ratio'              = 'Time-stacking: executions inside vs outside the investigation window (-After/-Before or the focus dossier window) - window-exclusive files bubble to the top'
     'recon_sessions'                 = 'Recon-session clustering: discovery tools (net/whoami/nltest/...) grouped by execution time - a burst of distinct tools in one short session is hands-on recon'
     'exec_tcorr'                     = 'Temporal execution correlation: other executions within +-30 min of each medium/high hunt finding, decay-weighted - bidirectional pairs are the interesting ones'
+    'wmi_activity'                   = 'WMI-Activity operational log (5857/5860/5861) - EID 5861 temporary event consumers are a persistence trick'
+    'winrm_events'                   = 'WinRM operational log (91/163) - remote PowerShell / management sessions reaching this host'
+    'bits_transfers'                 = 'BITS-Client transfer events (59/60) - background downloads that bypass browser history'
+    'ntlm_events'                    = 'NTLM operational log (8001/8002) - 8002 = credentials sent in clear text'
+    'applocker_events'               = 'AppLocker execution-control events (8000-8025) - blocked/allowed executions show what tried to run'
+    'wdac_events'                    = 'WDAC/CodeIntegrity audit+block events (3076/3077) - unsigned/untrusted code stopped or flagged'
+    'defender_posture'               = 'Defender ASR (attack-surface reduction) rules and their mode - a hardening snapshot, not detections'
         'connections_dns'                 = 'Public connections resolved via the DNS cache (CNAME chains walked) - what each remote IP actually was'
         'arp_table'                       = 'ARP cache - hosts on the local segment'
         'logon_sessions'                  = 'Active logon sessions (who is on the box right now)'
@@ -8443,6 +8491,13 @@ h3{font-size:13.5px;margin:20px 0 8px;color:var(--tx)}
     'exec_stacks_bypath'              = 'no execution evidence to stack (no amcache/shimcache/prefetch parsed yet - run the parse modules or 5.4)'
     'exec_window_ratio'              = 'no investigation window set - pass -After/-Before on a parse/regen run or set the focus dossier window, then regenerate'
     'recon_sessions'                 = 'no discovery-tool activity clustered (4688 command auditing / Sysmon EID 1 absent, or genuinely no recon bursts)'
+    'wmi_activity'                   = 'no WMI-Activity events (log absent/disabled, or no temporary consumers registered - empty is good)'
+    'winrm_events'                   = 'no WinRM remote-management events - remote PowerShell never reached this host (empty is good)'
+    'bits_transfers'                 = 'no BITS transfer events (log absent or no background downloads)'
+    'ntlm_events'                    = 'no NTLM auth events (NTLM log disabled is common; empty here is not proof of absence)'
+    'applocker_events'               = 'no AppLocker events (policy not deployed on this host) - execution control state unknown'
+    'wdac_events'                    = 'no WDAC/CodeIntegrity audit events (no WDAC policy, or nothing audited/blocked)'
+    'defender_posture'               = 'no ASR rules configured (Get-MpPreference returned none) - attack-surface reduction is off or unqueryable'
     'exec_tcorr'                     = 'no t-corr seeds: medium/high hunt findings absent (t-corr correlates around them) or no timestamped execution evidence'
         'domain_info'                     = 'Win32_ComputerSystem returned nothing - the WMI repository may be damaged on this host (itself an IR-relevant condition; check collection.log for other WMI failures)'
         'entities_accounts'               = 'joins logons/RDP/console history per account - nothing to join when those sources are empty'
@@ -8802,6 +8857,13 @@ function New-SuperTimeline {
     & $weave 'security_task_install' 500 { param($r) @("$($r.Time)", 'scheduled task installed (4698)', "$($r.Account)", "$($r.TaskName)", "$($r.Command)") }
     & $weave 'task_deletions' 200 { param($r) @("$($r.Time)", 'scheduled task deleted (4699)', "$($r.User)", (& $leaf $r.TaskName), "$($r.Message)") }
     & $weave 'esent_ntds' 200 { param($r) @("$($r.Time)", 'ntds.dit accessed (ESENT 325/326)', '', '', "$(if ("$($r.BackupPattern)" -eq 'True') { 'backup-pattern' } else { 'NON-BACKUP - theft prep?' }) | $($r.Message)") }
+    # v2.95 secondary security logs - quiet unless abused
+    & $weave 'wmi_activity' 500 { param($r) @("$($r.TimeCreated)", "WMI activity (EID $($r.Id))", '', '', "$(("$($r.Message)" -replace '\s+', ' ').Trim())") }
+    & $weave 'winrm_events' 500 { param($r) @("$($r.TimeCreated)", 'WinRM remote management (EID 91/163)', '', '', "$(("$($r.Message)" -replace '\s+', ' ').Trim())") }
+    & $weave 'bits_transfers' 500 { param($r) @("$($r.TimeCreated)", 'BITS transfer (EID 59/60)', '', '', "$(("$($r.Message)" -replace '\s+', ' ').Trim())") }
+    & $weave 'ntlm_events' 500 { param($r) @("$($r.TimeCreated)", "NTLM auth (EID $($r.Id))", '', '', "$(("$($r.Message)" -replace '\s+', ' ').Trim())") }
+    & $weave 'applocker_events' 500 { param($r) @("$($r.TimeCreated)", "AppLocker (EID $($r.Id))", '', '', "$(("$($r.Message)" -replace '\s+', ' ').Trim())") }
+    & $weave 'wdac_events' 500 { param($r) @("$($r.TimeCreated)", "WDAC/CodeIntegrity (EID $($r.Id))", '', '', "$(("$($r.Message)" -replace '\s+', ' ').Trim())") }
     & $weave 'security_kerberos' 3000 { param($r) @("$($r.Time)", "kerberos (EID $($r.EventId))", "$($r.Account)", "$($r.IpAddress)", "svc=$($r.Service) enc=$($r.TicketEnc) preauth=$($r.PreAuth)") }
     & $weave 'security_ds_access' 3000 { param($r) @("$($r.Time)", "directory service (EID $($r.EventId))", "$($r.Account)", "$($r.Object)$("$($r.ObjectDN)")", "$("$($r.Properties)" -replace '\s+', ' ') | $($r.Attribute)=$($r.Value)") }
     & $weave 'defender_config_events' 500 { param($r) @("$($r.Time)", "defender config (EID $($r.EventId))", '', '', "$($r.Detail)") }
@@ -11138,6 +11200,28 @@ function New-HuntFindings {
     }
     & $trace 'R51' 'recon tool burst' "recon_sessions: $($r51.Count) session(s) scanned -> $r51N burst finding(s)"
 
+    # ---------- R52-R55: secondary security logs (v2.95) ----------
+    $wmiEv = @(Import-CaseCsv 'wmi_activity' | Where-Object { "$($_.Id)" -eq '5861' })
+    foreach ($w in ($wmiEv | Select-Object -First 5)) {
+        & $find 'WMI temporary event consumer registered' 'medium' ("$($w.Message)" -replace '\s+', ' ').Trim() "EID 5861 - a consumer bound to a WMI filter (persistence until reboot)" 'T1546.003'
+    }
+    & $trace 'R52' 'wmi temp consumer' "wmi_activity: $($wmiEv.Count) EID 5861 row(s)"
+    $winrmEv = @(Import-CaseCsv 'winrm_events')
+    if ($winrmEv.Count -ge 3) {
+        & $find 'WinRM remote-management authentication observed' 'low' ($winrmEv.Count.ToString() + ' events') 'remote PowerShell reached this host (check for lateral movement) - sample: ' + (("$($winrmEv[0].Message)" -replace '\s+', ' ').Trim()) 'T1021.006'
+    }
+    & $trace 'R53' 'winrm remote auth' "winrm_events: $($winrmEv.Count) row(s)"
+    $ntlmClear = @(Import-CaseCsv 'ntlm_events' | Where-Object { "$($_.Id)" -eq '8002' })
+    if ($ntlmClear.Count -ge 1) {
+        & $find 'NTLM clear-text authentication' 'low' ($ntlmClear.Count.ToString() + ' events') 'EID 8002 - credentials crossed the wire in a reversible form' 'T1557'
+    }
+    & $trace 'R54' 'ntlm clear-text' "ntlm_events: $($ntlmClear.Count) EID 8002 row(s)"
+    $bitsEv = @(Import-CaseCsv 'bits_transfers')
+    if ($bitsEv.Count -ge 2) {
+        & $find 'BITS background transfers' 'low' ($bitsEv.Count.ToString() + ' events') 'BITS downloads files outside browser history - check URLs for non-microsoft hosts' 'T1197'
+    }
+    & $trace 'R55' 'bits transfers' "bits_transfers: $($bitsEv.Count) row(s)"
+
     # v2.87 storm guard: one broken source can flood one rule with hundreds of rows and
     # drown both the report and the verdict - cap each rule+severity at 15 rows and
     # aggregate the overflow into one info row so the count is never silently lost
@@ -11623,6 +11707,7 @@ function Get-CompromiseVerdict {
     Add-Cov 'Browser history artifacts' (Test-CaseCsv 'browser_files') 4
     Add-Cov 'Defender status' (Test-CaseCsv 'defender_status') 5
     Add-Cov 'YARA binary scan' (Test-CaseCsv 'yara_scanned') 5
+    Add-Cov 'Secondary security logs (WMI/WinRM/NTLM/AppLocker)' (Test-CaseCsv 'wmi_activity') 3
     Add-Cov 'DNS query telemetry (Sysmon EID 22)' (Test-CaseCsv 'sysmon_dns') 4
     Add-Cov 'Entity correlation' (Test-CaseCsv 'entities_binaries') 3
     Add-Cov 'Hunt rules' (Test-CaseCsv 'hunt_findings') 3
