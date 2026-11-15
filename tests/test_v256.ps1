@@ -11,8 +11,8 @@ function Assert-Has([string]$needle, [string]$label) {
 # ---- Task 9: entity cross-links ----
 Assert-Has 'function Get-SectionAnchorForSource' '9a anchor helper exists'
 Assert-Has "appears in:" '9d appears-in chip row'
-Assert-Has 'Showing the top $($entTop.Count) of <b>$($entAll.Count)</b>' '9c of-N label'
-Assert-Has 'ConvertTo-SafeInt $_.CatCount }; Descending' '9c entity cards sorted by CatCount'
+Assert-Has "Add-CapNote @(`$entAll).Count 12 'entities_binaries' 'Entity cards'" '9c of-N label (Add-CapNote renders it)'
+Assert-Has 'ConvertTo-SafeInt $_.CatCount }; Descending' '9c entity cards still key on CatCount (second sort key)'
 Assert-Has '$srcAnc = Get-SectionAnchorForSource $parts[0]' '9a evidence Source cells link'
 Assert-Has '$chainParent[(Split-Path "$($i.Image)" -Leaf).ToLower()]' '9b focus parent from process_chains'
 

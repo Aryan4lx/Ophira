@@ -32,8 +32,8 @@ function Write-CaseLog { param([string]$Message, [string]$Color = 'Gray') Write-
 "Trojan:Win32/Emotet",4,"True","file:C:\Users\u\evil.exe"
 '@ | Set-Content -LiteralPath (Join-Path $csvDir 'defender_threats.csv') -Encoding UTF8
 @'
-"Source","Target","Type"
-"TERMSRV","10.0.0.5","DOMAIN/ADMIN"
+"Target","Type","User"
+"TERMSRV/10.0.0.5","Domain","admin"
 '@ | Set-Content -LiteralPath (Join-Path $csvDir 'saved_credentials.csv') -Encoding UTF8
 @'
 "Target","UsernameHint","LastUsed"

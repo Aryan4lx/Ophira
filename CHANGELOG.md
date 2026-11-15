@@ -4,6 +4,18 @@
 - Fix: case.json now always materializes the absolute collection window (even for the relative default), and pre-v2.94 cases are anchored to their collection time on open. hayabusa is given a now-relative offset that covers the anchored span.
 
 
+
+## v2.96 - report UI polish + visual bug fixes
+
+- Light theme: verdict banner no longer dark-on-dark (level-tinted light backgrounds for .v4/.v3/.v2/.v1 + do-now); chips and tactic pills get light-theme colors.
+- Correlated entities: verdict-first card order (HIGH outranks higher-category MEDIUM cards); duplicate "showing first N" meta removed (Add-CapNote only); account cards sorted busiest-first and SIDs resolve to DOMAIN\name (SID kept in parens).
+- Sigma: severity-first sort for the top table AND drill-down cards (a high-level rule can no longer rank below low-volume low rules); hits break ties.
+- Execution stacks: one path per line (the '; ' join produced giant mid-word-wrapped blobs); pathless note moves to its own line.
+- Snapshot: Defender status line colorizes False / stale-signature values; stored credentials render Target/Type/User columns (was a raw Name=Value dump); App focus switches resolve SIDs to DOMAIN\name.
+- Activity picture: hour axis labels (00/06/12/18) under the heatmap grid - hover-only counts left it unreadable.
+- Lead cards: duplicate evidence chips deduped (Select-Object -Unique).
+- Suite: test_v256 9c pin re-cut (Add-CapNote note), test_evidence_index fixture fixed to the real cmdkey schema (Target,Type,User).
+
 ## v2.95 - collection expansion + robustness (batches E + D8)
 
 - New evtx exports: WMI-Activity/Operational (5857/5860/5861), Windows AppLocker (8002/8003/8004 + 8001 EXE dll, 8006/8007), Microsoft-Windows-WinRM/Operational (91/163), Security NTLM (8001/8002) + Schannel (36880/36888), Microsoft-Windows-Bits-Client/Operational (59/60), Microsoft-Windows-WDAC/Operational (3076/3077). New module 4.14 parses them into wmi_activity.csv, applocker_events.csv, winrm_events.csv, ntlm_events.csv, bits_events.csv, wdac_events.csv (honest 'source absent' when the log does not exist).
