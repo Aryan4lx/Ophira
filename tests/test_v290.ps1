@@ -31,7 +31,7 @@ Check "useract: last-seen uses parsed ticks (uaTicks)" (([regex]::Matches($src, 
 # engine: the port bridge must NOT pull the proxy client into the dossier
 # ============================================================================
 $defs = ''
-foreach ($n in @('Open-CaseSession', 'Invoke-FocusEngine', 'Invoke-FocusCore')) {
+foreach ($n in @('Open-CaseSession', 'Invoke-FocusEngine', 'Invoke-FocusCore', 'New-ClipCell')) {
     $m = [regex]::Match($src, "(?s)function $n \{.*?\r?\n\}")
     if (-not $m.Success) { throw "extract failed: $n" }
     $defs += $m.Value + "`r`n"

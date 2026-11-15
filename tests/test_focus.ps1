@@ -46,7 +46,7 @@ Check "detail json: lineage + respawn persisted for the report embed" (($src -ma
 # engine behavior on a synthetic multi-instance + masquerade case
 # ============================================================================
 $defs = ''
-foreach ($n in @('Open-CaseSession', 'Invoke-FocusEngine', 'Invoke-FocusCore')) {
+foreach ($n in @('Open-CaseSession', 'Invoke-FocusEngine', 'Invoke-FocusCore', 'New-ClipCell')) {
     $m = [regex]::Match($src, "(?s)function $n \{.*?\r?\n\}")
     if (-not $m.Success) { throw "extract failed: $n" }
     $defs += $m.Value + "`r`n"
@@ -287,6 +287,7 @@ $StartTime = Get-Date; $script:DeltaCount = 0; $script:ShareOk = $false
 $script:EndpointAdmin = $true
 function Test-IsAdmin { $true }
 function Write-CaseLog { param([string]$Message, [string]$Color = 'Gray') }
+function New-ClipCell { param([string]$Text, [string]$TdClass = 'clip path', [int]$Threshold = 120, [int]$MaxFull = 4000) $full = "$Text"; if ($full.Length -gt $MaxFull) { $full = $full.Substring(0, $MaxFull) + '...' }; return $full }
 $script:Verdict = Get-CompromiseVerdict
 $null = New-HtmlReport
 $rep = Get-Content -LiteralPath (Join-Path $case 'report.html') -Raw

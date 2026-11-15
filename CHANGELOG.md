@@ -5,6 +5,13 @@
 
 
 
+
+## v2.97 - interactive UI audit fixes (agent-browser-driven)
+
+- Scrollspy highlighted the wrong section (grouped nav order != document order: jumping to Hunt lit 'Drivers'): spy now sorts anchor offsetTops into document order and highlights the true current section.
+- Light/dark theme now persists per browser (localStorage oph_theme) and applies before first paint (no dark flash on light users).
+- Focus dossier: full interaction layer added (was zero <script> in v2.95 output) - click-to-copy cells with show-all expansion (9 on the ref case), copy toast, SVG node <title> tooltips, dossier reading guide.
+
 ## v2.96 - report UI polish + visual bug fixes
 
 - Light theme: verdict banner no longer dark-on-dark (level-tinted light backgrounds for .v4/.v3/.v2/.v1 + do-now); chips and tactic pills get light-theme colors.

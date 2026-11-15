@@ -1,5 +1,5 @@
 <#
-Ophira v2.96  -  Windows Incident Response Triage Toolkit
+Ophira v2.97  -  Windows Incident Response Triage Toolkit
 READ-ONLY by design: never modifies the system, only reads and copies data
 into its own output folder. Intended to be handed to a system owner or run
 by a responder during early triage / threat hunting.
@@ -363,7 +363,7 @@ param(
     [switch]$ExitVerdict
 )
 
-$ScriptVersion = "2.96"
+$ScriptVersion = "2.97"
 $ErrorActionPreference = 'Continue'
 $ProgressPreference = 'SilentlyContinue'
 
@@ -8736,14 +8736,18 @@ h3{font-size:13.5px;margin:20px 0 8px;color:var(--tx)}
       // expands every truncated cell (server-side preview + full text in data-full) in place
       // and remembers the originals - also used to expand/restore around printing so paper
       // always carries the full text, never the preview.
-      function themeToggle(){var b=document.body;if(b.getAttribute('data-theme')==='light'){b.removeAttribute('data-theme');}else{b.setAttribute('data-theme','light');}}
+      // v2.97: theme persisted like the sidebar (oph_theme) - the old toggle reset on reload
+      function themeToggle(){var b=document.body;if(b.getAttribute('data-theme')==='light'){b.removeAttribute('data-theme');try{localStorage.setItem('oph_theme','dark');}catch(e){}}else{b.setAttribute('data-theme','light');try{localStorage.setItem('oph_theme','light');}catch(e){}}}
+      try{if(localStorage.getItem('oph_theme')==='light'){document.body.setAttribute('data-theme','light');}}catch(e){}
       // v2.88: sidebar collapse - persisted like the theme; floating Menu button reopens it
       function sbToggle(){var b=document.body;if(b.classList.contains('nosb')){b.classList.remove('nosb');try{localStorage.setItem('oph_sb','1');}catch(e){}}else{b.classList.add('nosb');try{localStorage.setItem('oph_sb','0');}catch(e){}}}
       try{if(localStorage.getItem('oph_sb')==='0'){document.body.classList.add('nosb');}}catch(e){}
       // v2.89: scrollspy - highlight the sidebar entry of the section being read
+      // v2.97: pairs sorted by DOCUMENT offsetTop - the grouped nav order is not the document
+      // order, so the old index-walk highlighted the wrong section (scrolled to Hunt showed Drivers)
       var spLinks=[].slice.call(document.querySelectorAll('.nav a[href^="#"]'));
-      var spSecs=spLinks.map(function(a){return document.querySelector("a[name='"+a.getAttribute('href').slice(1)+"']");});
-      window.addEventListener('scroll',function(){var y=window.scrollY+90,cur=-1;for(var i=0;i<spSecs.length;i++){if(spSecs[i]&&spSecs[i].offsetTop<=y){cur=i;}}spLinks.forEach(function(a,i){a.classList.toggle('act',i===cur);});},{passive:true});
+      var spPairs=[];spLinks.forEach(function(a){var t=document.querySelector("a[name='"+a.getAttribute('href').slice(1)+"']");if(t)spPairs.push({t:t.offsetTop,a:a});});spPairs.sort(function(x,y){return x.t-y.t;});
+      window.addEventListener('scroll',function(){var y=window.scrollY+90,cur=null;spPairs.forEach(function(p){if(p.t<=y)cur=p.a;});spLinks.forEach(function(a){a.classList.toggle('act',a===cur);});},{passive:true});
       // v2.92: global expand/collapse without the save/restore corruption - state lives on
       // body[data-full] and every swap targets the span only; button labels follow the state.
       function ophFullState(on){
@@ -14265,7 +14269,9 @@ function Invoke-FocusCore {
             [void]$g.AppendLine("<line x1='$x1' y1='$y1' x2='$x2' y2='$y2' stroke='$st' stroke-width='1'/>")
         }
         foreach ($n in $nodes) {
-            [void]$g.AppendLine("<rect x='$($n.X)' y='$($n.Y)' width='$($n.W)' height='$($n.H)' rx='6' fill='$($n.Fill)' stroke='$($n.Stroke)'/>")
+            # v2.97: <title> per node - full (unclipped) label+sub on hover; clipped text stays visible
+            $ttl = (& $E2 ("$($n.Label)$([char]10)$($n.Sub)".Trim()))
+            [void]$g.AppendLine("<rect x='$($n.X)' y='$($n.Y)' width='$($n.W)' height='$($n.H)' rx='6' fill='$($n.Fill)' stroke='$($n.Stroke)'><title>$ttl</title></rect>")
             if ($n.Sub) {
                 [void]$g.AppendLine("<text x='$($n.X + 10)' y='$($n.Y + 17)' fill='#e0e6ee' font-size='12' font-family='Segoe UI,sans-serif'>$(& $E2 $n.Label)</text>")
                 [void]$g.AppendLine("<text x='$($n.X + 10)' y='$($n.Y + 33)' fill='#8a97a8' font-size='10' font-family='Segoe UI,sans-serif'>$(& $E2 $n.Sub)</text>")
@@ -14281,8 +14287,10 @@ function Invoke-FocusCore {
     if ($hits.Count -gt 0) {
         # v2.56: $hint/$hintCls/$hintTxt computed once before the JSON write - reused here
         $h = New-Object System.Text.StringBuilder
-        [void]$h.AppendLine("<!DOCTYPE html><html><head><meta charset='utf-8'><title>Ophira focus - $Indicator</title><style>body{background:#141821;color:#cdd3dc;font:13px/1.45 'Segoe UI',sans-serif;margin:20px}h1{color:#eee;font-size:20px}h2{color:#7ab;font-size:15px;border-bottom:1px solid #2a3040;padding-bottom:4px;margin-top:26px}h3{color:#9bd;font-size:13px;margin-top:18px}table{border-collapse:collapse;margin:8px 0;width:100%}th,td{border:1px solid #2a3040;padding:4px 8px;text-align:left;vertical-align:top}th{background:#1d2330;color:#9ab}.path{font-family:Consolas,monospace;font-size:12px;word-break:break-all}td{word-break:break-word}.banner{padding:12px 16px;border-radius:6px;margin:12px 0;font-weight:bold}.crit{background:#3a1518;color:#f88;border:1px solid #722}.med{background:#33290f;color:#fc6;border:1px solid #663}.info{background:#1d2330;color:#8ac;border:1px solid #345}.meta{color:#788;font-size:12px;margin:6px 0}.warn{color:#fc6}</style></head><body>")
+        [void]$h.AppendLine("<!DOCTYPE html><html><head><meta charset='utf-8'><title>Ophira focus - $Indicator</title><style>body{background:#141821;color:#cdd3dc;font:13px/1.45 'Segoe UI',sans-serif;margin:20px}h1{color:#eee;font-size:20px}h2{color:#7ab;font-size:15px;border-bottom:1px solid #2a3040;padding-bottom:4px;margin-top:26px}h3{color:#9bd;font-size:13px;margin-top:18px}table{border-collapse:collapse;margin:8px 0;width:100%}th,td{border:1px solid #2a3040;padding:4px 8px;text-align:left;vertical-align:top}th{background:#1d2330;color:#9ab}.path{font-family:Consolas,monospace;font-size:12px;word-break:break-all}td{word-break:break-word}.banner{padding:12px 16px;border-radius:6px;margin:12px 0;font-weight:bold}.crit{background:#3a1518;color:#f88;border:1px solid #722}.med{background:#33290f;color:#fc6;border:1px solid #663}.info{background:#1d2330;color:#8ac;border:1px solid #345}.meta{color:#788;font-size:12px;margin:6px 0}.warn{color:#fc6}td.clip{cursor:copy}td.clip .cpv{word-break:break-all}.swall{background:#1d2330;border:1px solid #3a4a63;color:#8ac;border-radius:4px;padding:1px 8px;cursor:pointer;font-size:11px;margin-top:3px}#copied{position:fixed;bottom:14px;right:14px;background:#12301e;color:#7ee2a8;padding:8px 14px;border-radius:8px;display:none;z-index:99;font-size:12px;font-weight:700}</style></head><body>")
         [void]$h.AppendLine("<h1>FOCUS DOSSIER - $(& $esc $Indicator)</h1>")
+        # v2.97: reading guide - users could not tell what relates to what or what is interactive
+        [void]$h.AppendLine("<div class='meta'>How to read this dossier, top to bottom: verdict banner &gt; activity graph (each instance red, parents on the left, what it did on the right) &gt; entity groups (same-hash = same file; same-name-only = verify before merging) &gt; instances &gt; per-instance detail tables &gt; per-source evidence sections. Click any long path/command to copy it; <b>show all</b> expands it in place. Full data: focus\focus_hits.csv and focus\focus_chain.csv.</div>")
         [void]$h.AppendLine("<div class='meta'>Host: $(& $esc $meta.Computer) | Case: $(& $esc $meta.CaseID) | Generated: $((Get-Date).ToUniversalTime().ToString('u')) | Ophira v$ScriptVersion | $($hits.Count) evidence row(s) in $($round) round(s) | entity terms: $($names.Count) name / $($paths.Count) path / $($hashes.Count) hash</div>")
         if ($afterDT -or $beforeDT) {
             # v2.73: surface the window honestly - the suppressed count covers out-of-window
@@ -14346,7 +14354,7 @@ function Invoke-FocusCore {
             if ($pd.Children.Count -gt 0) {
                 [void]$h.AppendLine("<h4>Child processes ($($pd.Children.Count))</h4><table><tr><th>Time</th><th>Child</th><th>PID</th><th>User</th><th>CommandLine</th></tr>")
                 foreach ($x in @($pd.Children | Select-Object -First 25)) {
-                    [void]$h.AppendLine("<tr><td>$(& $esc $x.Time)</td><td class='path'>$(& $esc $x.Image)</td><td>$(& $esc $x.ProcessId)</td><td>$(& $esc $x.User)</td><td>$(& $esc $x.CommandLine)</td></tr>")
+                    [void]$h.AppendLine("<tr><td>$(& $esc $x.Time)</td><td class='path'>$(& $esc $x.Image)</td><td>$(& $esc $x.ProcessId)</td><td>$(& $esc $x.User)</td><td>$(New-ClipCell $x.CommandLine 'clip' 100)</td></tr>")
                 }
                 [void]$h.AppendLine("</table>")
             }
@@ -14389,7 +14397,7 @@ function Invoke-FocusCore {
             if ($pd.Persist.Count -gt 0) {
                 [void]$h.AppendLine("<h4>Persistence ($($pd.Persist.Count))</h4><table><tr><th>Time</th><th>Mechanism</th><th>Detail</th></tr>")
                 foreach ($x in @($pd.Persist | Select-Object -First 25)) {
-                    [void]$h.AppendLine("<tr><td>$(& $esc $x.Time)</td><td>$(& $esc $x.Kind)</td><td class='path'>$(& $esc $x.Detail)</td></tr>")
+                    [void]$h.AppendLine("<tr><td>$(& $esc $x.Time)</td><td>$(& $esc $x.Kind)</td><td>$(New-ClipCell $x.Detail 'clip path' 100)</td></tr>")
                 }
                 [void]$h.AppendLine("</table>")
             }
@@ -14410,7 +14418,7 @@ function Invoke-FocusCore {
             if ($pd.Dns.Count -gt 0) {
                 [void]$h.AppendLine("<h4>DNS queries ($($pd.Dns.Count))</h4><table><tr><th>Time</th><th>Query</th><th>Results</th></tr>")
                 foreach ($x in @($pd.Dns | Select-Object -First 25)) {
-                    [void]$h.AppendLine("<tr><td>$(& $esc $x.Time)</td><td class='path'>$(& $esc $x.QueryName)</td><td class='path'>$(& $esc $x.QueryResults)</td></tr>")
+                    [void]$h.AppendLine("<tr><td>$(& $esc $x.Time)</td><td class='path'>$(& $esc $x.QueryName)</td><td>$(New-ClipCell $x.QueryResults 'clip path' 100)</td></tr>")
                 }
                 [void]$h.AppendLine("</table>")
             }
@@ -14452,7 +14460,7 @@ function Invoke-FocusCore {
             if ($pd.Exec.Count -gt 0) {
                 [void]$h.AppendLine("<h4>Execution artifacts ($($pd.Exec.Count)) - prefetch/amcache/BAM/shimcache: when else this binary ran (the no-Sysmon spine)</h4><table><tr><th>Time</th><th>Artifact</th><th>Detail</th></tr>")
                 foreach ($x in @($pd.Exec | Select-Object -First 25)) {
-                    [void]$h.AppendLine("<tr><td>$(& $esc $x.Time)</td><td>$(& $esc $x.Kind)</td><td class='path'>$(& $esc $x.Detail)</td></tr>")
+                    [void]$h.AppendLine("<tr><td>$(& $esc $x.Time)</td><td>$(& $esc $x.Kind)</td><td>$(New-ClipCell $x.Detail 'clip path' 100)</td></tr>")
                 }
                 [void]$h.AppendLine("</table>")
             }
@@ -14460,7 +14468,7 @@ function Invoke-FocusCore {
         if ($chain.Count -gt 0) {
             [void]$h.AppendLine("<h2>Activity chain (master timeline filtered to the entity set, oldest first)</h2><table><tr><th>Timestamp</th><th>Source</th><th>Type</th><th>Actor</th><th>Entity</th><th>Detail</th></tr>")
             foreach ($c in @($chain | Select-Object -First 300)) {
-                [void]$h.AppendLine("<tr><td>$(& $esc $c.Timestamp)</td><td>$(& $esc $c.Source)</td><td>$(& $esc $c.Type)</td><td>$(& $esc $c.Actor)</td><td class='path'>$(& $esc $c.Entity)</td><td>$(& $esc $c.Detail)</td></tr>")
+                [void]$h.AppendLine("<tr><td>$(& $esc $c.Timestamp)</td><td>$(& $esc $c.Source)</td><td>$(& $esc $c.Type)</td><td>$(& $esc $c.Actor)</td><td class='path'>$(& $esc $c.Entity)</td><td>$(New-ClipCell $c.Detail 'clip path' 120)</td></tr>")
             }
             [void]$h.AppendLine("</table><div class='meta'>Full chain: focus\focus_chain.csv ($($chain.Count) row(s))</div>")
         }
@@ -14485,12 +14493,39 @@ function Invoke-FocusCore {
             if ($secHits.Count -eq 0) { continue }
             [void]$h.AppendLine("<h2>$($sec.Title) ($($secHits.Count))</h2><table><tr><th>Time</th><th>Source</th><th>Matched on</th><th>Detail</th></tr>")
             foreach ($x in @($secHits | Sort-Object { "$($_.Time)" } | Select-Object -First 200)) {
-                $brSeg = (("$($x.Detail)" -split ' \| ') | ForEach-Object { & $esc $_ }) -join '<br>'
+                $brSeg = (($(New-ClipCell $x.Detail 'clip' 200)) -replace '^<td[^>]*>', '' -replace '</td>$', '')
                 [void]$h.AppendLine("<tr><td>$(& $esc $x.Time)</td><td>$(& $esc $x.Source)</td><td>$(& $esc $x.MatchedOn)</td><td>$brSeg</td></tr>")
             }
             [void]$h.AppendLine("</table>")
         }
         [void]$h.AppendLine("<div class='meta'>Rebuild: <b>Ophira.ps1 -Mode Focus -ParsePath &lt;case&gt; -ProcessName &lt;indicator&gt;</b> (name, PID, path, hash, IP, ip:port or port). Chain CSV: focus\focus_chain.csv - raw hits: focus\focus_hits.csv</div>")
+        # v2.97 (B6): the focus page previously shipped with ZERO script - long values were
+        # permanently truncated with no recovery. Same interaction layer as the main report:
+        # click long cell = copy (with honest toast fallback), show-all button = expand in place.
+        $focusJs = @'
+    <script>
+    (function(){
+    var toast=function(ok,n){var el=document.getElementById('copied');if(!el)return;el.textContent=ok?('copied '+n+' chars to clipboard'):('copy failed - select the text manually ('+n+' chars)');el.style.display='block';setTimeout(function(){el.style.display='none';},1600);};
+    document.querySelectorAll('td.clip[data-full]').forEach(function(t){
+     var f=t.getAttribute('data-full');
+     if(!t.querySelector('.swall')){
+      var b=document.createElement('button');b.className='swall';b.type='button';b.textContent='show all';
+      b.addEventListener('click',function(ev){ev.stopPropagation();var sp=t.querySelector('.cpv')||t;var n=parseInt(t.getAttribute('data-prevn'))||120;var open=t.classList.toggle('open');sp.textContent=open?f:(f.length>n?f.substring(0,n)+'...':f);b.textContent=open?'show less':'show all';});
+      t.appendChild(b);
+     }
+    });
+    document.addEventListener('click',function(e){
+     if(e.target.closest&&e.target.closest('.swall'))return;
+     var t=e.target.closest?e.target.closest('td.clip[data-full]'):null;
+     if(!t)return;
+     var txt=t.getAttribute('data-full')||t.textContent;
+     if(navigator.clipboard&&navigator.clipboard.writeText){navigator.clipboard.writeText(txt).then(function(){toast(true,txt.length);},function(){toast(false,txt.length);});}else{toast(false,txt.length);}
+    });
+    })();
+    </script>
+'@
+        [void]$h.AppendLine($focusJs)
+        [void]$h.AppendLine("<div id='copied'></div>")
         [void]$h.AppendLine("</body></html>")
         Set-Content -LiteralPath (Join-Path $focusDir 'focus_report.html') -Value $h.ToString() -Encoding UTF8
     }
