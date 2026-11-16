@@ -363,7 +363,7 @@ param(
     [switch]$ExitVerdict
 )
 
-$ScriptVersion = "2.99"
+$ScriptVersion = "3.0"
 $ErrorActionPreference = 'Continue'
 $ProgressPreference = 'SilentlyContinue'
 
@@ -1301,6 +1301,7 @@ function Show-ToolLinks {
         [pscustomobject]@{ Tool = 'AmcacheParser (EZ)'; Url = 'https://github.com/EricZimmerman/AmcacheParser/releases'; Use = 'module 8.4 execution inventory + SHA1 x IOC' }
         [pscustomobject]@{ Tool = 'RBCmd (EZ)'; Url = 'https://github.com/EricZimmerman/RBCmd/releases'; Use = 'module 8.4 recycle bin parse' }
         [pscustomobject]@{ Tool = 'yara-x (binary scanning)'; Url = 'https://github.com/VirusTotal/yara-x/releases'; Use = 'module 4.7 YARA scan of flagged binaries; bundled pack in tools\yara\rules' }
+        [pscustomobject]@{ Tool = 'YARA Forge (curated rule packs)'; Url = 'https://github.com/Neo23x0/YaraForge/releases'; Use = 'quality-filtered community rules (conservative pack) merged into the module 4.7 scan' }
         [pscustomobject]@{ Tool = 'MFTECmd (EZ)'; Url = 'https://ericzimmerman.github.io/'; Use = 'module 5.5 live $MFT + USN journal forensics' }
         [pscustomobject]@{ Tool = 'PECmd (EZ)'; Url = 'https://ericzimmerman.github.io/'; Use = 'module 5.1 prefetch parse (run counts)' }
         [pscustomobject]@{ Tool = 'LECmd (EZ)'; Url = 'https://ericzimmerman.github.io/'; Use = 'module 8.5 LNK parse (Recent docs)' }
@@ -1341,6 +1342,7 @@ function Invoke-SetupMode {
         [pscustomobject]@{ Name = 'EvtxECmd';    Direct = 'https://download.ericzimmermanstools.com/EvtxECmd.zip'; Zip = $true; Target = 'analyst' }
         [pscustomobject]@{ Name = 'loldrivers';  Raw = @('https://raw.githubusercontent.com/magicsword-io/LOLDrivers/main/detections/hashes/samples_malicious.sha256', 'https://raw.githubusercontent.com/magicsword-io/LOLDrivers/main/detections/hashes/samples_vulnerable.sha256'); Zip = $false; Target = 'endpoint' }
         [pscustomobject]@{ Name = 'yara';        Repo = 'VirusTotal/yara-x';                 Pattern = '^yara-x-v[\d\.]+-x86_64-pc-windows-msvc\.zip$'; Zip = $true; Target = 'endpoint' }
+        [pscustomobject]@{ Name = 'yaraforge';   Repo = 'Neo23x0/YaraForge';                 Pattern = '(?i)conservative.*\.zip$'; Zip = $true; Target = 'endpoint' }
     )
     $installed = @()
     foreach ($t in $catalog) {
@@ -3682,7 +3684,19 @@ $script:Modules = @(
             if (-not $yr) { Write-CaseLog "    yr.exe not in tools\ - skipping (run Setup, tool 'yara')" 'DarkGray'; return }
             $rulesDir = Join-Path $yr.DirectoryName 'rules'
             if (-not (Test-Path -LiteralPath $rulesDir)) { Write-CaseLog "    no rules\ folder next to yr.exe - skipping" 'DarkGray'; return }
-            $ruleFiles = @(Get-ChildItem -LiteralPath $rulesDir -Recurse -File -Include '*.yar', '*.yara' -ErrorAction SilentlyContinue)
+            # v3.0: YARA Forge rule packs (Setup entry 'yaraforge') scan as a second rules dir
+            $forgeDir = $null
+            if (Get-Command Get-KitRoot -ErrorAction SilentlyContinue) {
+                $fdRoot = Get-KitRoot
+                $fd2 = Join-Path (Join-Path $fdRoot 'tools\endpoint') 'yaraforge'
+                if (Test-Path -LiteralPath $fd2) { $forgeDir = $fd2 }
+            }
+            $scanDirs = @($rulesDir)
+            if ($forgeDir) {
+                $forgeFiles = @(Get-ChildItem -LiteralPath $forgeDir -Recurse -File -Include '*.yar', '*.yara' -ErrorAction SilentlyContinue)
+                if ($forgeFiles.Count -gt 0) { $scanDirs += $forgeDir; Write-CaseLog "    yara forge: $($forgeFiles.Count) curated rule file(s) (Neo23x0/YaraForge conservative pack)" 'Cyan' }
+            }
+            $ruleFiles = @(Get-ChildItem -Path $scanDirs -Recurse -File -Include '*.yar', '*.yara' -ErrorAction SilentlyContinue)
             if ($ruleFiles.Count -eq 0) { Write-CaseLog "    rules\ contains no .yar files - skipping" 'DarkGray'; return }
 
             $seen = @{}
@@ -3712,13 +3726,14 @@ $script:Modules = @(
             $scanned = New-Object System.Collections.Generic.List[object]
             $failed = 0
             foreach ($f2 in $scanList) {
-                $res = Invoke-NativeTool -ExePath $yr.FullName -ToolArgs @('scan', '-m', '--output-format=ndjson', $rulesDir, $f2) -WorkingDirectory $yr.DirectoryName -QuietLog -CaptureOut
+                $hitRules = @()
+                foreach ($sd in $scanDirs) {
+                $res = Invoke-NativeTool -ExePath $yr.FullName -ToolArgs @('scan', '-m', '--output-format=ndjson', $sd, $f2) -WorkingDirectory $yr.DirectoryName -QuietLog -CaptureOut
                 if ($res -isnot [pscustomobject] -or $res.ExitCode -ne 0) {
                     $failed++
                     if ($failed -eq 1 -and $res -is [pscustomobject] -and $res.StdErr) { Write-CaseLog "    yr.exe error: $(($res.StdErr -split '\r?\n' | Where-Object { $_ } | Select-Object -First 1))" 'DarkYellow' }
                     continue
                 }
-                $hitRules = @()
                 if ($res.StdOut) {
                     foreach ($ln in ($res.StdOut -split "`r?`n" | Where-Object { $_ -match '^\s*\{' })) {
                         try { $j = $ln | ConvertFrom-Json } catch { continue }
@@ -3741,6 +3756,7 @@ $script:Modules = @(
                 $sha = ''
                 try { $fi = Get-Item -LiteralPath $f2 -ErrorAction Stop; if ($fi.Length -lt 200MB) { $sha = (Get-FileHash -LiteralPath $f2 -Algorithm SHA256 -ErrorAction SilentlyContinue).Hash } } catch { }
                 $scanned.Add([pscustomobject]@{ File = $f2; SHA256 = $sha; Hits = $hitRules.Count; Rules = ($hitRules -join ';') })
+                }
             }
             Save-Rows -Name 'yara_hits' -Rows $hits.ToArray()
             Save-Rows -Name 'yara_scanned' -Rows $scanned.ToArray()

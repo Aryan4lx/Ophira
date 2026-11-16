@@ -8,6 +8,15 @@
 
 
 
+
+## v3.0 - curated rule packs + professional surface (world-class pass 1)
+
+- YARA Forge integration: Setup catalog gains a 'yaraforge' entry (Neo23x0/YaraForge, conservative quality-filtered pack). Module 4.7 now scans BOTH the bundled tools\yara\rules and tools\endpoint\yaraforge as a second rules directory (per-file two-pass scan, hits merged; pack size logged at collection time).
+- Report noise floor: sigma drill-down tables honor an optional per-case csv\sigma\suppress.txt (one rule title per line, # comments) - suppressed rows stay in the CSVs but leave the rendered report with a '+N hidden as routine noise' honesty note.
+- Sigma drill-downs: rule title / ATT&CK tactic cells now link to the matching drill-down (a-drill data-rule) when the rule has a rendered table.
+- Branding: header/tagline/nav/footer now say 'Windows Endpoint Triage Toolkit' (no 'IR toolkit' overclaim); version 3.0.
+- Design v3: layered body gradient + reduced header radius, h2 accent bars, verdict hero gradient + left rail, blurred translucent topbar, nav active-state gradient rail; print styles intact.
+
 ## v2.99 - branding, tactic drill-downs, Sigma noise suppression, design v3
 
 - Branding: "IR triage" wording replaced with "endpoint triage" across the header, help text, TUI banners and the report sidebar brand (v2.98 version-pin miss also corrected - the 2.98 commit shipped with $ScriptVersion still 2.97; version pins in tests are now prefix-based so this cannot recur).
