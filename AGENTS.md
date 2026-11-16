@@ -1,4 +1,4 @@
-# AGENTS.md — conventions for coding agents working on this repo
+﻿# AGENTS.md — conventions for coding agents working on this repo
 
 ## What this is
 Ophira: **single-file** PowerShell 5.1 Windows IR triage toolkit (`Ophira.ps1`, ~4000 lines). READ-ONLY by design (only reads/copies; Setup downloads tools). Committed companion binaries live in `tools\` - split into `tools\endpoint\` (shipped by Deploy `-PushTools`, packed per-entry via `Compress-ToolZip` because Defender blocks bulk-zipping some Sigma `.yml`) and `tools\analyst\` (vol3, SQLECmd - never shipped). `collections/`, `*.zip`, `OPHIRA_*/`, `tools/iocs.txt`, `tools/KAPE/` are gitignored.
@@ -39,3 +39,11 @@ CI (GitHub Actions, `windows-latest`) runs the same suite on every push.
 ## Floor & dependencies
 - Targets PowerShell 5.1 (hard floor 5.0, enforced by startup gate). No PS6+ syntax. .NET-native tool calls go through `Invoke-NativeTool` (console-less, optional `-CaptureOut`).
 - New parsers must degrade gracefully: tool missing / not elevated → log + skip + coverage row shows missing (never crash a module).
+
+## Agent skills
+
+### Issue tracker
+GitHub Issues on Aryan4lx/Ophira via the `gh` CLI; prerelease-tagged release line (see the file for the release convention). See `docs/agents/issue-tracker.md`.
+
+### Domain docs
+Single-context: `GLOSSARY.md` at the repo root + `docs/adr/` (4 ADRs: single-file architecture, read-only + derived artifacts, honesty over signal volume, prerelease-until-blessed). Read before planning work. See `docs/agents/domain.md`.
