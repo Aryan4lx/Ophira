@@ -121,7 +121,7 @@ Check 'D8c: Get-FilteredEvents invariant' ($src.Contains("TimeCreated = `$e.Time
 Check 'D7f: mapped-prefix strip count' (([regex]::Matches($src, [regex]::Escape('(?i)^::ffff:'))).Count -ge 3)
 
 # ---- P7: version
-Check 'version: header bumped' ($src.Contains('Ophira v2.9'))
+Check 'version: header bumped' ($src.Contains('Ophira v3.'))
 Check 'version: ScriptVersion 3.x' ($src.Contains('$ScriptVersion = "3.'))
 
 Write-Host ''
