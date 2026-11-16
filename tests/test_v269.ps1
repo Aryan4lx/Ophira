@@ -242,7 +242,7 @@ Check "F2: bareLaunch loop renders Help then returns to menu (no exit)" ($src.Co
 $repoEntriesBefore = @(Get-ChildItem -LiteralPath $repo | ForEach-Object { $_.Name })
 $hOut = (& powershell.exe -NoProfile -ExecutionPolicy Bypass -File (Join-Path $repo 'Ophira.ps1') -Mode Help 2>&1 | Out-String)
 Check "F2 run: -Mode Help exits 0" ($LASTEXITCODE -eq 0)
-Check "F2 run: synopsis text in output" ($hOut -match 'single-file Windows incident response triage toolkit')
+Check "F2 run: synopsis text in output" ($hOut -match 'single-file Windows endpoint triage toolkit')
 $hEx = [regex]::Matches($hOut, 'EXAMPLE \d+').Count
 Check "F2 run: >= 8 EXAMPLE headers rendered ($hEx)" ($hEx -ge 8)
 Check "F2 run: no module-run artifacts (no 'Phase', no task menu)" (-not ($hOut -cmatch 'Phase') -and -not ($hOut -match 'What do you want to do\?'))
@@ -253,7 +253,7 @@ Check "F2 run: side-effect free (nothing created in the repo)" ($created.Count -
 # E5: Get-Help discovery smoke - PowerShell recognizes the script help against the file path
 $scriptPath = Join-Path $repo 'Ophira.ps1'
 $gh = (& powershell.exe -NoProfile -Command "Get-Help '$scriptPath' -Full | Out-String") -join "`n"
-Check "F2 get-help: Get-Help renders SYNOPSIS from the file (no exception)" ($gh -match '(?m)SYNOPSIS' -and $gh -match 'single-file Windows incident response triage toolkit')
+Check "F2 get-help: Get-Help renders SYNOPSIS from the file (no exception)" ($gh -match '(?m)SYNOPSIS' -and $gh -match 'single-file Windows endpoint triage toolkit')
 
 Write-Host ""
 Write-Host "RESULT: $pass passed, $fail failed" -ForegroundColor $(if ($fail -eq 0) { 'Green' } else { 'Red' })

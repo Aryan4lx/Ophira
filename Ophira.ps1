@@ -1,5 +1,5 @@
 <#
-Ophira v2.97  -  Windows Incident Response Triage Toolkit
+Ophira v2.99  -  Windows Endpoint Triage Toolkit
 READ-ONLY by design: never modifies the system, only reads and copies data
 into its own output folder. Intended to be handed to a system owner or run
 by a responder during early triage / threat hunting.
@@ -7,7 +7,7 @@ by a responder during early triage / threat hunting.
 
 <#
 .SYNOPSIS
-    Ophira - single-file Windows incident response triage toolkit for Windows
+    Ophira - single-file Windows endpoint triage toolkit for Windows
     endpoints (PowerShell 5.0+, zero dependencies).
 
 .DESCRIPTION
@@ -363,7 +363,7 @@ param(
     [switch]$ExitVerdict
 )
 
-$ScriptVersion = "2.97"
+$ScriptVersion = "2.99"
 $ErrorActionPreference = 'Continue'
 $ProgressPreference = 'SilentlyContinue'
 
@@ -5980,6 +5980,28 @@ function New-HtmlReport {
         $hayRows = @(Remove-SigmaDuplicateEvents $hayRows | Where-Object { -not (Test-SigmaSelfNoise $_) })
     }
     $execRows = @(Import-CaseCsv 'execution_timeline.csv')
+    # v2.99: report-layer noise suppression - tools\sigma\suppress.txt lists rule titles that
+    # drown the report (default: Credential Manager vault reads, which fire hundreds of times
+    # a day from normal app behavior). The CSV keeps every row (verdict + analytics untouched);
+    # the report hides the listed rules behind one aggregate line per rule. Delete a line (or
+    # the file) to bring a rule back - never a silent drop, always counted.
+    $sigmaSuppressed = @{}
+    $suppressFile = $null
+    if (Get-Command Get-ToolsDir -ErrorAction SilentlyContinue) { $td9 = Get-ToolsDir; if ($td9) { $suppressFile = Join-Path $td9 'sigma\suppress.txt' } }
+    if ($suppressFile -and (Test-Path $suppressFile)) {
+        $supNames = @(Get-Content $suppressFile | Where-Object { $_ -and -not ($_.StartsWith('#')) } | ForEach-Object { $_.Trim() })
+        if ($supNames.Count -gt 0) {
+            $supSet = @{}
+            foreach ($sn in $supNames) { $supSet[$sn.ToLower()] = $true }
+            # rule-title column detection (same candidates the sigma section scans)
+            $supCol = $null
+            foreach ($cand in @('RuleTitle', 'Alert', 'Rule')) { if (@($hayRaw).Count -gt 0 -and @($hayRaw)[0].PSObject.Properties[$cand]) { $supCol = $cand; break } }
+            if ($supCol) {
+                foreach ($h6 in @($hayRaw)) { $rn6 = "$($h6.$supCol)"; if ($rn6 -and $supSet.ContainsKey($rn6.ToLower())) { $sigmaSuppressed[$rn6] = 1 + [int]$sigmaSuppressed[$rn6] } }
+                $hayRows = @($hayRows | Where-Object { $rn7 = "$($_.$supCol)"; -not ($rn7 -and $supSet.ContainsKey($rn7.ToLower())) })
+            }
+        }
+    }
     $brute = @(Import-CaseCsv 'security_bruteforce_candidates.csv')
     $pubConns = @(Import-CaseCsv 'flash_public_connections.csv')
     $connDns = @(Import-CaseCsv 'connections_dns.csv')
@@ -6048,50 +6070,54 @@ function New-HtmlReport {
 <style>
 :root{--bg:#0b0e14;--bg2:#121622;--bg3:#1a2030;--line:#232b3d;--line2:#313c55;--tx:#e6edf7;--tx2:#9aa8c0;--tx3:#6b7691;--acc:#7aa2f7;--ok:#4cc38a;--warn:#e0af68;--bad:#f7768e;--info:#7dcfff}
 [data-theme=light]{--bg:#f6f7fa;--bg2:#ffffff;--bg3:#eef1f6;--line:#dce1ea;--line2:#c7d0dd;--tx:#181e2c;--tx2:#525d76;--tx3:#8791a5;--acc:#2b6cb0;--ok:#1f8f5a;--warn:#a3671a;--bad:#c0392b;--info:#2278a0}
-body{background:var(--bg);color:var(--tx);font-family:'Segoe UI',Arial,sans-serif;margin:0;padding:58px 30px 90px 278px}
-h1{font-size:21px;margin:0 0 4px} h2{font-size:16px;margin:34px 0 10px;color:var(--acc);border-bottom:1px solid var(--line);padding-bottom:6px}
+body{background:radial-gradient(1100px 480px at 75% -8%, rgba(122,162,247,.055), transparent 62%), var(--bg);color:var(--tx);font-family:'Segoe UI',Arial,sans-serif;margin:0;padding:58px 30px 90px 278px}
+[data-theme=light] body{background:radial-gradient(1100px 480px at 75% -8%, rgba(43,108,176,.05), transparent 62%), var(--bg)}
+h1{font-size:24px;font-weight:800;letter-spacing:-.4px;margin:0 0 5px} h2{font-size:17px;font-weight:700;letter-spacing:-.2px;margin:38px 0 12px;color:var(--tx);border-left:4px solid var(--acc);padding:2px 0 2px 12px;border-radius:2px}
 .meta{color:var(--tx2);font-size:12px}
 a{color:var(--acc);text-decoration:none}a:hover{color:var(--tx)}
-.topbar{position:fixed;top:0;left:250px;right:0;z-index:30;display:flex;align-items:center;gap:10px;padding:9px 30px;background:var(--bg);border-bottom:1px solid var(--line)}
+.topbar{position:fixed;top:0;left:250px;right:0;z-index:30;display:flex;align-items:center;gap:10px;padding:9px 30px;background:rgba(11,14,20,.82);backdrop-filter:blur(9px);border-bottom:1px solid var(--line)}
+[data-theme=light] .topbar{background:rgba(246,247,250,.82)}
 .topbar .brand{font-weight:700;font-size:14px}
 .tspacer{flex:1}
-.tbtn{background:var(--bg3);border:1px solid var(--line2);color:var(--tx2);border-radius:6px;font:inherit;font-size:12px;padding:4px 12px;cursor:pointer}
-.tbtn:hover{color:var(--tx);border-color:var(--acc)}
+.tbtn{background:var(--bg3);border:1px solid var(--line2);color:var(--tx2);border-radius:7px;font:inherit;font-size:12px;padding:5px 13px;cursor:pointer;transition:border-color .15s,color .15s,transform .15s}
+.tbtn:hover{color:var(--tx);border-color:var(--acc);transform:translateY(-1px)}
 .nav{position:fixed;top:0;left:0;bottom:0;width:250px;background:var(--bg2);border-right:1px solid var(--line);padding:16px 10px;overflow-y:auto;z-index:40;display:flex;flex-direction:column;gap:2px}
-.nav a{color:var(--tx2);font-size:12.5px;text-decoration:none;padding:5px 10px;border-radius:6px;border-left:2px solid transparent;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.nav a{color:var(--tx2);font-size:13px;text-decoration:none;padding:6px 12px;border-radius:8px;border-left:2px solid transparent;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;transition:background .12s,color .12s}
 .nav a:hover{background:var(--bg3);color:var(--tx)}
-.nbrand{font-weight:800;font-size:15px;letter-spacing:2px;color:var(--acc);padding:2px 10px 10px;border-bottom:1px solid var(--line);margin-bottom:8px}
-.nbrand span{display:block;font-size:10px;font-weight:400;letter-spacing:1px;color:var(--tx3);margin-top:2px}
-.ngh{font-size:10px;font-weight:700;letter-spacing:1.5px;text-transform:uppercase;color:var(--tx3);padding:10px 10px 4px}
-.nav a.act{background:var(--bg3);color:var(--acc);border-left-color:var(--acc)}
+.nbrand{font-weight:800;font-size:15px;letter-spacing:2.5px;color:var(--acc);padding:4px 12px 12px;border-bottom:1px solid var(--line);margin-bottom:10px}
+.nbrand span{display:block;font-size:10px;font-weight:500;letter-spacing:1.2px;color:var(--tx3);margin-top:3px}
+.ngh{font-size:10px;font-weight:700;letter-spacing:1.8px;text-transform:uppercase;color:var(--tx3);padding:14px 12px 5px}
+.nav a.act{background:linear-gradient(90deg, rgba(122,162,247,.14), transparent 75%);color:var(--acc);border-left-color:var(--acc);font-weight:600}
 .nav::-webkit-scrollbar{width:8px}.nav::-webkit-scrollbar-thumb{background:var(--line2);border-radius:4px}
 @media(max-width:1100px){.nav{position:static;width:auto;flex-direction:row;flex-wrap:wrap;border-bottom:1px solid var(--line)}body{padding-left:30px}.topbar{left:0}}
 .mkey{position:sticky;top:50px;z-index:5;background:var(--bg);border-bottom:1px solid var(--line);padding:3px 0;font-size:11px;color:var(--tx3)}
 .mkey i{display:inline-block;width:9px;height:9px;border-radius:2px;border:1px solid;margin:0 3px 0 10px;vertical-align:middle}
 .chips{margin:16px 0}.chip{display:inline-block;padding:6px 14px;border-radius:16px;margin-right:8px;font-size:14px;font-weight:600}
-.card{background:var(--bg2);border:1px solid var(--line);border-radius:10px;padding:14px;margin:10px 0}
+.card{background:var(--bg2);border:1px solid var(--line);border-radius:10px;padding:14px;margin:10px 0;box-shadow:0 1px 3px rgba(0,0,0,.22)}
 .badge{display:inline-block;padding:3px 10px;border-radius:10px;font-size:12px;font-weight:700;margin-right:8px}
 .HIGH{background:#3d1418;color:#ff8789}.MEDIUM{background:#3a2d0e;color:#ffce6b}.LOW{background:#12301e;color:#7ee2a8}.INFO{background:#1b2c42;color:#9ec1f0}
 [data-theme=light] .HIGH{background:#fbe4e5;color:#a12629}[data-theme=light] .MEDIUM{background:#faf0d7;color:#7a5a0a}[data-theme=light] .LOW{background:#ddf3e6;color:#136a3d}[data-theme=light] .INFO{background:#dde9f8;color:#1c4d86}
 .ev{display:inline-block;background:var(--bg3);border:1px solid var(--line2);border-radius:4px;padding:2px 8px;margin:3px 4px 0 0;font-size:11px;color:var(--tx2)}
 .path{font-family:Consolas,monospace;font-size:12px;color:var(--acc);word-break:break-all}
 table{border-collapse:collapse;width:100%;font-size:13px}th,td{border:1px solid var(--line);padding:6px 10px;text-align:left}
-th{background:var(--bg3);color:var(--acc);position:sticky;top:50px;z-index:2}tr:nth-child(even){background:var(--bg3)}
+th{background:linear-gradient(var(--bg3),var(--bg2));color:var(--acc);position:sticky;top:50px;z-index:2}tr:nth-child(even){background:var(--bg3)}
 details{margin:10px 0;padding:6px 10px;background:var(--bg2);border:1px solid var(--line);border-radius:8px}summary{cursor:pointer;padding:4px 0}
 .crit{color:var(--bad);font-weight:700}.high{color:#ffb35c}.med{color:var(--warn)}.low{color:var(--info)}.info{color:var(--tx3)}
 .sevdot{display:inline-block;width:10px;height:10px;border-radius:3px;margin-right:7px;vertical-align:baseline;background:var(--tx3)}td.crit .sevdot{background:var(--bad)}td.med .sevdot{background:var(--warn)}td.info .sevdot{background:var(--info)}
 .foot{margin-top:40px;color:var(--tx3);font-size:11px}
-.vbanner{border-radius:12px;padding:20px 24px;margin:18px 0;border:2px solid}
-.v4{background:#2a0f12;border-color:#a33}.v3{background:#2a150f;border-color:#b33}.v2{background:#2a220f;border-color:#b93}.v1{background:#0f2418;border-color:#3a5}.v0{background:var(--bg3);border-color:var(--line2)}
+.vbanner{border-radius:12px;padding:22px 26px;margin:18px 0;border:1px solid;border-left-width:6px;box-shadow:0 2px 10px rgba(0,0,0,.25)}
+.v4{background:linear-gradient(135deg,#2a0f12,#1e0b0d);border-color:#a33}.v3{background:linear-gradient(135deg,#2a150f,#1f100b);border-color:#b33}.v2{background:linear-gradient(135deg,#2a220f,#201a0b);border-color:#b93}.v1{background:linear-gradient(135deg,#0f2418,#0b1c12);border-color:#3a5}.v0{background:linear-gradient(135deg,var(--bg3),var(--bg2));border-color:var(--line2)}
 [data-theme=light] .v4{background:#fdecec;border-color:#c0392b}[data-theme=light] .v3{background:#fdeee4;border-color:#c87f3a}[data-theme=light] .v2{background:#faf3df;border-color:#b98a1e}[data-theme=light] .v1{background:#e7f4ec;border-color:#2f8f5b}[data-theme=light] .donow{background:#faf0d7;border-color:#b98a1e;color:#7a5a0a}
-.vtitle{font-size:26px;font-weight:800;margin:0 0 4px}
+.vtitle{font-size:30px;font-weight:800;letter-spacing:-.5px;margin:0 0 5px}
 .vowner{font-size:14px;margin:6px 0 0;color:var(--tx2)}
 .confwrap{background:var(--bg3);border-radius:8px;height:18px;margin-top:12px;position:relative;overflow:hidden}
 .confbar{height:18px}
 .conftext{position:absolute;left:10px;top:1px;font-size:12px;font-weight:700;color:var(--tx)}
-.sig{display:inline-block;background:var(--bg3);border:1px solid var(--line2);border-radius:8px;padding:6px 10px;margin:3px 6px 3px 0;font-size:12px}
+.sig{display:inline-block;background:var(--bg3);border:1px solid var(--line2);border-radius:8px;padding:7px 11px;margin:3px 6px 3px 0;font-size:12px;transition:border-color .15s}
+.sig:hover{border-color:var(--acc)}
 .donow{background:#3a2a10;border:1px solid #b93;border-radius:8px;padding:10px 14px;margin-top:12px;font-size:13px;color:#ffd57a}
-.lead{background:var(--bg2);border:1px solid var(--line);border-left:4px solid var(--tx3);border-radius:10px;padding:12px 16px;margin:10px 0}
+.lead{background:var(--bg2);border:1px solid var(--line);border-left:4px solid var(--tx3);border-radius:10px;padding:12px 16px;margin:10px 0;transition:border-color .15s,transform .15s;box-shadow:0 1px 3px rgba(0,0,0,.2)}
+.lead:hover{border-color:var(--line2);transform:translateY(-1px)}
 .lead-crit{border-left-color:#e05252}
 .lead-med{border-left-color:#c9a227}
 .leadtitle{font-size:15px;font-weight:700;color:var(--tx)}
@@ -6148,7 +6174,7 @@ summary:hover{color:var(--acc)}
 h3{font-size:13.5px;margin:20px 0 8px;color:var(--tx)}
 @media (prefers-reduced-motion: reduce){*{transition:none!important;animation:none!important}}
 .nlegend{padding:10px 14px 16px;color:var(--tx3);font-size:11px;line-height:1.45;border-top:1px solid var(--line)}
-@media print{body{background:#fff;color:#111;font-size:11px;padding:6px}.nav,.topbar,#copied,.sbar,.pgr,.mkey,.tbtn,button,.tiles{display:none!important}h1,h2{color:#111;border-color:#999}pre.ioc{background:#f4f4f4;color:#111;border-color:#bbb}table{font-size:10px}th{background:#eee;color:#111;position:static}tr:nth-child(even){background:#fafafa}.vbanner,.lead,.rec,.card{background:#fafafa;border-color:#bbb}.meta,.foot{color:#444}a{color:#111;text-decoration:none}.swall{display:none!important}.heatcell{outline:1px solid #ccc}.lead-crit{border-left-color:#c0392b}.lead-med{border-left-color:#a3671a}tr[id^='ev_']{display:table-row!important}td.clip{white-space:normal!important;word-break:break-word}}
+@media print{body{background:#fff;color:#111;font-size:11px;padding:6px}.nav,.topbar,#copied,.sbar,.pgr,.mkey,.tbtn,button,.tiles{display:none!important}h1{color:#111}h2{color:#111;border-left-color:#999}pre.ioc{background:#f4f4f4;color:#111;border-color:#bbb}table{font-size:10px}th{background:#eee;color:#111;position:static}tr:nth-child(even){background:#fafafa}.vbanner,.lead,.rec,.card{background:#fafafa;border-color:#bbb;box-shadow:none}.meta,.foot{color:#444}a{color:#111;text-decoration:none}.swall{display:none!important}.heatcell{outline:1px solid #ccc}.lead-crit{border-left-color:#c0392b}.lead-med{border-left-color:#a3671a}tr[id^='ev_']{display:table-row!important}td.clip{white-space:normal!important;word-break:break-word}}
 </style>
 '@
 
@@ -6356,7 +6382,7 @@ h3{font-size:13.5px;margin:20px 0 8px;color:var(--tx)}
         'Reference' = @('recommendations','evidence')
     }
     $navParts = New-Object System.Collections.Generic.List[string]
-    $navParts.Add("<div class='nbrand'>OPHIRA<span>IR triage report</span></div>")
+    $navParts.Add("<div class='nbrand'>OPHIRA<span>endpoint triage report</span></div>")
     foreach ($ng in $navGroups.Keys) {
         $navParts.Add("<div class='ngh'>$ng</div>")
         foreach ($nk in $navGroups[$ng]) {
@@ -6924,7 +6950,11 @@ h3{font-size:13.5px;margin:20px 0 8px;color:var(--tx)}
                 $best = @($g.Group | Sort-Object { Get-LvlRank "$($_.Level)" } -Descending | Select-Object -First 1)
                 $lvlClass = switch -Regex ("$($best.Level)") { 'crit' { 'crit'; break } 'high' { 'high'; break } 'med' { 'med'; break } default { 'info' } }
                 $last = (@($g.Group | ForEach-Object { "$($_.Timestamp)" } | Sort-Object -Descending | Select-Object -First 1) -join '') -replace '\s*\+00:00$', ''
-                $null = $sb.AppendLine("<tr><td>$(ConvertTo-HtmlEsc $g.Name)</td><td class='$lvlClass'>$(ConvertTo-HtmlEsc $best.Level)</td><td>$($g.Count)</td><td>$(ConvertTo-HtmlEsc $last)</td></tr>")
+                # v2.99: alert cells link into the Sigma drill-down (same a[data-rule] pattern
+                # the ATT&CK section uses) - previously the tactic name was a dead end.
+                $tacSafe = Resolve-SafeRuleKey $safeRuleMap $g.Name
+                $tacCell = if ($tacSafe -and $drillSafeNames.Contains($tacSafe)) { "<a href='#sigma' class='a-drill' data-rule='$tacSafe' title='open the Sigma drill-down for this rule'>$(ConvertTo-HtmlEsc $g.Name)</a>" } else { ConvertTo-HtmlEsc $g.Name }
+                $null = $sb.AppendLine("<tr><td>$tacCell</td><td class='$lvlClass'>$(ConvertTo-HtmlEsc $best.Level)</td><td>$($g.Count)</td><td>$(ConvertTo-HtmlEsc $last)</td></tr>")
             }
             $null = $sb.AppendLine("</table></details></div>")
         }
@@ -6975,7 +7005,7 @@ h3{font-size:13.5px;margin:20px 0 8px;color:var(--tx)}
         }
         $null = $sb.AppendLine("<a name='sigma'></a><h2>Top Sigma detections (hayabusa)</h2>")
         if ($alertCol) {
-            Add-CapNote $hayRows.Count 20 $alertCol 'Top sigma alerts'
+            Add-CapNote $hayRows.Count 20 'hayabusa_timeline' 'Top sigma alerts'
             # v2.96: severity-first - a high-level rule must not rank below low-volume low rules
             $groups = $hayRows | Group-Object $alertCol | Sort-Object @{e = { ($_.Group | ForEach-Object { Get-LvlRank "$($_.Level)" } | Measure-Object -Maximum).Maximum }; Descending = $true }, @{e = 'Count'; Descending = $true } | Select-Object -First 20
             $null = $sb.AppendLine("<table><tr><th>Alert</th><th>Hits</th><th>Max level</th><th>Last seen</th></tr>")
@@ -6987,6 +7017,10 @@ h3{font-size:13.5px;margin:20px 0 8px;color:var(--tx)}
                 $null = $sb.AppendLine("<tr><td>$(ConvertTo-HtmlEsc $g.Name)</td><td>$($g.Count)</td><td class='$lvlClass'>$(ConvertTo-HtmlEsc $lvl)</td><td>$(ConvertTo-HtmlEsc $last)</td></tr>")
             }
             $null = $sb.AppendLine("</table>")
+        }
+        # v2.99: suppression transparency - every hidden rule shows as one counted line
+        if ($sigmaSuppressed.Count -gt 0) {
+            $null = $sb.AppendLine("<div class='meta' style='margin-top:8px'>hidden as routine noise (tools\sigma\suppress.txt - delete a line to show the rule): " + ((@($sigmaSuppressed.GetEnumerator() | Sort-Object Value -Descending | ForEach-Object { "$($_.Key) - $($_.Value) event(s)" }) -join '; ')) + '. Full data: csv\logs\hayabusa_timeline.csv.</div>')
         }
         # per-rule drill-down: matched events per rule (shared 5000-row embed budget),
         # client-side search + pager + click-to-copy - rendered by the shared script at the end
@@ -12611,7 +12645,7 @@ function Show-RoleGate {
         Write-Host "  |  _/ (_) | _|| .\` |  _/ | |/ _ \|   /  _/" -ForegroundColor Cyan
         Write-Host "  |_|  \___/|___|_|\_|_|   |_/_/ \_\_|_\_|_\ " -ForegroundColor Cyan
         Write-Host "================================================================" -ForegroundColor Cyan
-        Write-Host "  Ophira v$ScriptVersion  -  single-script Windows IR toolkit" -ForegroundColor White
+        Write-Host "  Ophira v$ScriptVersion  -  single-script Windows triage toolkit" -ForegroundColor White
         Write-Host "  READ-ONLY: collects evidence, never changes the system" -ForegroundColor DarkGray
         Write-Host "----------------------------------------------------------------" -ForegroundColor Cyan
         Write-Host ""
@@ -15398,7 +15432,7 @@ Write-Host "  | _ \/ _ \| __| \| | _ \_   _/_\ | _ \ _ \ " -ForegroundColor Cyan
 Write-Host "  |  _/ (_) | _|| .\` |  _/ | |/ _ \|   /  _/" -ForegroundColor Cyan
 Write-Host "  |_|  \___/|___|_|\_|_|   |_/_/ \_\_|_\_|_\ " -ForegroundColor Cyan
 Write-Host "================================================================" -ForegroundColor Cyan
-Write-Host "  Ophira v$ScriptVersion  -  single-script Windows IR toolkit" -ForegroundColor White
+Write-Host "  Ophira v$ScriptVersion  -  single-script Windows triage toolkit" -ForegroundColor White
 Write-Host "  READ-ONLY: collects evidence, never changes the system" -ForegroundColor DarkGray
 Write-Host "  Modes: -Mode Collect | Deploy | Analyze | Setup | Links" -ForegroundColor DarkGray
 Write-Host "----------------------------------------------------------------" -ForegroundColor Cyan

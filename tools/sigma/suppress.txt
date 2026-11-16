@@ -1,0 +1,9 @@
+# Ophira report-layer Sigma noise suppression
+# One rule title per line (exact match, case-insensitive). Rules listed here are
+# hidden from the REPORT only - csv\logs\hayabusa_timeline.csv keeps every event,
+# and the verdict engine never depended on report display. The report shows a
+# counted "hidden as routine noise" line for each entry, so nothing disappears
+# silently. Delete a line (or this file) to bring a rule back.
+# You can add your own noisy-but-benign rules the same way.
+Credential Manager Enumerated
+Credential Manager Accessed

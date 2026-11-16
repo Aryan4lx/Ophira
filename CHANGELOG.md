@@ -7,6 +7,15 @@
 
 
 
+
+## v2.99 - branding, tactic drill-downs, Sigma noise suppression, design v3
+
+- Branding: "IR triage" wording replaced with "endpoint triage" across the header, help text, TUI banners and the report sidebar brand (v2.98 version-pin miss also corrected - the 2.98 commit shipped with $ScriptVersion still 2.97; version pins in tests are now prefix-based so this cannot recur).
+- Findings by tactic: each alert row now links into the Sigma drill-down (same a[data-rule] pattern as ATT&CK rows) - the tactic name is no longer a dead end.
+- Sigma noise suppression (report layer): tools\sigma\suppress.txt lists rule titles hidden from the report as routine noise. Shipped defaults: Credential Manager Enumerated/Accessed (1664 of 1752 events on the reference case = 95% of rendered noise). The CSV keeps every row, the verdict never used report display, and the sigma section shows a counted "hidden as routine noise" line per rule - delete a line (or the file) to bring a rule back. Get-ToolsDir guarded so fixture suites without tools do not throw.
+- Fixed: sigma cap-note said "full list: csv\RuleTitle.csv" (column name interpolated instead of the CSV path).
+- Design v3: body radial depth gradient, h1 24px/heavier + h2 accent-left-bar sections, gradient verdict banner with 6px level rail + 30px verdict title, translucent blurred topbar, sidebar active-item gradient + hover states, card/lead soft shadows + hover lift, gradient table headers, brighter nav items. Light-theme parity kept; print rules updated.
+
 ## v2.98 - section order unification + sibling-report parity
 
 - Main report section order now matches the sidebar exactly (nav grouped narrative = document flow: Findings run attack..hunt contiguous, Context run logons..drivers contiguous). Previously Hunt rendered after Drivers and Entities after Hunt (historical append order) - clicking down the sidebar jumped around the page. Scrollspy, heatmap and all consumers unchanged (variables are block-local).
