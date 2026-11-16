@@ -6,6 +6,13 @@
 
 
 
+
+## v2.98 - section order unification + sibling-report parity
+
+- Main report section order now matches the sidebar exactly (nav grouped narrative = document flow: Findings run attack..hunt contiguous, Context run logons..drivers contiguous). Previously Hunt rendered after Drivers and Entities after Hunt (historical append order) - clicking down the sidebar jumped around the page. Scrollspy, heatmap and all consumers unchanged (variables are block-local).
+- Focus dossier CSS brought to v2.89+ palette parity (deep dark, blue accents, hover rows, print CSS) - was still the pre-v2.89 look.
+- Fleet report CSS same parity treatment + print styles.
+
 ## v2.97 - interactive UI audit fixes (agent-browser-driven)
 
 - Scrollspy highlighted the wrong section (grouped nav order != document order: jumping to Hunt lit 'Drivers'): spy now sorts anchor offsetTops into document order and highlights the true current section.

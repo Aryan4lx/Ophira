@@ -1887,15 +1887,16 @@ function Invoke-AnalyzeMode {
     $fleetHtml = Join-Path $OutFolder 'fleet_report.html'
     $css = @'
 <style>
-body{background:#0f1115;color:#d7dce3;font-family:Segoe UI,Arial,sans-serif;margin:0;padding:24px}
-h1{font-size:22px;margin:0 0 4px}h2{font-size:16px;margin:32px 0 10px;color:#8ab4f8;border-bottom:1px solid #2a2f3a;padding-bottom:6px}
-.meta{color:#7d8590;font-size:12px}
-table{border-collapse:collapse;width:100%;font-size:13px}th,td{border:1px solid #2a2f3a;padding:6px 10px;text-align:left}
-th{background:#1d222c;color:#8ab4f8}tr:nth-child(even){background:#151920}
-.HIGH{color:#ff8789;font-weight:700}.IOC{color:#ff8789}.path{font-family:Consolas,monospace;font-size:12px;color:#8ab4f8;word-break:break-all}
-.V4{color:#ff8789;font-weight:800}.V3{color:#ff8789;font-weight:700}.V2{color:#ffce6b}.V1{color:#7ee2a8}.V0{color:#9ec1f0}.VN{color:#7d8590}
-.chips{margin:14px 0}.chip{display:inline-block;padding:5px 13px;border-radius:14px;margin-right:6px;font-size:13px;font-weight:600;background:#243447;color:#9ec1f0}
-a{color:#8ab4f8}.foot{margin-top:40px;color:#565e6b;font-size:11px}
+body{background:#0b0e14;color:#e6edf7;font-family:'Segoe UI',Arial,sans-serif;margin:0;padding:24px}
+h1{font-size:22px;margin:0 0 4px}h2{font-size:16px;margin:32px 0 10px;color:#7aa2f7;border-bottom:1px solid #232b3d;padding-bottom:6px}
+.meta{color:#6b7691;font-size:12px}
+table{border-collapse:collapse;width:100%;font-size:13px}th,td{border:1px solid #232b3d;padding:6px 10px;text-align:left}th{background:#121622;color:#7aa2f7}tr:nth-child(even){background:#121622}
+tr:hover{background:rgba(122,162,247,.06)}
+.HIGH{color:#ff8789;font-weight:700}.IOC{color:#ff8789}.path{font-family:Consolas,monospace;font-size:12px;color:#7aa2f7;word-break:break-all}
+.V4{color:#ff8789;font-weight:800}.V3{color:#ff8789;font-weight:700}.V2{color:#e0af68}.V1{color:#7ee2a8}.V0{color:#9ec1f0}.VN{color:#6b7691}
+.chips{margin:14px 0}.chip{display:inline-block;padding:5px 13px;border-radius:14px;margin-right:6px;font-size:13px;font-weight:600;background:#121622;color:#9ec1f0;border:1px solid #313c55}
+a{color:#7aa2f7;text-decoration:none}a:hover{color:#9ec1f0}.foot{margin-top:40px;color:#6b7691;font-size:11px}
+@media print{body{background:#fff;color:#111}th{background:#eee;color:#111}tr:nth-child(even){background:#f6f6f6}.V2{color:#a06c00}.V1{color:#0a7a3d}.V0,.VN{color:#555}.HIGH,.IOC,.V4,.V3{color:#b00020}.meta,.foot{color:#444}a{color:#111}tr:hover{background:none}}
 </style>
 '@
     $fsb = New-Object System.Text.StringBuilder
@@ -7053,317 +7054,6 @@ h3{font-size:13.5px;margin:20px 0 8px;color:var(--tx)}
         $null = $sb.AppendLine("</table><div class='meta'>$psCap recovered commands (hayabusa extract-base64 over the exported PowerShell event logs). Source: csv\ps_decoded_commands.csv</div>")
     }
 
-    # ---------- logon & account analysis ----------
-    $null = $sb.AppendLine("<a name='logons'></a><h2>Logon & account activity</h2>")
-    $null = $sb.AppendLine("<div class='meta'>Who logged in, from where, and how often - failed attempts and unusual logon types are what matter.</div>")
-    $interAll = @($authEv | Where-Object { "$($_.EventId)" -eq '4624' -and "$($_.LogonType)" -match '^(2|10)$' } |
-        ForEach-Object { [pscustomobject]@{ Who = "$(if ("$($_.AccountDomain)") { "$($_.AccountDomain)\" })$($_.Account) @ $(if ("$($_.SourceIp)") { $_.SourceIp } else { '-' })" } } |
-        Group-Object Who | Sort-Object Count -Descending)
-    $inter = @($interAll | Select-Object -First 15)
-    Add-CapNote @($interAll).Count 15 'security_auth_events' 'Interactive/RDP logon pairs'
-    if ($inter.Count -gt 0) {
-        $null = $sb.AppendLine("<h3>Interactive / RDP logons</h3><table><tr><th>Account @ Source</th><th>Logons</th></tr>")
-        foreach ($g in $inter) { $null = $sb.AppendLine("<tr><td>$(ConvertTo-HtmlEsc $g.Name)</td><td><b>$($g.Count)</b></td></tr>") }
-        $null = $sb.AppendLine("</table>")
-    }
-    if ($authSum.Count -gt 0) {
-        $null = $sb.AppendLine("<h3>Top account/source combinations (all auth events)</h3><details><summary>show top 25 of $($authSum.Count)</summary><table><tr><th>Account @ Source</th><th>Events</th></tr>")
-        foreach ($a in ($authSum | Select-Object -First 25)) { $as2 = "$($a.AccountSource)" -replace '\s*,\s*$', ''; if (-not $as2) { $as2 = '-' }; $null = $sb.AppendLine("<tr><td>$(ConvertTo-HtmlEsc $as2)</td><td>$($a.Count)</td></tr>") }
-        $null = $sb.AppendLine("</table></details>")
-    }
-    # v2.55: explicit-credential logons (4648) - the strongest lateral-movement tell on a
-    # workstation. Previously invisible: the section hard-filtered to 4624 only.
-    # ($secAll imported up at the top - its 4648/4672 rows feed the nav logons count)
-    $e4648 = @($secAll | Where-Object { "$($_.Id)" -eq '4648' -or "$($_.EventId)" -eq '4648' })
-    if ($e4648.Count -gt 0) {
-        $e4648g = @($e4648 | ForEach-Object {
-            $tgt = "$($_.TargetDomainName)"; if (-not $tgt) { $tgt = "$($_.TargetServerName)" }
-            if (-not $tgt) { $tgt = "$($_.TargetUserName)" }
-            $prN = "$($_.ProcessName)"; if (-not $prN) { $prN = '-' }
-            [pscustomobject]@{ Target = if ($tgt) { $tgt } else { '-' }; Proc = $prN }
-        } | Group-Object Target, Proc | Sort-Object Count -Descending | Select-Object -First 10)
-        $null = $sb.AppendLine("<h3>Explicit-credential logons (4648) - $([int]$e4648.Count) event(s)</h3>")
-        $null = $sb.AppendLine("<div class='meta'>A process supplied explicit credentials (username/password) to authenticate - common in admin automation, but also the shape of credential-use-after-theft. Verify the source account and tool.</div>")
-        $null = $sb.AppendLine("<table><tr><th>Target @ Process</th><th>Events</th></tr>")
-        foreach ($g in $e4648g) { $null = $sb.AppendLine("<tr><td>$(ConvertTo-HtmlEsc $g.Name)</td><td><b>$($g.Count)</b></td></tr>") }
-        $null = $sb.AppendLine("</table>")
-    }
-    $e4672 = @($secAll | Where-Object { "$($_.Id)" -eq '4672' -or "$($_.EventId)" -eq '4672' })
-    if ($e4672.Count -gt 0) {
-        $e4672g = @($e4672 | ForEach-Object {
-            [pscustomobject]@{ Who = "$(if ("$($_.AccountDomain)") { "$($_.AccountDomain)\" })$($_.Account)" }
-        } | Group-Object Who | Sort-Object Count -Descending | Select-Object -First 8)
-        $null = $sb.AppendLine("<h3>Special privileges assigned (4672) - $([int]$e4672.Count) event(s)</h3>")
-        $null = $sb.AppendLine("<table><tr><th>Account</th><th>Events</th></tr>")
-        foreach ($g in $e4672g) { $null = $sb.AppendLine("<tr><td>$(ConvertTo-HtmlEsc $g.Name)</td><td><b>$($g.Count)</b></td></tr>") }
-        $null = $sb.AppendLine("</table>")
-    }
-    if ($brute.Count -gt 0) {
-        $null = $sb.AppendLine("<h3>Brute-force candidates</h3><table><tr><th>Source IP</th><th>Failed logons</th><th>VT</th></tr>") # v2.66 (B15b): the VT-links column was an unnamed <th></th>
-        foreach ($b in $brute) { $null = $sb.AppendLine("<tr><td>$(ConvertTo-HtmlEsc $b.SourceIp)</td><td><b>$($b.FailedLogons)</b></td><td>$(New-VtLink $b.SourceIp)</td></tr>") }
-        $null = $sb.AppendLine("</table>")
-    } else {
-        $null = $sb.AppendLine("<div class='meta'>No brute-force candidate sources (threshold: 5+ failed logons). Hayabusa logon summaries: csv\logon_summary* (if module 4.6 ran).</div>")
-    }
-
-    # ---------- persistence inventory ----------
-    # v2.88 USER ACTIVITY section - per-account rollup built above
-    $null = $sb.AppendLine("<a name='useract'></a><h2>User activity rollup</h2>")
-    if ($userAct.Count -gt 0) {
-        $null = $sb.AppendLine("<div class='meta'>Per-account picture: logons, failed attempts, process creations (4688 - richest when command-line auditing is on) and file activity under the user profile. Sorted by total activity.</div>")
-        $null = $sb.AppendLine("<table data-secfilter='useract'><tr><th>Account</th><th>Last seen</th><th>Logons</th><th>Failed</th><th>Types</th><th>Sources</th><th>Processes</th><th>Profile files</th></tr>")
-        $uaRows = @($userAct.Values | Sort-Object @{e = { [int]($_.Logons + $_.Failed + $_.ProcN + [Math]::Min($_.Files, 500)) }; Descending = $true })
-        Add-CapNote $userAct.Count 15 '' 'Accounts in user activity'
-        foreach ($u4 in ($uaRows | Select-Object -First 15)) {
-            $types4 = (@($u4.Types.Keys) | Sort-Object) -join ', '
-            $ips4 = (@($u4.Ips.Keys) | Select-Object -First 3) -join ', '
-            $top4 = (@($u4.Procs.GetEnumerator() | Sort-Object Value -Descending | Select-Object -First 3 | ForEach-Object { "$($_.Key) x$($_.Value)" })) -join ', '
-            $pr4 = if ($u4.ProcN -gt 0) { "$($u4.ProcN)$(if ($top4) { " - $top4" })" } else { '<span class="meta">none logged</span>' }
-            $fl4 = if ($u4.Files -gt 0) { "$($u4.Files) created/modified" } else { '<span class="meta">none</span>' }
-            $null = $sb.AppendLine("<tr><td><b>$(ConvertTo-HtmlEsc $u4.Name)</b></td><td>$(ConvertTo-HtmlEsc $u4.Last)</td><td>$($u4.Logons)</td><td>$(if ($u4.Failed) { "<b class='crit'>$($u4.Failed)</b>" } else { '0' })</td><td>$(ConvertTo-HtmlEsc $types4)</td><td>$(ConvertTo-HtmlEsc $ips4)</td><td class='path'>$pr4</td><td>$fl4</td></tr>")
-        }
-        $null = $sb.AppendLine('</table>')
-        if ($uaRows.Count -gt 15) { $null = $sb.AppendLine("<div class='meta'>showing top 15 of $($uaRows.Count) accounts</div>") }
-    } else {
-        $null = $sb.AppendLine("<div class='meta'>No account activity evidence available (no auth events and no process-creation events in this case).</div>")
-    }
-    $null = $sb.AppendLine("<a name='persistence'></a><h2>Persistence inventory</h2>")
-    $persAny = $false
-    if ($tasksFlag.Count -gt 0) {
-        $persAny = $true
-        $null = $sb.AppendLine("<h3>Flagged scheduled tasks</h3><table><tr><th>Task</th><th>Actions</th><th>Flags</th></tr>")
-        Add-CapNote @($tasksFlag).Count 40 'scheduled_tasks_flagged' 'Flagged tasks'
-        foreach ($t in ($tasksFlag | Select-Object -First 40)) {
-            $null = $sb.AppendLine("<tr><td>$(ConvertTo-HtmlEsc $t.Name)</td><td class='path'>$(ConvertTo-HtmlEsc $t.Actions)</td><td>$(ConvertTo-HtmlEsc $t.Flags)</td></tr>")
-        }
-        $null = $sb.AppendLine("</table>")
-    }
-    if ($taskCacheAnom.Count -gt 0) {
-        $persAny = $true
-        $null = $sb.AppendLine("<h3>Task cache anomalies (ghost / hidden scheduled tasks)</h3><table><tr><th>Kind</th><th>Guid</th><th>Task path</th><th>SD present</th><th>Flags</th></tr>")
-        Add-CapNote @($taskCacheAnom).Count 40 'scheduled_taskcache' 'Task-cache anomalies'
-        foreach ($t4 in ($taskCacheAnom | Select-Object -First 40)) {
-            $null = $sb.AppendLine("<tr><td>$(ConvertTo-HtmlEsc $t4.Kind)</td><td class='path'>$(ConvertTo-HtmlEsc $t4.Guid)</td><td class='path'>$(ConvertTo-HtmlEsc $t4.TaskPath)</td><td>$(ConvertTo-HtmlEsc $t4.SdPresent)</td><td class='crit'>$(ConvertTo-HtmlEsc $t4.Flags)</td></tr>")
-        }
-        $tc87Meta = "Three shapes: SD-MISSING while still Tree-linked = hidden task (still runs, invisible to schtasks/GUI - deleting Tree+XML does not unload a loaded task until reboot); SD kept + ORPHANED = ghost or deletion leftover; SD gone + ORPHANED = stale residue every deleted task leaves ($($taskCacheCruft) row(s) here, not listed). VALUE-READ-DENIED = the collector could not read the value (registry ACL) - state unknown, never treated as an anomaly. Source: csv\scheduled_taskcache.csv"
-        $null = $sb.AppendLine("</table><div class='meta'>$(ConvertTo-HtmlEsc $tc87Meta)</div>")
-    } elseif ($taskCacheCruft -gt 0) {
-        $persAny = $true
-        $null = $sb.AppendLine("<div class='meta'>Task cache: $($taskCacheCruft) stale deleted-task residue entries (no SD + no Tree link - the normal shape every deleted task leaves). No hidden or ghost anomalies found. Source: csv\scheduled_taskcache.csv</div>")
-    }
-    if ($taskDel.Count -gt 0) {
-        $persAny = $true
-        $null = $sb.AppendLine("<h3>Scheduled task deletions (EID 4699)</h3><table><tr><th>Time</th><th>Task</th><th>User</th></tr>")
-        Add-CapNote @($taskDel).Count 25 'task_deletions' 'Task deletions'
-        foreach ($t5 in ($taskDel | Select-Object -First 25)) {
-            $null = $sb.AppendLine("<tr><td>$(ConvertTo-HtmlEsc $t5.Time)</td><td class='path'>$(ConvertTo-HtmlEsc $t5.TaskName)</td><td>$(ConvertTo-HtmlEsc $t5.User)</td></tr>")
-        }
-        $null = $sb.AppendLine("</table><div class='meta'>Deletion alone is normal ops - correlate with the TaskCache anomalies above and recent 4698 installs. Source: csv\task_deletions.csv</div>")
-    }
-    if ($esentRows.Count -gt 0) {
-        $persAny = $true
-        $null = $sb.AppendLine("<h3>ntds.dit access (ESENT 325/326)</h3><table><tr><th>Time</th><th>Pattern</th><th>Event</th></tr>")
-        Add-CapNote @($esentRows).Count 25 'esent_ntds' 'ntds.dit access events'
-        foreach ($e5 in ($esentRows | Select-Object -First 25)) {
-            $pat5 = if ("$($e5.BackupPattern)" -eq 'True') { 'backup-pattern (verify schedule)' } else { 'NON-BACKUP - possible AD database theft' }
-            $cls5 = if ("$($e5.BackupPattern)" -eq 'True') { 'info' } else { 'crit' }
-            $null = $sb.AppendLine("<tr><td>$(ConvertTo-HtmlEsc $e5.Time)</td><td class='$cls5'>$(ConvertTo-HtmlEsc $pat5)</td><td class='path'>$(ConvertTo-HtmlEsc $e5.Message)</td></tr>")
-        }
-        $null = $sb.AppendLine("</table><div class='meta'>Something opened the Active Directory database. VSS/wbengine backup engines are the benign pattern; ntdsutil IFM or custom tooling is credential-theft prep (T1003.003). Source: csv\esent_ntds.csv</div>")
-    }
-    if ($svcFlag.Count -gt 0) {
-        $persAny = $true
-        $null = $sb.AppendLine("<h3>Flagged services</h3><table><tr><th>Service</th><th>Binary</th><th>Flags</th></tr>")
-        Add-CapNote @($svcFlag).Count 40 'services_flagged' 'Flagged services'
-        foreach ($s in ($svcFlag | Select-Object -First 40)) {
-            $null = $sb.AppendLine("<tr><td>$(ConvertTo-HtmlEsc $s.Name)</td><td class='path'>$(ConvertTo-HtmlEsc $s.PathName)</td><td>$(ConvertTo-HtmlEsc $s.Flags)</td></tr>")
-        }
-        $null = $sb.AppendLine("</table>")
-    }
-    if ($wmiBind.Count -gt 0) {
-        $persAny = $true
-        $null = $sb.AppendLine("<h3>WMI event subscriptions (rare on clean hosts - review each)</h3><table><tr><th>Binding</th></tr>")
-        Add-CapNote @($wmiBind).Count 25 'wmi_bindings' 'WMI bindings'
-        foreach ($w in ($wmiBind | Select-Object -First 25)) {
-            $line = ($w.PSObject.Properties | ForEach-Object { "$($_.Value)" }) -join ' | '
-            $null = $sb.AppendLine("<tr><td>$(ConvertTo-HtmlEsc $line)</td></tr>")
-        }
-        $null = $sb.AppendLine("</table>")
-    }
-    if ($runKeys.Count -gt 0) {
-        $persAny = $true
-        $rkLbl = if ($runKeys.Count -gt 60) { "showing first 60 of $($runKeys.Count) entries" } else { "show $($runKeys.Count) entries" }
-        $null = $sb.AppendLine("<h3>Run keys / startup entries</h3><details><summary>$rkLbl</summary><table><tr><th>Name</th><th>Command</th></tr>")
-        Add-CapNote @($runKeys).Count 60 'autoruns_runkeys' 'Run keys'
-        foreach ($r in ($runKeys | Select-Object -First 60)) {
-            $null = $sb.AppendLine("<tr><td>$(ConvertTo-HtmlEsc $r.Name)</td>$(New-ClipCell -Text $r.Value -TdClass 'clip path' -Threshold 120)</tr>")
-        }
-        $null = $sb.AppendLine("</table></details>")
-    }
-    if ($asepHot.Count -gt 0) {
-        $persAny = $true
-        $null = $sb.AppendLine("<h3>Uncommon persistence mechanisms (IFEO / AppInit / Winlogon / netsh / LSA)</h3><table><tr><th>Category</th><th>Target</th><th>Setting</th><th>Value</th><th>Flags</th></tr>")
-        Add-CapNote @($asepHot).Count 40 'asep_sweep' 'ASEP entries (user-writable or non-default)'
-        foreach ($a in ($asepHot | Select-Object -First 40)) {
-            $target = ''
-            try { $target = Split-Path "$($a.Location)" -Leaf } catch { }
-            $null = $sb.AppendLine("<tr><td>$(ConvertTo-HtmlEsc $a.Category)</td><td>$(ConvertTo-HtmlEsc $target)</td><td>$(ConvertTo-HtmlEsc $a.Name)</td><td class='path'>$(ConvertTo-HtmlEsc $a.Value)</td><td>$(ConvertTo-HtmlEsc $a.Flags)</td></tr>")
-        }
-        $null = $sb.AppendLine("</table><div class='meta'>These autostart extensibility points are rarely used by legitimate software (exception: OEM Winlogon Shell entries). Full inventory incl. per-user COM: csv\asep_sweep.csv</div>")
-    }
-    # v2.78: $certHot computed up at the nav build (its count feeds the nav)
-    if ($certHot.Count -gt 0) {
-        $persAny = $true
-        $null = $sb.AppendLine("<h3>Recently added self-signed certificates (root trust)</h3><table><tr><th>Store</th><th>Subject</th><th>NotBefore</th><th>Flags</th></tr>")
-        Add-CapNote @($certHot).Count 25 'certificates' 'Self-signed recently-added certificates'
-        foreach ($c in ($certHot | Select-Object -First 25)) {
-            $null = $sb.AppendLine("<tr><td>$(ConvertTo-HtmlEsc $c.Store)</td><td>$(ConvertTo-HtmlEsc $c.Subject)</td><td>$(ConvertTo-HtmlEsc $c.NotBefore)</td><td>$(ConvertTo-HtmlEsc $c.Flags)</td></tr>")
-        }
-        $null = $sb.AppendLine("</table><div class='meta'>Enterprise root CAs are self-signed by design - verify against the org's PKI. Malware adds root CAs to enable HTTPS interception. Full inventory: csv\certificates.csv</div>")
-    }
-    if (-not $persAny) { $null = $sb.AppendLine("<div class='meta'>No persistence entries captured (modules not run or nothing found).</div>") }
-
-    # ---------- execution history ----------
-    if ($execRows.Count -gt 0) {
-        $null = $sb.AppendLine("<h2>Execution history highlights (user-writable paths)</h2><table>")
-        $shown = 0
-        foreach ($r in $execRows) {
-            $line = ($r.PSObject.Properties | ForEach-Object { "$($_.Value)" }) -join ' '
-            if ($line -match '(?i)\\Users\\|\\AppData\\|\\Temp\\|\\ProgramData\\|\\Downloads\\') {
-                $ts = ($r.PSObject.Properties | Select-Object -First 1).Value
-                $pathCol = @($r.PSObject.Properties | Where-Object { "$($_.Value)" -match '(?i)\\.*\.(exe|dll|ps1|bat|scr|js|vbs)' } | Select-Object -First 1)
-                $pv = if ($pathCol) { "$($pathCol.Value)" } else { $line }
-                $null = $sb.AppendLine("<tr><td>$(ConvertTo-HtmlEsc $ts)</td><td class='path'>$(ConvertTo-HtmlEsc $pv)</td></tr>")
-                $shown++
-                if ($shown -ge 40) { break }
-            }
-        }
-        # v2.68 (B13): same equals-cap honesty on the execution-history caption
-        $execCap = if ($shown -lt $execRows.Count) { "First $shown of $($execRows.Count) entries" } else { "All $shown entries" }
-        $null = $sb.AppendLine("</table><div class='meta'>$execCap - full: csv\execution_timeline.csv</div>")
-    }
-
-    # ---------- file system forensics ----------
-    $null = $sb.AppendLine("<a name='filesystem'></a><h2>File-system evidence (MFT / USN journal / prefetch)</h2>")
-    if ($usnBursts.Count -gt 0) {
-        $null = $sb.AppendLine("<div class='sig'><b>Ransomware-style mass file modification detected</b> - $($usnBursts.Count) window(s) with 1000+ write events per minute:</div>")
-        $null = $sb.AppendLine("<table><tr><th>Window start</th><th>Write events</th><th>Distinct files</th></tr>")
-        Add-CapNote @($usnBursts).Count 15 'usn_bursts' 'USN write bursts'
-        foreach ($u in ($usnBursts | Select-Object -First 15)) {
-            $null = $sb.AppendLine("<tr><td class='crit'><b>$(ConvertTo-HtmlEsc $u.WindowStart)</b></td><td>$($u.WriteEvents)</td><td>$($u.DistinctFiles)</td></tr>")
-        }
-        $null = $sb.AppendLine("</table><div class='meta'>Legitimate mass changes (system updates, builds, AV signature storms) also trigger this. Cross-check the window against process/Sigma findings. Source: csv\artifacts\usn_write_bursts.csv</div>")
-    }
-    if ($pfParsed.Count -gt 0) {
-        $rcCol = @($pfParsed[0].PSObject.Properties.Name | Where-Object { $_ -match 'runcount|^run' } | Select-Object -First 1)[0]
-        $lrCol = @($pfParsed[0].PSObject.Properties.Name | Where-Object { $_ -match 'lastrun' } | Select-Object -First 1)[0]
-        $exCol = @($pfParsed[0].PSObject.Properties.Name | Where-Object { $_ -match 'executable|^name$' } | Select-Object -First 1)[0]
-        $null = $sb.AppendLine("<h3>Most-run programs (prefetch)</h3><table><tr><th>Executable</th><th>Run count</th><th>Last run</th></tr>")
-        $sorted = $pfParsed
-        if ($rcCol) { $sorted = @($pfParsed | Sort-Object @{e = { ConvertTo-SafeInt $_.$rcCol } } -Descending) }
-        Add-CapNote @($pfParsed).Count 25 'prefetch_parsed' 'Prefetch entries'
-        foreach ($p in ($sorted | Select-Object -First 25)) {
-            $null = $sb.AppendLine("<tr><td class='path'>$(ConvertTo-HtmlEsc $p.$exCol)</td><td>$(ConvertTo-HtmlEsc $p.$rcCol)</td><td>$(ConvertTo-HtmlEsc $p.$lrCol)</td></tr>")
-        }
-        $null = $sb.AppendLine("</table><div class='meta'>Prefetch run counts = program execution evidence (Win8+ cap 1024 files). Source: csv\prefetch_parsed.csv</div>")
-    }
-    if ($mftRecent.Count -gt 0) {
-        $null = $sb.AppendLine("<h3>Recently created / user-path executables (MFT)</h3><table><tr><th>Created</th><th>Path</th><th>Size</th><th>Flags</th></tr>")
-        $mftSorted = $mftRecent
-        try { $mftSorted = @($mftRecent | Sort-Object Created -Descending) } catch { }
-        $shownM = 0
-        foreach ($mr in $mftSorted) {
-            if ("$($mr.Flags)" -notmatch 'user-path') { continue }
-            $null = $sb.AppendLine("<tr><td>$(ConvertTo-HtmlEsc $mr.Created)</td><td class='path'>$(ConvertTo-HtmlEsc $mr.Path)</td><td>$(ConvertTo-HtmlEsc $mr.Size)</td><td>$(ConvertTo-HtmlEsc $mr.Flags)</td></tr>")
-            $shownM++
-            if ($shownM -ge 25) { break }
-        }
-        $null = $sb.AppendLine("</table><div class='meta'>$($mftRecent.Count) executable/user-path/recent entries kept (user-path ones shown). Source: csv\mft_recent.csv</div>")
-    }
-    if ($usnBursts.Count -eq 0 -and $pfParsed.Count -eq 0 -and $mftRecent.Count -eq 0) {
-        $null = $sb.AppendLine("<div class='meta'>No NTFS forensics data (tools\MFTECmd missing, not elevated, or modules skipped).</div>")
-    }
-
-    # ---------- C2 beaconing ----------
-    $null = $sb.AppendLine("<a name='beacons'></a><h2>C2 beaconing candidates (periodic outbound patterns)</h2>")
-    if ($beacons.Count -gt 0) {
-        $null = $sb.AppendLine("<table><tr><th>Severity</th><th>Process</th><th>Remote</th><th>Events</th><th>Span</th><th>Interval</th><th>Jitter</th><th>Regularity</th><th>Flags</th></tr>")
-        Add-CapNote @($beacons).Count 30 'beacon_candidates' 'HTTP beacon candidates'
-        foreach ($b in ($beacons | Select-Object -First 30)) {
-            $sevCls = switch -Regex ("$($b.Severity)") { '^high$' { 'crit'; break } '^medium$' { 'med'; break } default { 'info' } }
-            $null = $sb.AppendLine("<tr><td class='$sevCls'><b>$(ConvertTo-HtmlEsc $b.Severity)</b></td><td class='path'>$(ConvertTo-HtmlEsc $b.Process)</td><td>$(New-VtLink $b.RemoteIp):$(ConvertTo-HtmlEsc $b.Port)</td><td>$($b.Events)</td><td>$($b.SpanMin)min</td><td>~$(ConvertTo-HtmlEsc $b.MedianIntervalSec)s</td><td>$(ConvertTo-HtmlEsc $b.Jitter)</td><td>$(ConvertTo-HtmlEsc $b.Regularity)</td><td>$(ConvertTo-HtmlEsc $b.Flags)</td></tr>")
-        }
-        $null = $sb.AppendLine("</table><div class='meta'>Regularity = share of inter-arrival times within 0.5x-1.5x of the median. Legitimate updaters/telemetry also beacon - weigh process path, signer and destination. Source: csv\beacon_candidates.csv</div>")
-    } else {
-        $null = $sb.AppendLine("<div class='meta'>No periodic outbound connection patterns detected (or no Sysmon network events available - requires Sysmon event ID 3).</div>")
-    }
-    if ($dnsBeacons.Count -gt 0) {
-        $null = $sb.AppendLine("<h3>DNS beaconing (periodic domain queries)</h3><table><tr><th>Severity</th><th>Process</th><th>Domain</th><th>Resolved (public)</th><th>Queries</th><th>Span</th><th>Interval</th><th>Regularity</th><th>Flags</th></tr>")
-        Add-CapNote @($dnsBeacons).Count 30 'dns_beacon_candidates' 'DNS beacon candidates'
-        foreach ($b in ($dnsBeacons | Select-Object -First 30)) {
-            $sevCls = switch -Regex ("$($b.Severity)") { '^high$' { 'crit'; break } '^medium$' { 'med'; break } default { 'info' } }
-            $ripCell = if ("$($b.ResolvedIp)") { New-VtLink $b.ResolvedIp } else { '-' }
-            $null = $sb.AppendLine("<tr><td class='$sevCls'><b>$(ConvertTo-HtmlEsc $b.Severity)</b></td><td class='path'>$(ConvertTo-HtmlEsc $b.Process)</td><td>$(ConvertTo-HtmlEsc $b.Domain)</td><td>$ripCell</td><td>$($b.Events)</td><td>$($b.SpanMin)min</td><td>~$(ConvertTo-HtmlEsc $b.MedianIntervalSec)s</td><td>$(ConvertTo-HtmlEsc $b.Regularity)</td><td>$(ConvertTo-HtmlEsc $b.Flags)</td></tr>")
-        }
-        $null = $sb.AppendLine("</table><div class='meta'>Same periodicity math applied to Sysmon DNS queries (event ID 22) - catches C2 that hides behind domains instead of raw IPs. Source: csv\dns_beacon_candidates.csv</div>")
-    }
-
-    # ---------- network ----------
-    $null = $sb.AppendLine("<a name='network'></a><h2>Public connections (live)</h2>")
-    if ($pubConns.Count -gt 0) {
-        # v2.56: one row per destination with connection count + every talking process
-        $entLeaf = @{}
-        foreach ($eb3 in $entB) { if ("$($eb3.Path)") { $entLeaf[(Split-Path "$($eb3.Path)" -Leaf).ToLower()] = $true } }
-        $null = $sb.AppendLine("<table><tr><th>Remote</th><th>Provider</th><th>Resolved (DNS)</th><th>Conns</th><th>Talking processes</th><th></th></tr>")
-        # v2.82: DNS-attributed connections - resolve column + provider upgrade from domain
-        $domByIp = @{}
-        foreach ($cd in $connDns) { if ("$($cd.RemoteAddress)" -and -not $domByIp.ContainsKey("$($cd.RemoteAddress)")) { $domByIp["$($cd.RemoteAddress)"] = $cd } }
-        Add-CapNote @($pubConns).Count 25 'flash_public_connections' 'Connection groups'
-        foreach ($cg in ($pubConns | Group-Object RemoteAddress, RemotePort | Sort-Object Count -Descending | Select-Object -First 25)) {
-            $c = $cg.Group[0]
-            $prov = Get-IpCloudClass "$($c.RemoteAddress)"
-            $dAtt = $domByIp["$($c.RemoteAddress)"]
-            $prov2 = if ($dAtt) { "$($dAtt.Provider)".Trim() } else { '' }
-        if (-not $prov -and @('', 'unknown') -notcontains $prov2) { $prov = "$($dAtt.Provider)" }
-            if (-not $prov) { $prov = 'non-cloud' }
-            $domCell = ''
-            if ($dAtt -and "$($dAtt.ResolvedDomain)") { $domCell = "$(ConvertTo-HtmlEsc $dAtt.ResolvedDomain)"; if ("$($dAtt.DnsChain)") { $domCell = "<span title='$(ConvertTo-HtmlEsc $dAtt.DnsChain)'>$domCell</span>" } }
-            elseif ($dAtt) { $domCell = "<span class='meta'>no cache entry</span>" }
-            # v2.88: resolve talking-process names properly - ProcessPath leaf, else the flash
-            # process snapshot name for that PID (fixes 'PID 11056 (PID 11056)' with no name);
-            # PID renders as a secondary meta span
-            $talkers = @($cg.Group | ForEach-Object {
-                $leaf = if ("$($_.ProcessPath)") { Split-Path "$($_.ProcessPath)" -Leaf } else { [string]$nameByPid[[string]$($_.PID)] }
-                [pscustomobject]@{ Leaf = $leaf; Pid = "$($_.PID)" }
-            } | Sort-Object Leaf, Pid -Unique)
-            $talkerCells = @($talkers | ForEach-Object {
-                $nm = "$($_.Leaf)"
-                $t = if ($nm) { ConvertTo-HtmlEsc $nm } else { '<span class="meta">name unavailable</span>' }
-                if ($nm -and $entLeaf.ContainsKey($nm.ToLower())) { $t = "<a href='#entities'>$t</a>" }
-                if ("$($_.Pid)") { $t += " <span class='meta'>(PID $($_.Pid))</span>" }
-                $t
-            })
-            $null = $sb.AppendLine("<tr><td>$(ConvertTo-HtmlEsc $c.RemoteAddress):$(ConvertTo-HtmlEsc $c.RemotePort)</td><td>$(ConvertTo-HtmlEsc $prov)</td><td>$domCell</td><td><b>$($cg.Count)</b></td><td>$($talkerCells -join ', ')</td><td>$(New-VtLink $c.RemoteAddress)</td></tr>")
-        }
-        $null = $sb.AppendLine("</table><div class='meta'>Provider source: IP range or resolved-domain suffix. 'no cache entry' = the resolver cache had expired by collection time (normal; Sysmon EID22 would give full coverage). Hover the resolved name for the full CNAME chain.</div>")
-    } else {
-        $null = $sb.AppendLine("<div class='meta'>No public IP connections at collection time.</div>")
-    }
-
-    # ---------- driver check ----------
-    $null = $sb.AppendLine("<a name='drivers'></a><h2>Driver check (LOLDrivers)</h2>")
-    if ($lolHits.Count -gt 0) {
-        $null = $sb.AppendLine("<table><tr><th>Status</th><th>Driver</th><th>Display name</th><th>Path</th><th>SHA256</th></tr>")
-        Add-CapNote @($lolHits).Count 25 'loldrivers_hits' 'Driver matches'
-        foreach ($l in ($lolHits | Sort-Object { "$($_.Status)" -eq 'malicious' } -Descending | Select-Object -First 25)) {
-            $stCls = if ("$($l.Status)" -eq 'malicious') { 'crit' } else { 'med' }
-            $null = $sb.AppendLine("<tr><td class='$stCls'><b>$(ConvertTo-HtmlEsc $l.Status)</b></td><td>$(ConvertTo-HtmlEsc $l.Name)</td><td>$(ConvertTo-HtmlEsc $l.DisplayName)</td><td class='path'>$(ConvertTo-HtmlEsc $l.Path)</td><td class='path'>$(ConvertTo-HtmlEsc $l.SHA256)</td></tr>")
-        }
-        $null = $sb.AppendLine("</table><div class='meta'><b>malicious</b> = hash matches a driver known to be used in attacks (BYOVD / kernel exploits). <b>vulnerable</b> = known-exploitable driver that attackers can abuse for privilege escalation - replace it. Source: csv\loldrivers_hits.csv (datasets: loldrivers.io)</div>")
-    } else {
-        $null = $sb.AppendLine("<div class='meta'>No malicious/vulnerable driver matches (or tools\loldrivers datasets missing - run -Mode Setup, needs admin + module 1.6).</div>")
-    }
-
     # ---------- hunt findings ----------
     # v2.76: honest default view - high/medium stay in the main table, low/info collapse into
     # a details block (nothing deleted; the case draft + verdict keep counting ALL findings)
@@ -7501,6 +7191,80 @@ h3{font-size:13.5px;margin:20px 0 8px;color:var(--tx)}
         $null = $sb.AppendLine("</table><div class='meta'>Minidumps contain unpacked/injected code - YARA hits here mean the pattern lives in MEMORY even if disk scans missed it. Dumps ship in raw\minidumps\ and open in Volatility. Source: csv\memory_live_scan.csv</div>")
     }
 
+    # ---------- logon & account analysis ----------
+    $null = $sb.AppendLine("<a name='logons'></a><h2>Logon & account activity</h2>")
+    $null = $sb.AppendLine("<div class='meta'>Who logged in, from where, and how often - failed attempts and unusual logon types are what matter.</div>")
+    $interAll = @($authEv | Where-Object { "$($_.EventId)" -eq '4624' -and "$($_.LogonType)" -match '^(2|10)$' } |
+        ForEach-Object { [pscustomobject]@{ Who = "$(if ("$($_.AccountDomain)") { "$($_.AccountDomain)\" })$($_.Account) @ $(if ("$($_.SourceIp)") { $_.SourceIp } else { '-' })" } } |
+        Group-Object Who | Sort-Object Count -Descending)
+    $inter = @($interAll | Select-Object -First 15)
+    Add-CapNote @($interAll).Count 15 'security_auth_events' 'Interactive/RDP logon pairs'
+    if ($inter.Count -gt 0) {
+        $null = $sb.AppendLine("<h3>Interactive / RDP logons</h3><table><tr><th>Account @ Source</th><th>Logons</th></tr>")
+        foreach ($g in $inter) { $null = $sb.AppendLine("<tr><td>$(ConvertTo-HtmlEsc $g.Name)</td><td><b>$($g.Count)</b></td></tr>") }
+        $null = $sb.AppendLine("</table>")
+    }
+    if ($authSum.Count -gt 0) {
+        $null = $sb.AppendLine("<h3>Top account/source combinations (all auth events)</h3><details><summary>show top 25 of $($authSum.Count)</summary><table><tr><th>Account @ Source</th><th>Events</th></tr>")
+        foreach ($a in ($authSum | Select-Object -First 25)) { $as2 = "$($a.AccountSource)" -replace '\s*,\s*$', ''; if (-not $as2) { $as2 = '-' }; $null = $sb.AppendLine("<tr><td>$(ConvertTo-HtmlEsc $as2)</td><td>$($a.Count)</td></tr>") }
+        $null = $sb.AppendLine("</table></details>")
+    }
+    # v2.55: explicit-credential logons (4648) - the strongest lateral-movement tell on a
+    # workstation. Previously invisible: the section hard-filtered to 4624 only.
+    # ($secAll imported up at the top - its 4648/4672 rows feed the nav logons count)
+    $e4648 = @($secAll | Where-Object { "$($_.Id)" -eq '4648' -or "$($_.EventId)" -eq '4648' })
+    if ($e4648.Count -gt 0) {
+        $e4648g = @($e4648 | ForEach-Object {
+            $tgt = "$($_.TargetDomainName)"; if (-not $tgt) { $tgt = "$($_.TargetServerName)" }
+            if (-not $tgt) { $tgt = "$($_.TargetUserName)" }
+            $prN = "$($_.ProcessName)"; if (-not $prN) { $prN = '-' }
+            [pscustomobject]@{ Target = if ($tgt) { $tgt } else { '-' }; Proc = $prN }
+        } | Group-Object Target, Proc | Sort-Object Count -Descending | Select-Object -First 10)
+        $null = $sb.AppendLine("<h3>Explicit-credential logons (4648) - $([int]$e4648.Count) event(s)</h3>")
+        $null = $sb.AppendLine("<div class='meta'>A process supplied explicit credentials (username/password) to authenticate - common in admin automation, but also the shape of credential-use-after-theft. Verify the source account and tool.</div>")
+        $null = $sb.AppendLine("<table><tr><th>Target @ Process</th><th>Events</th></tr>")
+        foreach ($g in $e4648g) { $null = $sb.AppendLine("<tr><td>$(ConvertTo-HtmlEsc $g.Name)</td><td><b>$($g.Count)</b></td></tr>") }
+        $null = $sb.AppendLine("</table>")
+    }
+    $e4672 = @($secAll | Where-Object { "$($_.Id)" -eq '4672' -or "$($_.EventId)" -eq '4672' })
+    if ($e4672.Count -gt 0) {
+        $e4672g = @($e4672 | ForEach-Object {
+            [pscustomobject]@{ Who = "$(if ("$($_.AccountDomain)") { "$($_.AccountDomain)\" })$($_.Account)" }
+        } | Group-Object Who | Sort-Object Count -Descending | Select-Object -First 8)
+        $null = $sb.AppendLine("<h3>Special privileges assigned (4672) - $([int]$e4672.Count) event(s)</h3>")
+        $null = $sb.AppendLine("<table><tr><th>Account</th><th>Events</th></tr>")
+        foreach ($g in $e4672g) { $null = $sb.AppendLine("<tr><td>$(ConvertTo-HtmlEsc $g.Name)</td><td><b>$($g.Count)</b></td></tr>") }
+        $null = $sb.AppendLine("</table>")
+    }
+    if ($brute.Count -gt 0) {
+        $null = $sb.AppendLine("<h3>Brute-force candidates</h3><table><tr><th>Source IP</th><th>Failed logons</th><th>VT</th></tr>") # v2.66 (B15b): the VT-links column was an unnamed <th></th>
+        foreach ($b in $brute) { $null = $sb.AppendLine("<tr><td>$(ConvertTo-HtmlEsc $b.SourceIp)</td><td><b>$($b.FailedLogons)</b></td><td>$(New-VtLink $b.SourceIp)</td></tr>") }
+        $null = $sb.AppendLine("</table>")
+    } else {
+        $null = $sb.AppendLine("<div class='meta'>No brute-force candidate sources (threshold: 5+ failed logons). Hayabusa logon summaries: csv\logon_summary* (if module 4.6 ran).</div>")
+    }
+
+    # ---------- persistence inventory ----------
+    # v2.88 USER ACTIVITY section - per-account rollup built above
+    $null = $sb.AppendLine("<a name='useract'></a><h2>User activity rollup</h2>")
+    if ($userAct.Count -gt 0) {
+        $null = $sb.AppendLine("<div class='meta'>Per-account picture: logons, failed attempts, process creations (4688 - richest when command-line auditing is on) and file activity under the user profile. Sorted by total activity.</div>")
+        $null = $sb.AppendLine("<table data-secfilter='useract'><tr><th>Account</th><th>Last seen</th><th>Logons</th><th>Failed</th><th>Types</th><th>Sources</th><th>Processes</th><th>Profile files</th></tr>")
+        $uaRows = @($userAct.Values | Sort-Object @{e = { [int]($_.Logons + $_.Failed + $_.ProcN + [Math]::Min($_.Files, 500)) }; Descending = $true })
+        Add-CapNote $userAct.Count 15 '' 'Accounts in user activity'
+        foreach ($u4 in ($uaRows | Select-Object -First 15)) {
+            $types4 = (@($u4.Types.Keys) | Sort-Object) -join ', '
+            $ips4 = (@($u4.Ips.Keys) | Select-Object -First 3) -join ', '
+            $top4 = (@($u4.Procs.GetEnumerator() | Sort-Object Value -Descending | Select-Object -First 3 | ForEach-Object { "$($_.Key) x$($_.Value)" })) -join ', '
+            $pr4 = if ($u4.ProcN -gt 0) { "$($u4.ProcN)$(if ($top4) { " - $top4" })" } else { '<span class="meta">none logged</span>' }
+            $fl4 = if ($u4.Files -gt 0) { "$($u4.Files) created/modified" } else { '<span class="meta">none</span>' }
+            $null = $sb.AppendLine("<tr><td><b>$(ConvertTo-HtmlEsc $u4.Name)</b></td><td>$(ConvertTo-HtmlEsc $u4.Last)</td><td>$($u4.Logons)</td><td>$(if ($u4.Failed) { "<b class='crit'>$($u4.Failed)</b>" } else { '0' })</td><td>$(ConvertTo-HtmlEsc $types4)</td><td>$(ConvertTo-HtmlEsc $ips4)</td><td class='path'>$pr4</td><td>$fl4</td></tr>")
+        }
+        $null = $sb.AppendLine('</table>')
+        if ($uaRows.Count -gt 15) { $null = $sb.AppendLine("<div class='meta'>showing top 15 of $($uaRows.Count) accounts</div>") }
+    } else {
+        $null = $sb.AppendLine("<div class='meta'>No account activity evidence available (no auth events and no process-creation events in this case).</div>")
+    }
     # ---------- connections: correlated entities ----------
     $null = $sb.AppendLine("<a name='entities'></a><h2>Correlated entities - binaries &amp; accounts</h2>")
     $null = $sb.AppendLine("<div class='meta'>Every binary, account and remote endpoint the case names, cross-linked across sources - open a card for its full story (trail, ran-as, usage).</div>")
@@ -7752,6 +7516,243 @@ h3{font-size:13.5px;margin:20px 0 8px;color:var(--tx)}
             $null = $sb.AppendLine("<tr><td>$(ConvertTo-HtmlEsc $s2.Time)</td><td><b>$(ConvertTo-HtmlEsc $s2.SessionAccount)</b></td><td>$(ConvertTo-HtmlEsc $s2.SourceIp)</td><td>$(ConvertTo-HtmlEsc $s2.Activity)</td><td>$(ConvertTo-HtmlEsc $s2.LogonType)</td><td class='path'>$(ConvertTo-HtmlEsc $s2.Detail)</td></tr>")
         }
         $null = $sb.AppendLine("</table><div class='meta'>4624 LogonId joined to 4688/5145 SubjectLogonId: even service/shared accounts are tied back to the interactive/RDP/network session that created them. Source: csv\$(Get-CaseCsvPath 'session_activity')</div>")
+    }
+
+    $null = $sb.AppendLine("<a name='persistence'></a><h2>Persistence inventory</h2>")
+    $persAny = $false
+    if ($tasksFlag.Count -gt 0) {
+        $persAny = $true
+        $null = $sb.AppendLine("<h3>Flagged scheduled tasks</h3><table><tr><th>Task</th><th>Actions</th><th>Flags</th></tr>")
+        Add-CapNote @($tasksFlag).Count 40 'scheduled_tasks_flagged' 'Flagged tasks'
+        foreach ($t in ($tasksFlag | Select-Object -First 40)) {
+            $null = $sb.AppendLine("<tr><td>$(ConvertTo-HtmlEsc $t.Name)</td><td class='path'>$(ConvertTo-HtmlEsc $t.Actions)</td><td>$(ConvertTo-HtmlEsc $t.Flags)</td></tr>")
+        }
+        $null = $sb.AppendLine("</table>")
+    }
+    if ($taskCacheAnom.Count -gt 0) {
+        $persAny = $true
+        $null = $sb.AppendLine("<h3>Task cache anomalies (ghost / hidden scheduled tasks)</h3><table><tr><th>Kind</th><th>Guid</th><th>Task path</th><th>SD present</th><th>Flags</th></tr>")
+        Add-CapNote @($taskCacheAnom).Count 40 'scheduled_taskcache' 'Task-cache anomalies'
+        foreach ($t4 in ($taskCacheAnom | Select-Object -First 40)) {
+            $null = $sb.AppendLine("<tr><td>$(ConvertTo-HtmlEsc $t4.Kind)</td><td class='path'>$(ConvertTo-HtmlEsc $t4.Guid)</td><td class='path'>$(ConvertTo-HtmlEsc $t4.TaskPath)</td><td>$(ConvertTo-HtmlEsc $t4.SdPresent)</td><td class='crit'>$(ConvertTo-HtmlEsc $t4.Flags)</td></tr>")
+        }
+        $tc87Meta = "Three shapes: SD-MISSING while still Tree-linked = hidden task (still runs, invisible to schtasks/GUI - deleting Tree+XML does not unload a loaded task until reboot); SD kept + ORPHANED = ghost or deletion leftover; SD gone + ORPHANED = stale residue every deleted task leaves ($($taskCacheCruft) row(s) here, not listed). VALUE-READ-DENIED = the collector could not read the value (registry ACL) - state unknown, never treated as an anomaly. Source: csv\scheduled_taskcache.csv"
+        $null = $sb.AppendLine("</table><div class='meta'>$(ConvertTo-HtmlEsc $tc87Meta)</div>")
+    } elseif ($taskCacheCruft -gt 0) {
+        $persAny = $true
+        $null = $sb.AppendLine("<div class='meta'>Task cache: $($taskCacheCruft) stale deleted-task residue entries (no SD + no Tree link - the normal shape every deleted task leaves). No hidden or ghost anomalies found. Source: csv\scheduled_taskcache.csv</div>")
+    }
+    if ($taskDel.Count -gt 0) {
+        $persAny = $true
+        $null = $sb.AppendLine("<h3>Scheduled task deletions (EID 4699)</h3><table><tr><th>Time</th><th>Task</th><th>User</th></tr>")
+        Add-CapNote @($taskDel).Count 25 'task_deletions' 'Task deletions'
+        foreach ($t5 in ($taskDel | Select-Object -First 25)) {
+            $null = $sb.AppendLine("<tr><td>$(ConvertTo-HtmlEsc $t5.Time)</td><td class='path'>$(ConvertTo-HtmlEsc $t5.TaskName)</td><td>$(ConvertTo-HtmlEsc $t5.User)</td></tr>")
+        }
+        $null = $sb.AppendLine("</table><div class='meta'>Deletion alone is normal ops - correlate with the TaskCache anomalies above and recent 4698 installs. Source: csv\task_deletions.csv</div>")
+    }
+    if ($esentRows.Count -gt 0) {
+        $persAny = $true
+        $null = $sb.AppendLine("<h3>ntds.dit access (ESENT 325/326)</h3><table><tr><th>Time</th><th>Pattern</th><th>Event</th></tr>")
+        Add-CapNote @($esentRows).Count 25 'esent_ntds' 'ntds.dit access events'
+        foreach ($e5 in ($esentRows | Select-Object -First 25)) {
+            $pat5 = if ("$($e5.BackupPattern)" -eq 'True') { 'backup-pattern (verify schedule)' } else { 'NON-BACKUP - possible AD database theft' }
+            $cls5 = if ("$($e5.BackupPattern)" -eq 'True') { 'info' } else { 'crit' }
+            $null = $sb.AppendLine("<tr><td>$(ConvertTo-HtmlEsc $e5.Time)</td><td class='$cls5'>$(ConvertTo-HtmlEsc $pat5)</td><td class='path'>$(ConvertTo-HtmlEsc $e5.Message)</td></tr>")
+        }
+        $null = $sb.AppendLine("</table><div class='meta'>Something opened the Active Directory database. VSS/wbengine backup engines are the benign pattern; ntdsutil IFM or custom tooling is credential-theft prep (T1003.003). Source: csv\esent_ntds.csv</div>")
+    }
+    if ($svcFlag.Count -gt 0) {
+        $persAny = $true
+        $null = $sb.AppendLine("<h3>Flagged services</h3><table><tr><th>Service</th><th>Binary</th><th>Flags</th></tr>")
+        Add-CapNote @($svcFlag).Count 40 'services_flagged' 'Flagged services'
+        foreach ($s in ($svcFlag | Select-Object -First 40)) {
+            $null = $sb.AppendLine("<tr><td>$(ConvertTo-HtmlEsc $s.Name)</td><td class='path'>$(ConvertTo-HtmlEsc $s.PathName)</td><td>$(ConvertTo-HtmlEsc $s.Flags)</td></tr>")
+        }
+        $null = $sb.AppendLine("</table>")
+    }
+    if ($wmiBind.Count -gt 0) {
+        $persAny = $true
+        $null = $sb.AppendLine("<h3>WMI event subscriptions (rare on clean hosts - review each)</h3><table><tr><th>Binding</th></tr>")
+        Add-CapNote @($wmiBind).Count 25 'wmi_bindings' 'WMI bindings'
+        foreach ($w in ($wmiBind | Select-Object -First 25)) {
+            $line = ($w.PSObject.Properties | ForEach-Object { "$($_.Value)" }) -join ' | '
+            $null = $sb.AppendLine("<tr><td>$(ConvertTo-HtmlEsc $line)</td></tr>")
+        }
+        $null = $sb.AppendLine("</table>")
+    }
+    if ($runKeys.Count -gt 0) {
+        $persAny = $true
+        $rkLbl = if ($runKeys.Count -gt 60) { "showing first 60 of $($runKeys.Count) entries" } else { "show $($runKeys.Count) entries" }
+        $null = $sb.AppendLine("<h3>Run keys / startup entries</h3><details><summary>$rkLbl</summary><table><tr><th>Name</th><th>Command</th></tr>")
+        Add-CapNote @($runKeys).Count 60 'autoruns_runkeys' 'Run keys'
+        foreach ($r in ($runKeys | Select-Object -First 60)) {
+            $null = $sb.AppendLine("<tr><td>$(ConvertTo-HtmlEsc $r.Name)</td>$(New-ClipCell -Text $r.Value -TdClass 'clip path' -Threshold 120)</tr>")
+        }
+        $null = $sb.AppendLine("</table></details>")
+    }
+    if ($asepHot.Count -gt 0) {
+        $persAny = $true
+        $null = $sb.AppendLine("<h3>Uncommon persistence mechanisms (IFEO / AppInit / Winlogon / netsh / LSA)</h3><table><tr><th>Category</th><th>Target</th><th>Setting</th><th>Value</th><th>Flags</th></tr>")
+        Add-CapNote @($asepHot).Count 40 'asep_sweep' 'ASEP entries (user-writable or non-default)'
+        foreach ($a in ($asepHot | Select-Object -First 40)) {
+            $target = ''
+            try { $target = Split-Path "$($a.Location)" -Leaf } catch { }
+            $null = $sb.AppendLine("<tr><td>$(ConvertTo-HtmlEsc $a.Category)</td><td>$(ConvertTo-HtmlEsc $target)</td><td>$(ConvertTo-HtmlEsc $a.Name)</td><td class='path'>$(ConvertTo-HtmlEsc $a.Value)</td><td>$(ConvertTo-HtmlEsc $a.Flags)</td></tr>")
+        }
+        $null = $sb.AppendLine("</table><div class='meta'>These autostart extensibility points are rarely used by legitimate software (exception: OEM Winlogon Shell entries). Full inventory incl. per-user COM: csv\asep_sweep.csv</div>")
+    }
+    # v2.78: $certHot computed up at the nav build (its count feeds the nav)
+    if ($certHot.Count -gt 0) {
+        $persAny = $true
+        $null = $sb.AppendLine("<h3>Recently added self-signed certificates (root trust)</h3><table><tr><th>Store</th><th>Subject</th><th>NotBefore</th><th>Flags</th></tr>")
+        Add-CapNote @($certHot).Count 25 'certificates' 'Self-signed recently-added certificates'
+        foreach ($c in ($certHot | Select-Object -First 25)) {
+            $null = $sb.AppendLine("<tr><td>$(ConvertTo-HtmlEsc $c.Store)</td><td>$(ConvertTo-HtmlEsc $c.Subject)</td><td>$(ConvertTo-HtmlEsc $c.NotBefore)</td><td>$(ConvertTo-HtmlEsc $c.Flags)</td></tr>")
+        }
+        $null = $sb.AppendLine("</table><div class='meta'>Enterprise root CAs are self-signed by design - verify against the org's PKI. Malware adds root CAs to enable HTTPS interception. Full inventory: csv\certificates.csv</div>")
+    }
+    if (-not $persAny) { $null = $sb.AppendLine("<div class='meta'>No persistence entries captured (modules not run or nothing found).</div>") }
+
+    # ---------- execution history ----------
+    if ($execRows.Count -gt 0) {
+        $null = $sb.AppendLine("<h2>Execution history highlights (user-writable paths)</h2><table>")
+        $shown = 0
+        foreach ($r in $execRows) {
+            $line = ($r.PSObject.Properties | ForEach-Object { "$($_.Value)" }) -join ' '
+            if ($line -match '(?i)\\Users\\|\\AppData\\|\\Temp\\|\\ProgramData\\|\\Downloads\\') {
+                $ts = ($r.PSObject.Properties | Select-Object -First 1).Value
+                $pathCol = @($r.PSObject.Properties | Where-Object { "$($_.Value)" -match '(?i)\\.*\.(exe|dll|ps1|bat|scr|js|vbs)' } | Select-Object -First 1)
+                $pv = if ($pathCol) { "$($pathCol.Value)" } else { $line }
+                $null = $sb.AppendLine("<tr><td>$(ConvertTo-HtmlEsc $ts)</td><td class='path'>$(ConvertTo-HtmlEsc $pv)</td></tr>")
+                $shown++
+                if ($shown -ge 40) { break }
+            }
+        }
+        # v2.68 (B13): same equals-cap honesty on the execution-history caption
+        $execCap = if ($shown -lt $execRows.Count) { "First $shown of $($execRows.Count) entries" } else { "All $shown entries" }
+        $null = $sb.AppendLine("</table><div class='meta'>$execCap - full: csv\execution_timeline.csv</div>")
+    }
+
+    # ---------- file system forensics ----------
+    $null = $sb.AppendLine("<a name='filesystem'></a><h2>File-system evidence (MFT / USN journal / prefetch)</h2>")
+    if ($usnBursts.Count -gt 0) {
+        $null = $sb.AppendLine("<div class='sig'><b>Ransomware-style mass file modification detected</b> - $($usnBursts.Count) window(s) with 1000+ write events per minute:</div>")
+        $null = $sb.AppendLine("<table><tr><th>Window start</th><th>Write events</th><th>Distinct files</th></tr>")
+        Add-CapNote @($usnBursts).Count 15 'usn_bursts' 'USN write bursts'
+        foreach ($u in ($usnBursts | Select-Object -First 15)) {
+            $null = $sb.AppendLine("<tr><td class='crit'><b>$(ConvertTo-HtmlEsc $u.WindowStart)</b></td><td>$($u.WriteEvents)</td><td>$($u.DistinctFiles)</td></tr>")
+        }
+        $null = $sb.AppendLine("</table><div class='meta'>Legitimate mass changes (system updates, builds, AV signature storms) also trigger this. Cross-check the window against process/Sigma findings. Source: csv\artifacts\usn_write_bursts.csv</div>")
+    }
+    if ($pfParsed.Count -gt 0) {
+        $rcCol = @($pfParsed[0].PSObject.Properties.Name | Where-Object { $_ -match 'runcount|^run' } | Select-Object -First 1)[0]
+        $lrCol = @($pfParsed[0].PSObject.Properties.Name | Where-Object { $_ -match 'lastrun' } | Select-Object -First 1)[0]
+        $exCol = @($pfParsed[0].PSObject.Properties.Name | Where-Object { $_ -match 'executable|^name$' } | Select-Object -First 1)[0]
+        $null = $sb.AppendLine("<h3>Most-run programs (prefetch)</h3><table><tr><th>Executable</th><th>Run count</th><th>Last run</th></tr>")
+        $sorted = $pfParsed
+        if ($rcCol) { $sorted = @($pfParsed | Sort-Object @{e = { ConvertTo-SafeInt $_.$rcCol } } -Descending) }
+        Add-CapNote @($pfParsed).Count 25 'prefetch_parsed' 'Prefetch entries'
+        foreach ($p in ($sorted | Select-Object -First 25)) {
+            $null = $sb.AppendLine("<tr><td class='path'>$(ConvertTo-HtmlEsc $p.$exCol)</td><td>$(ConvertTo-HtmlEsc $p.$rcCol)</td><td>$(ConvertTo-HtmlEsc $p.$lrCol)</td></tr>")
+        }
+        $null = $sb.AppendLine("</table><div class='meta'>Prefetch run counts = program execution evidence (Win8+ cap 1024 files). Source: csv\prefetch_parsed.csv</div>")
+    }
+    if ($mftRecent.Count -gt 0) {
+        $null = $sb.AppendLine("<h3>Recently created / user-path executables (MFT)</h3><table><tr><th>Created</th><th>Path</th><th>Size</th><th>Flags</th></tr>")
+        $mftSorted = $mftRecent
+        try { $mftSorted = @($mftRecent | Sort-Object Created -Descending) } catch { }
+        $shownM = 0
+        foreach ($mr in $mftSorted) {
+            if ("$($mr.Flags)" -notmatch 'user-path') { continue }
+            $null = $sb.AppendLine("<tr><td>$(ConvertTo-HtmlEsc $mr.Created)</td><td class='path'>$(ConvertTo-HtmlEsc $mr.Path)</td><td>$(ConvertTo-HtmlEsc $mr.Size)</td><td>$(ConvertTo-HtmlEsc $mr.Flags)</td></tr>")
+            $shownM++
+            if ($shownM -ge 25) { break }
+        }
+        $null = $sb.AppendLine("</table><div class='meta'>$($mftRecent.Count) executable/user-path/recent entries kept (user-path ones shown). Source: csv\mft_recent.csv</div>")
+    }
+    if ($usnBursts.Count -eq 0 -and $pfParsed.Count -eq 0 -and $mftRecent.Count -eq 0) {
+        $null = $sb.AppendLine("<div class='meta'>No NTFS forensics data (tools\MFTECmd missing, not elevated, or modules skipped).</div>")
+    }
+
+    # ---------- C2 beaconing ----------
+    $null = $sb.AppendLine("<a name='beacons'></a><h2>C2 beaconing candidates (periodic outbound patterns)</h2>")
+    if ($beacons.Count -gt 0) {
+        $null = $sb.AppendLine("<table><tr><th>Severity</th><th>Process</th><th>Remote</th><th>Events</th><th>Span</th><th>Interval</th><th>Jitter</th><th>Regularity</th><th>Flags</th></tr>")
+        Add-CapNote @($beacons).Count 30 'beacon_candidates' 'HTTP beacon candidates'
+        foreach ($b in ($beacons | Select-Object -First 30)) {
+            $sevCls = switch -Regex ("$($b.Severity)") { '^high$' { 'crit'; break } '^medium$' { 'med'; break } default { 'info' } }
+            $null = $sb.AppendLine("<tr><td class='$sevCls'><b>$(ConvertTo-HtmlEsc $b.Severity)</b></td><td class='path'>$(ConvertTo-HtmlEsc $b.Process)</td><td>$(New-VtLink $b.RemoteIp):$(ConvertTo-HtmlEsc $b.Port)</td><td>$($b.Events)</td><td>$($b.SpanMin)min</td><td>~$(ConvertTo-HtmlEsc $b.MedianIntervalSec)s</td><td>$(ConvertTo-HtmlEsc $b.Jitter)</td><td>$(ConvertTo-HtmlEsc $b.Regularity)</td><td>$(ConvertTo-HtmlEsc $b.Flags)</td></tr>")
+        }
+        $null = $sb.AppendLine("</table><div class='meta'>Regularity = share of inter-arrival times within 0.5x-1.5x of the median. Legitimate updaters/telemetry also beacon - weigh process path, signer and destination. Source: csv\beacon_candidates.csv</div>")
+    } else {
+        $null = $sb.AppendLine("<div class='meta'>No periodic outbound connection patterns detected (or no Sysmon network events available - requires Sysmon event ID 3).</div>")
+    }
+    if ($dnsBeacons.Count -gt 0) {
+        $null = $sb.AppendLine("<h3>DNS beaconing (periodic domain queries)</h3><table><tr><th>Severity</th><th>Process</th><th>Domain</th><th>Resolved (public)</th><th>Queries</th><th>Span</th><th>Interval</th><th>Regularity</th><th>Flags</th></tr>")
+        Add-CapNote @($dnsBeacons).Count 30 'dns_beacon_candidates' 'DNS beacon candidates'
+        foreach ($b in ($dnsBeacons | Select-Object -First 30)) {
+            $sevCls = switch -Regex ("$($b.Severity)") { '^high$' { 'crit'; break } '^medium$' { 'med'; break } default { 'info' } }
+            $ripCell = if ("$($b.ResolvedIp)") { New-VtLink $b.ResolvedIp } else { '-' }
+            $null = $sb.AppendLine("<tr><td class='$sevCls'><b>$(ConvertTo-HtmlEsc $b.Severity)</b></td><td class='path'>$(ConvertTo-HtmlEsc $b.Process)</td><td>$(ConvertTo-HtmlEsc $b.Domain)</td><td>$ripCell</td><td>$($b.Events)</td><td>$($b.SpanMin)min</td><td>~$(ConvertTo-HtmlEsc $b.MedianIntervalSec)s</td><td>$(ConvertTo-HtmlEsc $b.Regularity)</td><td>$(ConvertTo-HtmlEsc $b.Flags)</td></tr>")
+        }
+        $null = $sb.AppendLine("</table><div class='meta'>Same periodicity math applied to Sysmon DNS queries (event ID 22) - catches C2 that hides behind domains instead of raw IPs. Source: csv\dns_beacon_candidates.csv</div>")
+    }
+
+    # ---------- network ----------
+    $null = $sb.AppendLine("<a name='network'></a><h2>Public connections (live)</h2>")
+    if ($pubConns.Count -gt 0) {
+        # v2.56: one row per destination with connection count + every talking process
+        $entLeaf = @{}
+        foreach ($eb3 in $entB) { if ("$($eb3.Path)") { $entLeaf[(Split-Path "$($eb3.Path)" -Leaf).ToLower()] = $true } }
+        $null = $sb.AppendLine("<table><tr><th>Remote</th><th>Provider</th><th>Resolved (DNS)</th><th>Conns</th><th>Talking processes</th><th></th></tr>")
+        # v2.82: DNS-attributed connections - resolve column + provider upgrade from domain
+        $domByIp = @{}
+        foreach ($cd in $connDns) { if ("$($cd.RemoteAddress)" -and -not $domByIp.ContainsKey("$($cd.RemoteAddress)")) { $domByIp["$($cd.RemoteAddress)"] = $cd } }
+        Add-CapNote @($pubConns).Count 25 'flash_public_connections' 'Connection groups'
+        foreach ($cg in ($pubConns | Group-Object RemoteAddress, RemotePort | Sort-Object Count -Descending | Select-Object -First 25)) {
+            $c = $cg.Group[0]
+            $prov = Get-IpCloudClass "$($c.RemoteAddress)"
+            $dAtt = $domByIp["$($c.RemoteAddress)"]
+            $prov2 = if ($dAtt) { "$($dAtt.Provider)".Trim() } else { '' }
+        if (-not $prov -and @('', 'unknown') -notcontains $prov2) { $prov = "$($dAtt.Provider)" }
+            if (-not $prov) { $prov = 'non-cloud' }
+            $domCell = ''
+            if ($dAtt -and "$($dAtt.ResolvedDomain)") { $domCell = "$(ConvertTo-HtmlEsc $dAtt.ResolvedDomain)"; if ("$($dAtt.DnsChain)") { $domCell = "<span title='$(ConvertTo-HtmlEsc $dAtt.DnsChain)'>$domCell</span>" } }
+            elseif ($dAtt) { $domCell = "<span class='meta'>no cache entry</span>" }
+            # v2.88: resolve talking-process names properly - ProcessPath leaf, else the flash
+            # process snapshot name for that PID (fixes 'PID 11056 (PID 11056)' with no name);
+            # PID renders as a secondary meta span
+            $talkers = @($cg.Group | ForEach-Object {
+                $leaf = if ("$($_.ProcessPath)") { Split-Path "$($_.ProcessPath)" -Leaf } else { [string]$nameByPid[[string]$($_.PID)] }
+                [pscustomobject]@{ Leaf = $leaf; Pid = "$($_.PID)" }
+            } | Sort-Object Leaf, Pid -Unique)
+            $talkerCells = @($talkers | ForEach-Object {
+                $nm = "$($_.Leaf)"
+                $t = if ($nm) { ConvertTo-HtmlEsc $nm } else { '<span class="meta">name unavailable</span>' }
+                if ($nm -and $entLeaf.ContainsKey($nm.ToLower())) { $t = "<a href='#entities'>$t</a>" }
+                if ("$($_.Pid)") { $t += " <span class='meta'>(PID $($_.Pid))</span>" }
+                $t
+            })
+            $null = $sb.AppendLine("<tr><td>$(ConvertTo-HtmlEsc $c.RemoteAddress):$(ConvertTo-HtmlEsc $c.RemotePort)</td><td>$(ConvertTo-HtmlEsc $prov)</td><td>$domCell</td><td><b>$($cg.Count)</b></td><td>$($talkerCells -join ', ')</td><td>$(New-VtLink $c.RemoteAddress)</td></tr>")
+        }
+        $null = $sb.AppendLine("</table><div class='meta'>Provider source: IP range or resolved-domain suffix. 'no cache entry' = the resolver cache had expired by collection time (normal; Sysmon EID22 would give full coverage). Hover the resolved name for the full CNAME chain.</div>")
+    } else {
+        $null = $sb.AppendLine("<div class='meta'>No public IP connections at collection time.</div>")
+    }
+
+    # ---------- driver check ----------
+    $null = $sb.AppendLine("<a name='drivers'></a><h2>Driver check (LOLDrivers)</h2>")
+    if ($lolHits.Count -gt 0) {
+        $null = $sb.AppendLine("<table><tr><th>Status</th><th>Driver</th><th>Display name</th><th>Path</th><th>SHA256</th></tr>")
+        Add-CapNote @($lolHits).Count 25 'loldrivers_hits' 'Driver matches'
+        foreach ($l in ($lolHits | Sort-Object { "$($_.Status)" -eq 'malicious' } -Descending | Select-Object -First 25)) {
+            $stCls = if ("$($l.Status)" -eq 'malicious') { 'crit' } else { 'med' }
+            $null = $sb.AppendLine("<tr><td class='$stCls'><b>$(ConvertTo-HtmlEsc $l.Status)</b></td><td>$(ConvertTo-HtmlEsc $l.Name)</td><td>$(ConvertTo-HtmlEsc $l.DisplayName)</td><td class='path'>$(ConvertTo-HtmlEsc $l.Path)</td><td class='path'>$(ConvertTo-HtmlEsc $l.SHA256)</td></tr>")
+        }
+        $null = $sb.AppendLine("</table><div class='meta'><b>malicious</b> = hash matches a driver known to be used in attacks (BYOVD / kernel exploits). <b>vulnerable</b> = known-exploitable driver that attackers can abuse for privilege escalation - replace it. Source: csv\loldrivers_hits.csv (datasets: loldrivers.io)</div>")
+    } else {
+        $null = $sb.AppendLine("<div class='meta'>No malicious/vulnerable driver matches (or tools\loldrivers datasets missing - run -Mode Setup, needs admin + module 1.6).</div>")
     }
 
     # ---------- host snapshot ----------
@@ -14287,7 +14288,8 @@ function Invoke-FocusCore {
     if ($hits.Count -gt 0) {
         # v2.56: $hint/$hintCls/$hintTxt computed once before the JSON write - reused here
         $h = New-Object System.Text.StringBuilder
-        [void]$h.AppendLine("<!DOCTYPE html><html><head><meta charset='utf-8'><title>Ophira focus - $Indicator</title><style>body{background:#141821;color:#cdd3dc;font:13px/1.45 'Segoe UI',sans-serif;margin:20px}h1{color:#eee;font-size:20px}h2{color:#7ab;font-size:15px;border-bottom:1px solid #2a3040;padding-bottom:4px;margin-top:26px}h3{color:#9bd;font-size:13px;margin-top:18px}table{border-collapse:collapse;margin:8px 0;width:100%}th,td{border:1px solid #2a3040;padding:4px 8px;text-align:left;vertical-align:top}th{background:#1d2330;color:#9ab}.path{font-family:Consolas,monospace;font-size:12px;word-break:break-all}td{word-break:break-word}.banner{padding:12px 16px;border-radius:6px;margin:12px 0;font-weight:bold}.crit{background:#3a1518;color:#f88;border:1px solid #722}.med{background:#33290f;color:#fc6;border:1px solid #663}.info{background:#1d2330;color:#8ac;border:1px solid #345}.meta{color:#788;font-size:12px;margin:6px 0}.warn{color:#fc6}td.clip{cursor:copy}td.clip .cpv{word-break:break-all}.swall{background:#1d2330;border:1px solid #3a4a63;color:#8ac;border-radius:4px;padding:1px 8px;cursor:pointer;font-size:11px;margin-top:3px}#copied{position:fixed;bottom:14px;right:14px;background:#12301e;color:#7ee2a8;padding:8px 14px;border-radius:8px;display:none;z-index:99;font-size:12px;font-weight:700}</style></head><body>")
+        # v2.98: palette parity with the main report shell (v2.89 deep palette) + print CSS
+        [void]$h.AppendLine("<!DOCTYPE html><html><head><meta charset='utf-8'><title>Ophira focus - $Indicator</title><style>body{background:#0b0e14;color:#e6edf7;font:13px/1.55 'Segoe UI',sans-serif;margin:24px}h1{color:#e6edf7;font-size:20px;margin:0 0 6px}h2{color:#7aa2f7;font-size:15px;border-bottom:1px solid #232b3d;padding-bottom:5px;margin-top:26px}h3{color:#9aa8c0;font-size:13px;margin-top:18px}table{border-collapse:collapse;margin:8px 0;width:100%}th,td{border:1px solid #232b3d;padding:4px 8px;text-align:left;vertical-align:top}th{background:#121622;color:#7aa2f7}tr{transition:background .12s}tr:hover{background:rgba(122,162,247,.06)}.path{font-family:Consolas,monospace;font-size:12px;word-break:break-all}td{word-break:break-word}.banner{padding:12px 16px;border-radius:8px;margin:12px 0;font-weight:bold}.crit{background:#2a1216;color:#ff8789;border:1px solid #6e2a30}.med{background:#2a2110;color:#e0af68;border:1px solid #5a4a22}.info{background:#121622;color:#9ec1f0;border:1px solid #313c55}.meta{color:#6b7691;font-size:12px;margin:6px 0}.warn{color:#e0af68}td.clip{cursor:copy}td.clip .cpv{word-break:break-all}.swall{background:#121622;border:1px solid #313c55;color:#9ec1f0;border-radius:4px;padding:1px 8px;cursor:pointer;font-size:11px;margin-top:3px}#copied{position:fixed;bottom:14px;right:14px;background:#12301e;color:#7ee2a8;padding:8px 14px;border-radius:8px;display:none;z-index:99;font-size:12px;font-weight:700}::selection{background:rgba(122,162,247,.35)}@media print{body{background:#fff;color:#111}.crit{background:#fff;color:#b00020;border-color:#999}.med{background:#fff;color:#a06c00;border-color:#999}.info{background:#fff;color:#333;border-color:#999}.meta{color:#444}.swall{display:none}}</style></head><body>")
         [void]$h.AppendLine("<h1>FOCUS DOSSIER - $(& $esc $Indicator)</h1>")
         # v2.97: reading guide - users could not tell what relates to what or what is interactive
         [void]$h.AppendLine("<div class='meta'>How to read this dossier, top to bottom: verdict banner &gt; activity graph (each instance red, parents on the left, what it did on the right) &gt; entity groups (same-hash = same file; same-name-only = verify before merging) &gt; instances &gt; per-instance detail tables &gt; per-source evidence sections. Click any long path/command to copy it; <b>show all</b> expands it in place. Full data: focus\focus_hits.csv and focus\focus_chain.csv.</div>")
