@@ -1,4 +1,4 @@
-# Ophira
+﻿# Ophira
 
 **One PowerShell script** (5.1+, zero dependencies) for Windows incident response: collect evidence on an endpoint, push it across a fleet, analyze the results, and fetch companion tools.
 
