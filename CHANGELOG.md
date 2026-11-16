@@ -9,6 +9,19 @@
 
 
 
+
+## v3.1 - report UI polish + interaction repair
+
+- CRITICAL JS FIX: the scrollspy edit shipped an extra closing brace inside the main report script - the whole interaction layer (theme toggle, sidebar, section filters, copy-on-click, show-all buttons, drill-downs) silently died with 'missing ) after argument list' in every v3.1 render. Caught by live browser audit; report JS now parse-verified.
+- Scrollspy: live getBoundingClientRect (no stale load-time offsets), first section activates at load (initial tick dispatch), last section wins near page bottom.
+- Processes: consecutive same binary+path+verdict rows collapse into one card with a PID list ('PIDs a, b, c (+N more)') - svchost/dllhost no longer render 5 identical cards; VT-link call dropped from cards (exe names never link since v2.67 - the label duplicated the name); leading \\?\ stripped for display.
+- Sigma: the summary table that duplicated the drill-down one screen below is replaced by a single counts line; the drill-down remains the single browsable view.
+- Entities: First/Last seen cells format through one mixed-dialect parser ('yyyy-MM-dd HH:mm:ss'); empty FirstSeen falls back to the earliest trail event; binaries with a hot lead get a 'hot lead' badge linking to Leads.
+- Stack view: per-path severity coloring (suspicious paths red, benign Microsoft-appdata siblings stay neutral - the old whole-row red dyed benign rows); Windows Defender + Microsoft appdata benign-path whitelist.
+- Coverage table: Importance column right-aligned tabular numerals; collected mark column fixed width.
+- Snapshot: Defender signature age 65000+ days renders 'unknown'; saved-credentials/BITS tables drop a column when every row leaves it empty; timeline intro card became a compact meta line with an inline details for the deep explanation.
+- Timestamps/nav: word-break -> overflow-wrap on .path/.ioc (no more mid-glyph breaks); tiles use tabular numerals; beacon tile honest color (0 = neutral, not green).
+
 ## v3.0 - curated rule packs + professional surface (world-class pass 1)
 
 - YARA Forge integration: Setup catalog gains a 'yaraforge' entry (Neo23x0/YaraForge, conservative quality-filtered pack). Module 4.7 now scans BOTH the bundled tools\yara\rules and tools\endpoint\yaraforge as a second rules directory (per-file two-pass scan, hits merged; pack size logged at collection time).
