@@ -142,22 +142,22 @@ $html = Get-Content -LiteralPath (Join-Path $CaseDir 'report.html') -Raw
 # ---- T10: nav counts (populated + empty sections) ----
 # v2.93: nav links carry a title attribute (inventory-vs-display honesty note) - match the
 # link text, not the exact tag.
-Check "T10: populated section shows its count - Processes (32)" ($html -match "<a href='#processes'[^>]*>Processes \(32\)</a>")
-Check "T10: populated section shows its count - Hunt (2)" ($html -match "<a href='#hunt'[^>]*>Hunt \(2\)</a>")
-Check "T10: populated section shows its count - Leads (2)" ($html -match "<a href='#leads'[^>]*>Leads \(2\)</a>")
-Check "T10: populated section shows its count - Sigma (3)" ($html -match "<a href='#sigma'[^>]*>Sigma \(3\)</a>")
-Check "T10: med+ only - Findings by tactic (2)" ($html -match "<a href='#tactics'[^>]*>Findings by tactic \(2\)</a>")
-Check "T10: distinct techniques - ATT&CK (2) with the escaped ampersand" ($html -match "<a href='#attack'[^>]*>ATT&amp;CK \(2\)</a>")
-Check "T10: populated section shows its count - IOCs (1)" ($html -match "<a href='#ioc'[^>]*>IOCs \(1\)</a>")
-Check "T10: populated section shows its count - Timeline (4)" ($html -match "<a href='#timeline'[^>]*>Timeline \(4\)</a>")
-Check "T10: focus dossier row count from focus_terms.json - Focus (7)" ($html -match "<a href='#focus'[^>]*>Focus \(7\)</a>")
-Check "T10: coverage rows + gaps - Coverage (3)" ($html -match "<a href='#coverage'[^>]*>Coverage \(3\)</a>")
-Check "T10: 4648 rows counted - Logons (2)" ($html -match "<a href='#logons'[^>]*>Logons \(2\)</a>")
-Check "T10: multi-source binaries only - Entities (1)" ($($html -match "<a href='#entities'[^>]*>Entities \(1\)</a>"))
-Check "T10: populated snapshot source counted - Snapshot (1)" ($($html -match "<a href='#snapshot'[^>]*>Snapshot \(1\)</a>"))
+Check "T10: populated section shows its count - Processes (32)" ($html -match "<a href='#processes'[^>]*><span class='nl'>Processes</span><span class='nc'>\(32\)</span></a>")
+Check "T10: populated section shows its count - Hunt (2)" ($html -match "<a href='#hunt'[^>]*><span class='nl'>Hunt</span><span class='nc'>\(2\)</span></a>")
+Check "T10: populated section shows its count - Leads (2)" ($html -match "<a href='#leads'[^>]*><span class='nl'>Leads</span><span class='nc'>\(2\)</span></a>")
+Check "T10: populated section shows its count - Sigma (3)" ($html -match "<a href='#sigma'[^>]*><span class='nl'>Sigma</span><span class='nc'>\(3\)</span></a>")
+Check "T10: med+ only - Findings by tactic (2)" ($html -match "<a href='#tactics'[^>]*><span class='nl'>Findings by tactic</span><span class='nc'>\(2\)</span></a>")
+Check "T10: distinct techniques - ATT&CK (2) with the escaped ampersand" ($html -match "<a href='#attack'[^>]*><span class='nl'>ATT&amp;CK</span><span class='nc'>\(2\)</span></a>")
+Check "T10: populated section shows its count - IOCs (1)" ($html -match "<a href='#ioc'[^>]*><span class='nl'>IOCs</span><span class='nc'>\(1\)</span></a>")
+Check "T10: populated section shows its count - Timeline (4)" ($html -match "<a href='#timeline'[^>]*><span class='nl'>Timeline</span><span class='nc'>\(4\)</span></a>")
+Check "T10: focus dossier row count from focus_terms.json - Focus (7)" ($html -match "<a href='#focus'[^>]*><span class='nl'>Focus</span><span class='nc'>\(7\)</span></a>")
+Check "T10: coverage rows + gaps - Coverage (3)" ($html -match "<a href='#coverage'[^>]*><span class='nl'>Coverage</span><span class='nc'>\(3\)</span></a>")
+Check "T10: 4648 rows counted - Logons (2)" ($html -match "<a href='#logons'[^>]*><span class='nl'>Logons</span><span class='nc'>\(2\)</span></a>")
+Check "T10: multi-source binaries only - Entities (1)" ($($html -match "<a href='#entities'[^>]*><span class='nl'>Entities</span><span class='nc'>\(1\)</span></a>"))
+Check "T10: populated snapshot source counted - Snapshot (1)" ($($html -match "<a href='#snapshot'[^>]*><span class='nl'>Snapshot</span><span class='nc'>\(1\)</span></a>"))
 Check "T10: credential sweep table renders from the populated CSV" (($html.Contains('<h3>Credential exposure sweep</h3>')) -and ($html.Contains('WLAN key (NETGEAR-GUEST)')))
-Check "T10: empty section shows the (none) marker - YARA" ($($html -match "<a href='#yara'[^>]*>YARA \(none\)</a>"))
-Check "T10: empty section shows the (none) marker - Drivers" ($($html -match "<a href='#drivers'[^>]*>Drivers \(none\)</a>"))
+Check "T10: empty section shows the (none) marker - YARA" ($($html -match "<a href='#yara'[^>]*><span class='nl'>YARA</span><span class='nc'>\(none\)</span></a>"))
+Check "T10: empty section shows the (none) marker - Drivers" ($($html -match "<a href='#drivers'[^>]*><span class='nl'>Drivers</span><span class='nc'>\(none\)</span></a>"))
 
 # nav counts must not break the v2.66 B1 contract: every link still targets a real anchor
 $navHtml278 = [regex]::Match($html, "(?m)^<div class='nav' id='snav'>(.*)$").Groups[1].Value
@@ -173,7 +173,7 @@ Check "T10: truncated section states the cap in the heading (showing 30 of 32)" 
 $null = New-HtmlReport
 $htmlFew = Get-Content -LiteralPath (Join-Path $CaseDir 'report.html') -Raw
 Check "T10: untruncated/empty section keeps the plain heading (no cap text)" (($htmlFew.Contains('<h2>Process verdicts (correlation scored)</h2>')) -and (-not ($htmlFew.Contains('correlation scored) - showing'))))
-Check "T10: nav count follows the data - Processes (none)" (($htmlFew -match "<a href='#processes'[^>]*>Processes \(none\)</a>"))
+Check "T10: nav count follows the data - Processes (none)" (($htmlFew -match "<a href='#processes'[^>]*><span class='nl'>Processes</span><span class='nc'>\(none\)</span></a>"))
 
 # restore a small scored set -> cap must stay absent, count updates
 @'
@@ -183,7 +183,7 @@ Check "T10: nav count follows the data - Processes (none)" (($htmlFew -match "<a
 '@ | Set-Content -LiteralPath (Join-Path $csvDir 'flash_process_scored.csv') -Encoding UTF8
 $null = New-HtmlReport
 $html12 = Get-Content -LiteralPath (Join-Path $CaseDir 'report.html') -Raw
-Check "T10: 2 scored rows -> Processes (2), no cap text" ((($html12 -match "<a href='#processes'[^>]*>Processes \(2\)</a>")) -and (-not ($html12.Contains('correlation scored) - showing'))))
+Check "T10: 2 scored rows -> Processes (2), no cap text" ((($html12 -match "<a href='#processes'[^>]*><span class='nl'>Processes</span><span class='nc'>\(2\)</span></a>")) -and (-not ($html12.Contains('correlation scored) - showing'))))
 
 # ---- T9: draft collapse (behavioral) + Recommendations anchor resolution ----
 $null = New-HtmlReport

@@ -1,5 +1,5 @@
 <#
-Ophira v3.2  -  Windows Endpoint Triage Toolkit
+Ophira v3.3  -  Windows Endpoint Triage Toolkit
 READ-ONLY by design: never modifies the system, only reads and copies data
 into its own output folder. Intended to be handed to a system owner or run
 by a responder during early triage / threat hunting.
@@ -363,7 +363,7 @@ param(
     [switch]$ExitVerdict
 )
 
-$ScriptVersion = "3.2"
+$ScriptVersion = "3.3"
 $ErrorActionPreference = 'Continue'
 $ProgressPreference = 'SilentlyContinue'
 
@@ -6097,12 +6097,15 @@ a{color:var(--acc);text-decoration:none}a:hover{color:var(--tx)}
 .tspacer{flex:1}
 .tbtn{background:var(--bg3);border:1px solid var(--line2);color:var(--tx2);border-radius:7px;font:inherit;font-size:12px;padding:5px 13px;cursor:pointer;transition:border-color .15s,color .15s,transform .15s}
 .tbtn:hover{color:var(--tx);border-color:var(--acc);transform:translateY(-1px)}
-.nav{position:fixed;top:0;left:0;bottom:0;width:250px;background:var(--bg2);border-right:1px solid var(--line);padding:16px 10px;overflow-y:auto;z-index:40;display:flex;flex-direction:column;gap:2px}
-.nav a{color:var(--tx2);font-size:13px;text-decoration:none;padding:6px 12px;border-radius:8px;border-left:2px solid transparent;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;transition:background .12s,color .12s}
+.nav{position:fixed;top:0;left:0;bottom:0;width:250px;box-sizing:border-box;background:var(--bg2);border-right:1px solid var(--line);padding:16px 10px;overflow-y:auto;z-index:40;display:flex;flex-direction:column;gap:2px}
+.nav a{color:var(--tx2);font-size:13px;text-decoration:none;padding:7px 12px;border-radius:8px;border-left:2px solid transparent;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;display:flex;flex-direction:row;justify-content:space-between;align-items:center;gap:10px;flex:0 0 auto;min-height:17px;transition:background .12s,color .12s}
 .nav a:hover{background:var(--bg3);color:var(--tx)}
-.nbrand{font-weight:800;font-size:15px;letter-spacing:2.5px;color:var(--acc);padding:4px 12px 12px;border-bottom:1px solid var(--line);margin-bottom:10px}
+.nbrand{font-weight:800;font-size:15px;letter-spacing:2.5px;color:var(--acc);padding:4px 12px 12px;border-bottom:1px solid var(--line);margin-bottom:10px;flex:0 0 auto}
 .nbrand span{display:block;font-size:10px;font-weight:500;letter-spacing:1.2px;color:var(--tx3);margin-top:3px}
-.ngh{font-size:10px;font-weight:700;letter-spacing:1.8px;text-transform:uppercase;color:var(--tx3);padding:14px 12px 5px}
+.ngh{font-size:10px;font-weight:700;letter-spacing:1.8px;text-transform:uppercase;color:var(--tx3);padding:14px 12px 5px;flex:0 0 auto}
+.nav a .nl{flex:1 1 auto;overflow:hidden;text-overflow:ellipsis}
+.nav a .nc{flex:0 0 auto;color:var(--tx3);font-size:11px;font-variant-numeric:tabular-nums}
+.nlegend{flex:0 0 auto}
 .nav a.act{background:linear-gradient(90deg, rgba(122,162,247,.20), transparent 78%);color:var(--acc);border-left-color:var(--acc);font-weight:600;box-shadow:inset 0 0 0 1px rgba(122,162,247,.22)}
 .nav::-webkit-scrollbar{width:8px}.nav::-webkit-scrollbar-thumb{background:var(--line2);border-radius:4px}
 @media(max-width:1100px){.nav{position:static;width:auto;flex-direction:row;flex-wrap:wrap;border-bottom:1px solid var(--line)}body{padding-left:30px}.topbar{left:0}}
@@ -6405,15 +6408,18 @@ a[name]{scroll-margin-top:66px}html{overflow-x:clip}[data-theme=light] .nav a.ac
         foreach ($nk in $navGroups[$ng]) {
             $nl2 = ConvertTo-HtmlEsc $nLabel[$nk]
             $nc2 = $null
+            $ncHtml = ''
             if ($nCount.ContainsKey($nk)) {
                 $nc2 = [int]$nCount[$nk]
-                $nl2 = "$nl2 $(if ($nc2 -gt 0) { "($nc2)" } else { '(none)' })"
+                # v3.3: label and count ride separate spans - the count right-aligns (flex
+                # row on .nav a) and long labels ellipsize instead of pushing the count out.
+                $ncHtml = "<span class='nc'>$(if ($nc2 -gt 0) { "($nc2)" } else { '(none)' })</span>"
             }
             # v2.93 (C1): the number is the EVIDENCE INVENTORY (rows collected for this
             # section), not the rows the section displays - sections render capped views with
             # their own 'showing first N of M' notes. Tooltip + the nav legend make that
             # explicit so the count can't read as 'what you are about to see'.
-            $navParts.Add("<a href='#$nk' title='$nc2 evidence rows collected - the section shows a capped view'>$nl2</a>")
+            $navParts.Add("<a href='#$nk' title='$nc2 evidence rows collected - the section shows a capped view'><span class='nl'>$nl2</span>$ncHtml</a>")
         }
     }
     $navParts.Add("<div class='nlegend'>counts = evidence collected (rows on disk); sections show capped views</div>")

@@ -11,6 +11,13 @@
 
 
 
+
+## v3.3 - sidebar overlap fix + visual upgrade
+
+- Fixed the sidebar physically overlapping the top bar: .nav lacked box-sizing:border-box so its 250px width + padding rendered 271px wide, sliding 21px under the top bar. Now exactly 250px, flush with the top bar edge.
+- Fixed nav items being crushed: overflow:hidden on flex children set their automatic minimum size to zero, so all 31 items shrank to 17px tall with colliding backgrounds. Items now keep their full 31px height (flex:0 0 auto) and the sidebar scrolls instead of squashing.
+- Nav links restructured: label + count in separate spans (flex row) - counts right-align in muted tabular numerals, long labels ellipsize cleanly instead of pushing content. Brand block, group headers and legend pinned against flex shrink too.
+
 ## v3.2 - visual bug fixes + professional polish
 
 - Fixed horizontal table overflow (8 tables blew out the viewport by up to 370px in coverage/hunt/persistence/timeline/entities): td/th now wrap anywhere; .path cells use overflow-wrap:anywhere (break-word never reduced table min-content width). Focus report tables got the same fix.
