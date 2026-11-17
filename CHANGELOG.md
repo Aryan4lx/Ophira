@@ -1,4 +1,4 @@
-﻿### v2.94 follow-up - parse-time window time-bomb (same family as the v2.91 Defender fix)
+### v2.94 follow-up - parse-time window time-bomb (same family as the v2.91 Defender fix)
 
 - Re-parsing an aged case re-ran hayabusa with a RELATIVE 'last 168h' window anchored at the analyst's now - once the case was older than the window, detection re-runs returned 0 Sigma rows and the verdict silently lost its Sigma input (observed: 7-signal case dropped to 6 eleven days after collection). Also: hayabusa 4.x silently rejects --start-timeline (usage error -> 0 rows), so the explicit-window branch never worked.
 - Fix: case.json now always materializes the absolute collection window (even for the relative default), and pre-v2.94 cases are anchored to their collection time on open. hayabusa is given a now-relative offset that covers the anchored span.
@@ -14,6 +14,12 @@
 
 
 
+
+## v4.3 - BAM attribution + profile context
+
+- BAM (Background Activity Moderator) collection decoded properly: per-user last-execution timestamps (FileTime) for every registered binary - csv\artifacts\bam_lastexec.csv now carries User/Name/Path/LastExec and feeds the ran-as attribution in entity cards ('aryan (BAM)'), fixing the pre-4.1 rows that stored raw FILETIME bytes as the executable name.
+- Profile-list context added: csv\context\profile_list.csv (Get-LocalProfiles) maps SID -> profile path + local account name, and the ran-as resolver chain is now 4688 session map -> SID via LogonId -> BAM -> profile-list account.
+- Tests: new tests\test_v43.ps1 (BAM FileTime decode, well-known-SID exclusion, ran-as chain order, profile_list export); D7a line lost during the v4.3 edit was restored (module 8.1 $dest re-created).
 
 ## v4.2 - process lineage upgrade
 

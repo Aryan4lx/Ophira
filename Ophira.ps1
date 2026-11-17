@@ -1,5 +1,5 @@
 <#
-Ophira v4.2  -  Windows Endpoint Triage Toolkit
+Ophira v4.3  -  Windows Endpoint Triage Toolkit
 READ-ONLY by design: never modifies the system, only reads and copies data
 into its own output folder. Intended to be handed to a system owner or run
 by a responder during early triage / threat hunting.
@@ -363,7 +363,7 @@ param(
     [switch]$ExitVerdict
 )
 
-$ScriptVersion = "4.2"
+$ScriptVersion = "4.3"
 $ErrorActionPreference = 'Continue'
 $ProgressPreference = 'SilentlyContinue'
 
@@ -549,7 +549,7 @@ $script:CsvCatMap = @{
     'processes' = 'volatile'; 'processes_flagged' = 'volatile'; 'process_hashes' = 'volatile'
     'connections' = 'volatile'; 'connections_public_established' = 'volatile'; 'dns_cache' = 'volatile'
     'arp_table' = 'volatile'; 'logon_sessions' = 'volatile'; 'drivers' = 'volatile'; 'drivers_flagged' = 'volatile'
-    'svchost_audit' = 'volatile'; 'bam_lastexec' = 'volatile'
+    'svchost_audit' = 'volatile'; 'bam_lastexec' = 'volatile'; 'profile_list' = 'volatile'
     'flash_process_scored' = 'volatile'; 'flash_ioc_hits' = 'volatile'; 'flash_public_connections' = 'volatile'
     # PERSISTENCE
     'autoruns_runkeys' = 'persistence'; 'autoruns_startup_folders' = 'persistence'
@@ -4392,6 +4392,7 @@ public class OphiraDump {
 [pscustomobject]@{ Id = '8.1'; Cat = 'CONTEXT'; Name = 'Attacker activity (console history, RDP targets, recycle bin)'; Default = $true; Quick = $true;
         Run = {
             $profiles = Get-UserProfileList
+            Save-Rows -Name 'profile_list' -Rows $profiles
             $dest = Join-Path $RawDir 'useractivity'
             New-Item -ItemType Directory -Path $dest -Force | Out-Null
             $hist = @()
@@ -4959,6 +4960,8 @@ public class OphiraDump {
     [pscustomobject]@{ Id = '8.11'; Cat = 'CONTEXT'; Name = 'Host history extras (BAM/DAM last-exec, USB devices, Office MRU, UAL raw)'; Default = $true; Quick = $false;
         Run = {
             # BAM/DAM: per-user background execution tracking (survives Prefetch deletion)
+            # v4.3: rows are Sid-keyed; the report joins Sid -> account via profile_list.csv
+            # (module 8.1) so attribution works even with process auditing (4688) OFF.
             $bam = @()
             foreach ($svc in @('bam', 'dam')) {
                 $base = "Registry::HKEY_LOCAL_MACHINE\SYSTEM\CurrentControlSet\Services\$svc\State\UserSettings"
@@ -6321,6 +6324,23 @@ a[name]{scroll-margin-top:66px}html{overflow-x:clip}[data-theme=light] .nav a.ac
         @($entA | Where-Object { (ConvertTo-SafeInt $_.Logons) -gt 0 -or (ConvertTo-SafeInt $_.Failed) -gt 0 -or "$($_.RdpOutTargets)" -or (ConvertTo-SafeDbl $_.ConsoleHistoryKB) -gt 0 }).Count +
         @($entR | Where-Object { (ConvertTo-SafeInt $_.Connections) -gt 0 -or "$($_.Beacon)" -or (ConvertTo-SafeInt $_.FailedLogons) -gt 0 -or (ConvertTo-SafeInt $_.RdpOutCount) -gt 0 }).Count +
         $srumRows.Count + $chains.Count + $sessAct.Count
+    # v4.3 BAM ran-as attribution: Sid -> account via ProfileList, executable leaf -> 'user (BAM)'
+    # tags; works with process auditing (4688) OFF because BAM + ProfileList are registry-based
+    $bamRows = @(Import-CaseCsv 'bam_lastexec')
+    $profRows = @(Import-CaseCsv 'profile_list')
+    $profBySid = @{}
+    foreach ($p7 in $profRows) { if ("$($p7.Sid)" -match '^S-1-5-21-' -and "$($p7.User)") { $profBySid["$($p7.Sid)"] = "$($p7.User)" } }
+    $bamByLeaf = @{}
+    foreach ($b5 in $bamRows) {
+        $lb5 = try { Split-Path "$($b5.Executable)" -Leaf } catch { "$($b5.Executable)" }
+        if (-not $lb5 -or $lb5 -notmatch '\.exe$') { continue }
+        $un5 = $profBySid["$($b5.Sid)"]
+        if (-not $un5) { continue }
+        $kl5 = $lb5.ToLower()
+        if (-not $bamByLeaf.ContainsKey($kl5)) { $bamByLeaf[$kl5] = New-Object System.Collections.Generic.List[string] }
+        $tag5 = "$un5 (BAM)"
+        if (-not ($bamByLeaf[$kl5] -contains $tag5)) { $null = $bamByLeaf[$kl5].Add($tag5) }
+    }
     # v2.88 USER-ACTIVITY ROLLUP (who did what): auth 4624/4625 + 4688 process creations +
     # user-profile MFT activity, keyed per account; feeds the section and the nav counts
     $userAct = [ordered]@{}
@@ -6355,6 +6375,16 @@ a[name]{scroll-margin-top:66px}html{overflow-x:clip}[data-theme=light] .nav a.ac
         $lp3 = try { Split-Path "$($p3.NewProcess)" -Leaf } catch { "$($p3.NewProcess)" }
         if ($lp3) { $u3.Procs[$lp3] = [int]$u3.Procs[$lp3] + 1 }
         if ((& $uaTicks "$($p3.Time)") -gt (& $uaTicks "$($u3.Last)")) { $u3.Last = "$($p3.Time)" }
+    }
+    # v4.3: BAM last-exec rollup per account (registry-based, independent of 4688 auditing)
+    foreach ($b6 in $bamRows) {
+        $lu6 = $profBySid["$($b6.Sid)"]
+        if (-not $lu6) { continue }
+        $k6 = "$lu6".ToLower()
+        if (-not $userAct.Contains($k6)) { $userAct[$k6] = @{ Name = $lu6; Logons = 0; Failed = 0; Types = @{}; Ips = @{}; Procs = @{}; ProcN = 0; Files = 0; Last = '' } }
+        $lp6 = try { Split-Path "$($b6.Executable)" -Leaf } catch { "$($b6.Executable)" }
+        if ($lp6 -and $lp6 -match '\.exe$') { $userAct[$k6].Procs[$lp6] = [int]$userAct[$k6].Procs[$lp6] + 1 }
+        if ((& $uaTicks "$($b6.LastWrite)") -gt (& $uaTicks "$($userAct[$k6].Last)")) { $userAct[$k6].Last = "$($b6.LastWrite)" }
     }
     foreach ($m4 in $mftRecent) {
         if ("$($m4.Path)" -notmatch '(?i)^c:\\users\\([^\\]+)\\') { continue }
@@ -7452,7 +7482,9 @@ a[name]{scroll-margin-top:66px}html{overflow-x:clip}[data-theme=light] .nav a.ac
             $leadTxt = if ($hotLeaf -and $hotLeaf.ContainsKey("$($e.Name)".ToLower())) { " <a href='#leads'><span class='tac md'>hot lead</span></a>" } else { '' }
             $null = $sb.AppendLine("<details><summary><b>$(ConvertTo-HtmlEsc $e.Name)</b> - <span class='high'>$($e.CatCount) evidence categories</span>$leadTxt$vTxt$dupTxt</summary>")
             $null = $sb.AppendLine("<table><tr><th>Path</th><th>Company</th><th>Description</th><th>First seen</th><th>Last seen</th><th>Signer</th><th>Hashes</th><th>Ran as</th></tr>")
-            $ranTxt = if ($lnE -and $ranByLeaf.ContainsKey($lnE)) { @($ranByLeaf[$lnE]) -join '; ' } else { $noRan++; '-' }
+            $ranTxt = if ($lnE -and $ranByLeaf.ContainsKey($lnE)) { @($ranByLeaf[$lnE]) -join '; ' } else { '' }
+            if ($lnE -and $bamByLeaf.ContainsKey($lnE)) { $bamTxt = @($bamByLeaf[$lnE]) -join '; '; $ranTxt = if ($ranTxt) { "$ranTxt; $bamTxt" } else { $bamTxt } }
+            $ranTxt = if ($ranTxt) { $ranTxt } else { $noRan++; '-' }
             $fsCell = if ("$($e.FirstSeen)") { & $fmtTs $e.FirstSeen } elseif ($trail.Count -gt 0) { "earliest trail event $(& $fmtTs $trail[0].Row.Timestamp)" } else { '-' }
             $null = $sb.AppendLine("<tr><td class='path'>$(ConvertTo-HtmlEsc $e.Path)</td><td>$(ConvertTo-HtmlEsc $e.Company)</td><td>$(ConvertTo-HtmlEsc $e.Description)</td><td>$(ConvertTo-HtmlEsc $fsCell)</td><td>$(if ("$($e.LastSeen)") { ConvertTo-HtmlEsc (& $fmtTs $e.LastSeen) } else { '-' })</td><td>$(ConvertTo-HtmlEsc $e.Signer)</td><td class='path'>$(ConvertTo-HtmlEsc $e.Hashes)</td><td>$(ConvertTo-HtmlEsc $ranTxt)</td></tr></table>")
             # v2.56: "appears in" chips - each category links to the section carrying its evidence
@@ -8556,6 +8588,7 @@ a[name]{scroll-margin-top:66px}html{overflow-x:clip}[data-theme=light] .nav a.ac
         'memory_live_scan'                = 'Flagged-process minidumps + YARA hits found in live memory'
         'sysmon_image_load'               = 'Sysmon DLL loads (EID 7) - side-load data source'
         'bam_lastexec'                    = 'BAM/DAM last-execution per user (survives Prefetch deletion)'
+        'profile_list'                    = 'SID to profile map (attributes BAM/user-scoped evidence to accounts)'
         'usb_devices'                     = 'Every USB storage device ever connected (serials + dates)'
         'office_mru'                      = 'Office recent documents per user'
         'ual_files'                       = 'User Access Logs copied raw (SMB/RDP source history - ESE)'
@@ -8634,6 +8667,7 @@ a[name]{scroll-margin-top:66px}html{overflow-x:clip}[data-theme=light] .nav a.ac
         'autoruns_runkeys'                = 'no Run/RunOnce values in any hive - common on lean servers (empty is good); verify the sweep covered HKLM and every loaded user hive'
         'autoruns_startup_folders'        = 'no Startup-folder entries for any user (empty is good - most clean workstations look like this)'
         'bam_lastexec'                    = 'no BAM/DAM last-execution entries - the key is absent where SysMain never tracked user sessions, or no interactive session ran programs'
+        'profile_list'                    = 'no interactive-user profiles found (ProfileList empty) - services-only host or access denied to the hive'
         'srum_app_totals'                 = 'SRUM usage table absent or empty - no egress totals to aggregate (run -Mode Parse on a case with SRUM)'
         'beacon_candidates'               = 'needs 15+ combined Sysmon network/DNS events in the window to run (telemetry too thin), or no regular-interval C2-style beacons found'
         'bits_jobs'                       = 'no BITS jobs at collection time (empty is good - BITS is a favorite malware transfer channel, so zero is the state you want)'

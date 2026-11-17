@@ -181,7 +181,7 @@ Check "P8: R37 trace mentions no-flag gate" ($src -match 'shimcache_exec\(no-fla
 Check "P8: brute filter excludes '-'/'::1'/127.0.0.1" ($src.Contains(" `$_.Name -ne '-' -and `$_.Name -ne '::1' -and `$_.Name -ne '127.0.0.1'"))
 Check "P8: anyT matches deleted columns" ($src.Contains('(?i)time|date|deleted'))
 Check "P8: recyclebin RBCmd weave present" ($src.Contains("& `$weave 'recyclebin' 1000"))
-Check "P8: version 4.2" ($src -match '\$ScriptVersion = "4\.2"')
+Check "P8: version 4.2" ($src -match '\$ScriptVersion = "4\.3"')
 
 Write-Host ''
 if ($fail -gt 0) { Write-Host "PASSED: $pass FAILED: $fail" -ForegroundColor Red; exit 1 }
