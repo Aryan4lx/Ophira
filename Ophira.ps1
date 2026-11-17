@@ -1,5 +1,5 @@
 <#
-Ophira v4.0  -  Windows Endpoint Triage Toolkit
+Ophira v4.1  -  Windows Endpoint Triage Toolkit
 READ-ONLY by design: never modifies the system, only reads and copies data
 into its own output folder. Intended to be handed to a system owner or run
 by a responder during early triage / threat hunting.
@@ -363,7 +363,7 @@ param(
     [switch]$ExitVerdict
 )
 
-$ScriptVersion = "4.0"
+$ScriptVersion = "4.1"
 $ErrorActionPreference = 'Continue'
 $ProgressPreference = 'SilentlyContinue'
 
@@ -615,7 +615,7 @@ $script:CsvCatMap = @{
     'ioc_hits_network' = 'derived'; 'ioc_hits_mft' = 'derived'; 'ioc_hits_hash' = 'derived'
     'ioc_export' = 'derived'; 'process_pivot' = 'derived'; 'leads' = 'derived'
     'exec_stacks_byname' = 'derived'; 'exec_stacks_bypath' = 'derived'; 'exec_window_ratio' = 'derived'
-    'recon_sessions' = 'derived'; 'exec_tcorr' = 'derived'
+    'recon_sessions' = 'derived'; 'exec_tcorr' = 'derived'; 'srum_app_totals' = 'derived'
 }
 
 function Get-LocalAdminMembers {
@@ -7214,7 +7214,7 @@ a[name]{scroll-margin-top:66px}html{overflow-x:clip}[data-theme=light] .nav a.ac
         $null = $sb.AppendLine("<table><tr><th>Seed (hunt finding)</th><th>Seed time</th><th>Executed nearby</th><th>Delta (min)</th><th>Weight</th><th>Bond</th><th>Path</th></tr>")
         Add-CapNote @($tcorrRows).Count 15 'exec_tcorr' 't-corr pairs'
         foreach ($tcR in ($tcorrRows | Select-Object -First 15)) {
-            $tcCls = if ("$($tcR.Bond)") { 'crit' } elseif ((ConvertTo-SafeDouble $tcR.Weight) -ge 0.5) { 'med' } else { 'info' }
+            $tcCls = if ("$($tcR.Bond)") { 'crit' } elseif ((ConvertTo-SafeDbl $tcR.Weight) -ge 0.5) { 'med' } else { 'info' }
             $null = $sb.AppendLine("<tr><td class='path'>$(ConvertTo-HtmlEsc $tcR.Seed)</td><td>$(ConvertTo-HtmlEsc $tcR.SeedTime)</td><td>$(ConvertTo-HtmlEsc $tcR.Name)</td><td>$(ConvertTo-HtmlEsc $tcR.DeltaMinutes)</td><td class='$tcCls'>$(ConvertTo-HtmlEsc $tcR.Weight)</td><td>$(ConvertTo-HtmlEsc $tcR.Bond)</td><td class='path'>$(ConvertTo-HtmlEsc $tcR.Path)</td></tr>")
         }
         $null = $sb.AppendLine("</table><div class='meta'>For every medium/high hunt-finding binary: other executions within +-30 min (weight = exp(-delta/10 min), 0.1 floor). A <b>bidirectional</b> bond means both binaries strongly imply each other - look at those pairs first. Analytics view only (no verdict impact) - t-corr ranks leads, it does not judge them. Source: csv\exec_tcorr.csv</div>")
@@ -7594,6 +7594,25 @@ a[name]{scroll-margin-top:66px}html{overflow-x:clip}[data-theme=light] .nav a.ac
             }
             $null = $sb.AppendLine("</table><div class='meta'>SRUM records ~30 days of per-application network/resource usage. High sustained upload from a user-path binary = exfiltration candidate. Source: csv\$(Get-CaseCsvPath 'srum_usage')</div>")
         }
+    }
+    # v4.1: aggregated egress heavyweights (one row per binary, not per hour)
+    $srumTot2 = @(Import-CaseCsv 'srum_app_totals')
+    if ($srumTot2.Count -gt 0) {
+        $srumTop2 = @($srumTot2 | Sort-Object -Property @{e = { ConvertTo-SafeDbl $_.BytesSent }; Descending = $true } | Select-Object -First 12)
+        $null = $sb.AppendLine("<h3>Egress heavyweights (SRUM totals)</h3><table><tr><th>Binary</th><th>Sent</th><th>Received</th><th>Outbound</th><th>Hours</th><th>Users</th></tr>")
+        foreach ($s6 in $srumTop2) {
+            $s6Sent = 0.0; $s6Recv = 0.0
+            $s6Sent = ConvertTo-SafeDbl $s6.BytesSent
+            $s6Recv = ConvertTo-SafeDbl $s6.BytesReceived
+            $s6Frac = if (($s6Sent + $s6Recv) -gt 0) { [math]::Round($s6Sent / ($s6Sent + $s6Recv) * 100) } else { 0 }
+            $s6Disp = "$($s6.Application)" -replace '(?i)^\\\\\?\\', '' -replace '(?i)^\\device\\harddiskvolume\d+', 'C:'
+            $s6Leaf = if ($s6Disp -match '[\\/]') { Split-Path $s6Disp -Leaf } else { $s6Disp }
+            $s6Sent2 = if ($s6Sent -ge 1MB) { "$([math]::Round($s6Sent / 1MB, 1)) MB" } elseif ($s6Sent -ge 1024) { "$([math]::Round($s6Sent / 1KB, 0)) KB" } else { "$([math]::Round($s6Sent, 0)) B" }
+            $s6Recv2 = if ($s6Recv -ge 1MB) { "$([math]::Round($s6Recv / 1MB, 1)) MB" } elseif ($s6Recv -ge 1024) { "$([math]::Round($s6Recv / 1KB, 0)) KB" } else { "$([math]::Round($s6Recv, 0)) B" }
+            $s6Cls = if ($s6Frac -ge 80 -and $s6Sent -ge 1048576) { " class='med'" } else { '' }
+            $null = $sb.AppendLine("<tr><td class='path' title='$(ConvertTo-HtmlEsc "$($s6.Application)")'>$(ConvertTo-HtmlEsc $s6Leaf)</td><td>$s6Sent2</td><td>$s6Recv2</td><td$s6Cls>$s6Frac%</td><td>$($s6.Rounds)</td><td>$($s6.Users)</td></tr>")
+        }
+        $null = $sb.AppendLine("</table><div class='meta'>Upload-heavy is normal for backup/sync tools - judge by path and the verdict doors. Source: csv\$(Get-CaseCsvPath 'srum_app_totals')</div>")
     }
     # v2.21: process lineage + session-attributed activity ($chains/$sessAct imported at the top)
     if ($chains.Count -gt 0) {
@@ -8505,6 +8524,7 @@ a[name]{scroll-margin-top:66px}html{overflow-x:clip}[data-theme=light] .nav a.ac
         'memory_netscan'                  = 'Volatility netscan - network artifacts found in RAM'
         'recyclebin'                      = 'RBCmd recycle bin parse (original paths + delete times)'
         'srum_usage'                      = 'SRUM: per-app network usage history over weeks (bytes sent/received per hour - SrumECmd deep parse, -Mode Parse)'
+        'srum_app_totals'                 = 'SRUM: aggregated per-application upload/download totals (derived from srum_usage)'
         'logging_gaps'                    = 'Log clear/stop events + evtx coverage gaps'
         'parse_needed'                    = 'Artifacts not finished on the endpoint + exactly how to finish them (-Mode Parse)'
         'hunt_findings'                   = 'Technique-based hunt detections (renamed binaries, side-loads, download-exec, LSASS access, Office chains, proxy-exec, share staging, UAC bypass, discovery storms, Defender tamper, timestomping, DCSync, Kerberoasting, spray, webshells)'
@@ -8613,6 +8633,7 @@ a[name]{scroll-margin-top:66px}html{overflow-x:clip}[data-theme=light] .nav a.ac
         'autoruns_runkeys'                = 'no Run/RunOnce values in any hive - common on lean servers (empty is good); verify the sweep covered HKLM and every loaded user hive'
         'autoruns_startup_folders'        = 'no Startup-folder entries for any user (empty is good - most clean workstations look like this)'
         'bam_lastexec'                    = 'no BAM/DAM last-execution entries - the key is absent where SysMain never tracked user sessions, or no interactive session ran programs'
+        'srum_app_totals'                 = 'SRUM usage table absent or empty - no egress totals to aggregate (run -Mode Parse on a case with SRUM)'
         'beacon_candidates'               = 'needs 15+ combined Sysmon network/DNS events in the window to run (telemetry too thin), or no regular-interval C2-style beacons found'
         'bits_jobs'                       = 'no BITS jobs at collection time (empty is good - BITS is a favorite malware transfer channel, so zero is the state you want)'
         'browser_files'                   = 'no browser profile data for the collecting user - server build, browsers never used, or profiles wiped'
@@ -9170,6 +9191,64 @@ function New-SigmaRuleLogs {
     Write-CaseLog "    sigma rule logs: $($index.Count) rule(s) -> csv\sigma_rules\ (per-rule event CSVs + index.csv)" 'DarkGray'
 }
 
+function New-SrumAppTotals {
+    # v4.1: aggregate per-hour SRUM usage rows into one row per application - total
+    # bytes sent/received, hour count, users, first/last seen. Feeds the R56
+    # exfiltration rule, entity cards and the report egress table. SRUM absent
+    # (unsupported SKU / table not collected) -> artifact marked empty, all consumers degrade.
+    $rows = @(Import-CaseCsv 'srum_usage')
+    if ($rows.Count -eq 0) {
+        Save-Rows -Name 'srum_app_totals' -Rows @()
+        Write-CaseLog '    srum egress totals: no srum_usage rows - nothing to aggregate' 'DarkGray'
+        return
+    }
+    $agg = @{}
+    foreach ($r in $rows) {
+        $app = "$($r.Application)".Trim()
+        if (-not $app) { continue }
+        $leaf = ''
+        try { $leaf = (Split-Path $app -Leaf).ToLower() } catch { }
+        if (-not $leaf) { $leaf = $app.ToLower() }
+        $sent = 0L; $recv = 0L
+        try { $sent = [long]"$($r.BytesSent)" } catch { }
+        try { $recv = [long]"$($r.BytesReceived)" } catch { }
+        if (-not $agg.ContainsKey($leaf)) {
+            $agg[$leaf] = @{ Application = $app; Sent = 0L; Recv = 0L; Rounds = 0; Users = New-Object System.Collections.Generic.List[string]; First = ''; Last = '' }
+        }
+        $a = $agg[$leaf]
+        $a.Sent += $sent
+        $a.Recv += $recv
+        $a.Rounds += 1
+        $u = "$($r.User)".Trim()
+        if ($u -and @($a.Users) -notcontains $u) { $a.Users.Add($u) }
+        $ts = "$($r.Timestamp)".Trim()
+        if ($ts) {
+            if (-not $a.First -or $ts -lt $a.First) { $a.First = $ts }
+            if ($ts -gt $a.Last) { $a.Last = $ts }
+        }
+    }
+    $out = New-Object System.Collections.Generic.List[object]
+    foreach ($k in $agg.Keys) {
+        $a = $agg[$k]
+        $tot = $a.Sent + $a.Recv
+        $frac = if ($tot -gt 0) { [math]::Round($a.Sent / [double]$tot, 2) } else { 0 }
+        $out.Add([pscustomobject]@{
+            Application   = $a.Application
+            Leaf          = $k
+            BytesSent     = $a.Sent
+            BytesReceived = $a.Recv
+            TotalBytes    = $tot
+            UploadRatio   = $frac
+            Rounds        = $a.Rounds
+            Users         = ($a.Users -join '; ')
+            FirstSeen     = $a.First
+            LastSeen      = $a.Last
+        })
+    }
+    $rows2 = @($out.ToArray() | Sort-Object -Property @{e = { $t = 0L; try { $t = [long]"$($_.BytesSent)" } catch { }; $t }; Descending = $true })
+    Save-Rows -Name 'srum_app_totals' -Rows $rows2
+    Write-CaseLog "    srum egress totals: $($rows2.Count) application(s) aggregated from $($rows.Count) usage row(s) -> csv\srum_app_totals.csv" 'Cyan'
+}
 function New-EntityCorrelation {
     # Cross-source entity correlation (report-only): joins binaries, accounts and remote
     # endpoints across the case CSVs so one entity's story is readable in one place.
@@ -9328,6 +9407,18 @@ function New-EntityCorrelation {
     foreach ($r in (& $rowsOf 'flash_public_connections')) { & $binAdd (& $binFromRow $r) 'conn' "public $($r.RemoteAddress):$($r.RemotePort)" '' }
     foreach ($r in (& $rowsOf 'beacon_candidates')) { & $binAdd (& $binFromRow $r) 'beacon' "[$($r.Severity)] -> $($r.RemoteIp):$($r.Port) every ~$($r.MedianIntervalSec)s" '' }
     foreach ($r in (& $rowsOf 'dns_beacon_candidates')) { & $binAdd (& $binFromRow $r) 'beacon' "[$($r.Severity)] DNS $($r.Domain) every ~$($r.MedianIntervalSec)s" '' }
+    # v4.1: one aggregated egress line per binary (the per-row loop below keeps the per-hour detail)
+    foreach ($r in (& $rowsOf 'srum_app_totals')) {
+        $b = & $binFromRow $r
+        if ($b) {
+            $s7 = 0.0; $v7 = 0.0
+            try { $s7 = [double]"$($r.BytesSent)" } catch { }
+            try { $v7 = [double]"$($r.BytesReceived)" } catch { }
+            $s7Txt = if ($s7 -ge 1MB) { "$([math]::Round($s7 / 1MB, 1)) MB" } else { "$([math]::Round($s7 / 1KB, 0)) KB" }
+            $v7Txt = if ($v7 -ge 1MB) { "$([math]::Round($v7 / 1MB, 1)) MB" } else { "$([math]::Round($v7 / 1KB, 0)) KB" }
+            & $binAdd $b 'srum-egress' "totals: $s7Txt sent / $v7Txt received over $($r.Rounds) hour(s)" ''
+        }
+    }
     foreach ($r in (& $rowsOf 'srum_usage')) {
         $b = & $binFromRow $r
         if ($b) {
@@ -11423,6 +11514,30 @@ function New-HuntFindings {
     }
     & $trace 'R55' 'bits transfers' "bits_transfers: $($bitsEv.Count) row(s)"
 
+    # ---------- R56 (v4.1): upload-dominant egress (SRUM totals) ----------
+    # Aggregated SRUM per-app totals: a user-path binary whose traffic is mostly
+    # OUTBOUND and bulk is the classic exfiltration shape. Gates: >=1 MB sent,
+    # >=80% of traffic outbound, well-known uploaders and windows paths skipped.
+    $r56Tot = @(Import-CaseCsv 'srum_app_totals')
+    $r56Safe = @('svchost.exe', 'lsass.exe', 'explorer.exe', 'chrome.exe', 'msedge.exe', 'firefox.exe', 'onedrive.exe', 'steam.exe', 'gameoverlayui.exe', 'webcache.exe', 'dropbox.exe', 'googledrivesync.exe', 'onedriveupdater.exe')
+    foreach ($r in $r56Tot) {
+        $r56Sent = 0L; $r56Recv = 0L
+        try { $r56Sent = [long]"$($r.BytesSent)" } catch { }
+        try { $r56Recv = [long]"$($r.BytesReceived)" } catch { }
+        if ($r56Sent -lt 1048576) { continue }
+        $r56All = $r56Sent + $r56Recv
+        if ($r56All -le 0) { continue }
+        $r56Frac = [math]::Round($r56Sent / [double]$r56All, 2)
+        if ($r56Frac -lt 0.8) { continue }
+        $r56Leaf = ''
+        try { $r56Leaf = (Split-Path "$($r.Application)" -Leaf).ToLower() } catch { }
+        if ($r56Safe -contains $r56Leaf) { continue }
+        if ($r56Leaf -notmatch '\.exe$') { continue }
+        if ("$($r.Application)" -match '(?i)\\windows\\') { continue }
+        & $find 'Upload-dominant egress (SRUM)' 'medium' "$($r.Application)" ("$([math]::Round($r56Sent / 1MB, 1)) MB sent vs $([math]::Round($r56Recv / 1MB, 1)) MB received over $($r.Rounds) hour(s) ($([math]::Round($r56Frac * 100))% outbound)") 'T1041'
+    }
+    & $trace 'R56' 'upload-dominant egress' "srum_app_totals: $($r56Tot.Count) app(s) aggregated"
+
     # v2.87 storm guard: one broken source can flood one rule with hundreds of rows and
     # drown both the report and the verdict - cap each rule+severity at 15 rows and
     # aggregate the overflow into one info row so the count is never silently lost
@@ -11884,6 +11999,21 @@ function Get-CompromiseVerdict {
     $r51Med = @($reconSessions | Where-Object { $tcV = 0; try { $tcV = [int]$_.ToolCount } catch { }; $tcV -ge 4 -and $tcV -lt 6 })
     Add-Signal 'Recon tool burst - 6+ distinct discovery tools in one session' 3 $r51Big.Count (($r51Big | Select-Object -First 2 | ForEach-Object { "$($_.StartUTC) ($($_.Tools))" }) -join '; ')
     Add-Signal 'Recon tool burst - 4-5 distinct discovery tools in one session' 2 $r51Med.Count (($r51Med | Select-Object -First 2 | ForEach-Object { "$($_.StartUTC) ($($_.Tools))" }) -join '; ')
+    # v4.1 (R56): bulk outbound traffic from user-path binaries - exfiltration shape
+    $srumTot = @(Import-CaseCsv 'srum_app_totals')
+    $r56Cand = @($srumTot | Where-Object {
+        $s6 = 0L; $v6 = 0L
+        try { $s6 = [long]"$($_.BytesSent)" } catch { }
+        try { $v6 = [long]"$($_.BytesReceived)" } catch { }
+        if ($s6 -lt 1048576 -or ($s6 + $v6) -le 0) { return $false }
+        if ([math]::Round($s6 / [double]($s6 + $v6), 2) -lt 0.8) { return $false }
+        $l6 = ''
+        try { $l6 = (Split-Path "$($_.Application)" -Leaf).ToLower() } catch { }
+        if (@('svchost.exe', 'lsass.exe', 'explorer.exe', 'chrome.exe', 'msedge.exe', 'firefox.exe', 'onedrive.exe', 'steam.exe', 'gameoverlayui.exe', 'webcache.exe', 'dropbox.exe', 'googledrivesync.exe', 'onedriveupdater.exe') -contains $l6) { return $false }
+        if ($l6 -notmatch '\.exe$') { return $false }
+        return ("$($_.Application)" -notmatch '(?i)\\windows\\')
+    })
+    Add-Signal 'Upload-dominant egress (SRUM)' 2 $r56Cand.Count (($r56Cand | Select-Object -First 2 | ForEach-Object { try { Split-Path "$($_.Application)" -Leaf } catch { "$($_.Application)" } }) -join '; ')
     Add-Signal 'Process anomaly verdict MEDIUM' 1 $procMed "unsigned/user-path binaries worth review"
     Add-Signal 'Brute-force source(s) seen' 0 @($brute).Count "failed logon sources - check for follow-up success"
 
@@ -12421,6 +12551,7 @@ function Invoke-RegenerateOutputs {
     & $rgStep 'sigma rule logs' 'New-SigmaRuleLogs' { New-SigmaRuleLogs }
     & $rgStep 'execution stacks' 'New-ExecStacks' { New-ExecStacks }
     & $rgStep 'recon sessions' 'New-ReconSessions' { New-ReconSessions }
+    & $rgStep 'srum egress totals' 'New-SrumAppTotals' { New-SrumAppTotals }
     & $rgStep 'hunt findings' 'New-HuntFindings' { New-HuntFindings }
     & $rgStep 'temporal correlation' 'New-TCorr' { New-TCorr }
     & $rgStep 'IOC xref' 'New-IocHits' { New-IocHits }

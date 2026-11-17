@@ -13,6 +13,15 @@
 
 
 
+
+## v4.1 - BAM + SRUM hunt batch
+
+- BAM last-execution evidence now feeds entity cards and hunt findings: R54 flags user-writable executables whose BAM timestamp is RECENT relative to collection (a true last-exec signal, unlike ShimCache mtime).
+- SRUM per-binary traffic: R55 surfaces user-path binaries with multi-round usage; R56 flags upload-dominant egress (>=80% outbound share, capped list) as a floor-2 exfiltration candidate - gated to .exe entries outside \Windows\ (bare service names never fire).
+- New derived artifact srum_app_totals.csv (per-binary sent/received/rounds/first/last seen) + "Egress heavyweights" report block; entity cards show SRUM traffic lines.
+- Fixed latent ConvertTo-SafeDouble typo in the t-corr report cell (crashed report render on cases with t-corr pairs).
+- New fixture suite tests\test_v41.ps1 (29 checks); drift pins updated.
+
 ## v4.0 - truth batch (parser/verdict false-positive repairs)
 
 - R37 shimcache scrub findings now honor the Executed flag: candidates whose shimcache entry is flagged not-executed (v2.83 flag decode) are demoted to info with honest evidence text; only flag=yes entries keep medium scrub candidacy.
