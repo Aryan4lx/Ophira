@@ -12,6 +12,20 @@
 
 
 
+
+## v4.0 - truth batch (parser/verdict false-positive repairs)
+
+- R37 shimcache scrub findings now honor the Executed flag: candidates whose shimcache entry is flagged not-executed (v2.83 flag decode) are demoted to info with honest evidence text; only flag=yes entries keep medium scrub candidacy.
+- BAM collection (module 8.11) fixed: decodes value NAME (the per-user executable path) + FILETIME last-exec timestamp instead of storing the raw byte blob (previous bam_lastexec.csv was unusable).
+- New-service parsing (4697) bounded: Service/Binary captures stop at the next label (Service File Name / Service Type / Service Start / Service Account) instead of swallowing the whole message tail.
+- R53 WinRM hunt finding repaired (bare + was parsed as PS arg separator): evidence sample + ATT&CK tag now populate.
+- Recycle-bin deletions woven into master timeline (DeletedUTC recognized alongside generic *time* columns).
+- Brute-force analysis: local (no-IP) failed logons no longer aggregate as one anonymous external "brute-force source".
+- Sigma-storm lead filter accepts the med severity dialect (medium findings were unreachable).
+- Ransomware-canary regex no longer flags every readme.txt (requires extension-lock + deletion context).
+- Device-path volume resolution: \device\harddiskvolumeN mapped from amcache volume table instead of hardcoded C: (kills phantom cards on multi-volume hosts).
+- New fixture suite tests\test_v400.ps1 (26 checks); drift pins updated (weave count, version 4.0).
+
 ## v3.3 - sidebar overlap fix + visual upgrade
 
 - Fixed the sidebar physically overlapping the top bar: .nav lacked box-sizing:border-box so its 250px width + padding rendered 271px wide, sliding 21px under the top bar. Now exactly 250px, flush with the top bar edge.

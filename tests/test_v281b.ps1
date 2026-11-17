@@ -121,7 +121,7 @@ $rD = @(RuleRows 'ShimCache scrub survivor')
 Check "R37b: uncorroborated user-writable path -> exactly ONE medium finding" ($rD.Count -eq 1 -and $rD[0].Severity -eq 'medium')
 Check "R37b: entity = the path, detail verbatim, ATT&CK T1070.006" ("$($rD[0].Entity)" -eq 'C:\Users\Public\evil.exe' -and "$($rD[0].Evidence)" -eq 'executed (ShimCache) but absent from all execution corroboration sources - possible cache scrubbing' -and "$($rD[0].Attck)" -eq 'T1070.006')
 $huntLogText = Get-Content -LiteralPath $CaseLog -Raw
-Check "R37b: trace line paths -> survivors -> emitted (after cap)" ($huntLogText -match [regex]::Escape('R37 ShimCache scrub survivor: corroboration amcache+prefetch_parsed+bam_lastexec: 1 paths -> 1 survivors -> 1 emitted'))
+Check "R37b: trace line paths -> survivors -> emitted (after cap)" ($huntLogText -match [regex]::Escape('R37 ShimCache scrub survivor: corroboration amcache+prefetch_parsed+bam_lastexec+shimcache_exec(no-flag gate): 1 paths -> 1 survivors -> 1 emitted'))
 
 # ============================================================================
 # Run E - leaf-name corroboration fallback -> NOT a finding
@@ -166,7 +166,7 @@ $script:saved = @()
 New-HuntFindings
 Check "R37: missing execution_timeline -> no findings, no crash" ((RuleRows 'ShimCache order violation').Count -eq 0 -and (RuleRows 'ShimCache scrub survivor').Count -eq 0)
 $huntLogText = Get-Content -LiteralPath $CaseLog -Raw
-Check "R37: both trace lines still present on the degrade path" ($huntLogText -match [regex]::Escape('R37 ShimCache order violation: execution_timeline: 0 rows -> 0 entries (0 10ts) -> 0 out-of-order') -and $huntLogText -match [regex]::Escape('R37 ShimCache scrub survivor: corroboration amcache+prefetch_parsed+bam_lastexec: 0 paths -> 0 survivors -> 0 emitted'))
+Check "R37: both trace lines still present on the degrade path" ($huntLogText -match [regex]::Escape('R37 ShimCache order violation: execution_timeline: 0 rows -> 0 entries (0 10ts) -> 0 out-of-order') -and $huntLogText -match [regex]::Escape('R37 ShimCache scrub survivor: corroboration amcache+prefetch_parsed+bam_lastexec+shimcache_exec(no-flag gate): 0 paths -> 0 survivors -> 0 emitted'))
 
 # ============================================================================
 # Run I (v2.91) - Win10+ 10ts cache: order check is VOID (mtimes are file mtimes,

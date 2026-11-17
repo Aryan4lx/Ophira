@@ -1,5 +1,5 @@
 <#
-Ophira v3.3  -  Windows Endpoint Triage Toolkit
+Ophira v4.0  -  Windows Endpoint Triage Toolkit
 READ-ONLY by design: never modifies the system, only reads and copies data
 into its own output folder. Intended to be handed to a system owner or run
 by a responder during early triage / threat hunting.
@@ -363,7 +363,7 @@ param(
     [switch]$ExitVerdict
 )
 
-$ScriptVersion = "3.3"
+$ScriptVersion = "4.0"
 $ErrorActionPreference = 'Continue'
 $ProgressPreference = 'SilentlyContinue'
 
@@ -3449,8 +3449,13 @@ $script:Modules = @(
             $acctEv = Get-EventDataRows -LogName 'Security' -Id @(4720, 4722, 4724, 4726, 4728, 4732, 4735, 4756) -Start $start -Cap 2000 -Fields ([ordered]@{ Account = 'TargetUserName'; SourceIp = 'IpAddress'; LogonType = ''; LogonId = '' })
             $auth = @($auth + $acctEv)
             Save-Rows -Name 'security_auth_events' -Rows $auth
+            # v4.0: empty/'-'/loopback sources are LOCAL logon failures (console/scheduled-task
+            # noise on a stock host), not remote brute-force sources - listing them as one
+            # anonymous 'source' overstated external attack pressure (35 local failures once
+            # rendered as a fake external attacker). Local failures stay visible in the
+            # logon tables + security_auth_events.csv; only real remote sources qualify.
             $brute = @($auth | Where-Object { $_.EventId -eq 4625 } | Group-Object SourceIp |
-                Where-Object { $_.Count -ge 5 } | Sort-Object Count -Descending |
+                Where-Object { $_.Count -ge 5 -and $_.Name -and $_.Name -ne '-' -and $_.Name -ne '::1' -and $_.Name -ne '127.0.0.1' } | Sort-Object Count -Descending |
                 ForEach-Object { [pscustomobject]@{ SourceIp = $_.Name; FailedLogons = $_.Count } })
             Save-Rows -Name 'security_bruteforce_candidates' -Rows $brute
             # v2.93 (C5): Group-Object joins 'Account, SourceIp' with ', ' - an empty SourceIp
@@ -3631,8 +3636,11 @@ $script:Modules = @(
             Save-Rows -Name 'system_events' -Rows $ev
             $svc = @($ev | Where-Object { $_.Id -eq 7045 } | ForEach-Object {
                 $msg = "$($_.Message)"
-                $name = if ($msg -match 'Service Name:\s+(.+)') { $Matches[1].Split("`n")[0].Trim() } else { '' }
-                $file = if ($msg -match 'File Name:\s+(.+)') { $Matches[1].Split("`n")[0].Trim() } else { '' }
+                # v4.0: messages arrive whitespace-collapsed, so unbounded (.+) grabbed the
+                # whole tail (binary = the rest of the message). Bounded captures between
+                # the 7045 field labels instead - same pattern as the 4624 parser in 4.1.
+                $name = if ($msg -match 'Service Name:\s+(.+?)\s+Service File Name:') { $Matches[1].Trim() } else { '' }
+                $file = if ($msg -match 'Service File Name:\s+(.+?)\s+Service Type:') { $Matches[1].Trim() } else { '' }
                 [pscustomobject]@{ Time = $_.TimeCreated; Service = $name; Binary = $file; Type = 'NewService' }
             })
             Save-Rows -Name 'system_new_services' -Rows $svc
@@ -4959,9 +4967,16 @@ public class OphiraDump {
                     $t = $sid.LastWriteTime
                     foreach ($v in (Get-ItemProperty -LiteralPath $sid.PSPath -ErrorAction SilentlyContinue).PSObject.Properties) {
                         if (@('Version', 'SequenceNumber') -contains $v.Name -or $v.Name -match '^PS') { continue }
-                        if ("$($v.Value)" -and "$($v.Value)" -notmatch '^(Version|SequenceNumber)$') {
-                            $bam += [pscustomobject]@{ Source = $svc.ToUpper(); Sid = $sid.PSChildName; Executable = "$($v.Value)"; LastWrite = $t }
+                        # v4.0: the VALUE NAME is the executable path and the VALUE is its
+                        # last-exec FILETIME (byte[24], first 8 little-endian) - storing the
+                        # raw bytes as the executable made every row unusable (fix confirmed
+                        # against a real case: 72 rows of byte soup, no paths). Decoded time
+                        # replaces the SID-key LastWrite (per-binary truth beats the proxy).
+                        $bamFt = ''
+                        if ($v.Value -is [byte[]] -and $v.Value.Length -ge 8) {
+                            try { $bamFt = [DateTime]::FromFileTime([BitConverter]::ToInt64($v.Value, 0)).ToString('yyyy-MM-dd HH:mm:ss') } catch { }
                         }
+                        $bam += [pscustomobject]@{ Source = $svc.ToUpper(); Sid = $sid.PSChildName; Executable = $v.Name; LastWrite = $(if ($bamFt) { $bamFt } else { "$t" }) }
                     }
                 }
             }
@@ -9075,14 +9090,20 @@ function New-SuperTimeline {
     & $weave 'office_mru' 500 { param($r) @("$($r.LastWrite)", 'office document (MRU)', "$($r.App)", (& $leaf $r.Document), "$($r.Document)") }
     $anyT = {
         param($r, $fallback)
-        foreach ($pn in (@($r.PSObject.Properties.Name) | Where-Object { $_ -match '(?i)time|date' })) {
+        foreach ($pn in (@($r.PSObject.Properties.Name) | Where-Object { $_ -match '(?i)time|date|deleted' })) {
             if ("$($r.$pn)") { return "$($r.$pn)" }
         }
         $fallback
     }
     & $weave 'lnk_parsed' 1000 { param($r) @((& $anyT $r ''), 'LNK opened', '', (& $leaf $r.Target), "$($r.Path) -> $($r.Target)") } -IsUtc $true
     & $weave 'shellbags' 1000 { param($r) @((& $anyT $r ''), 'folder accessed (ShellBag)', '', (& $leaf ($r.PSObject.Properties['Path'].Value)), "$($r.PSObject.Properties['Path'].Value)") } -IsUtc $true
-    & $weave 'recyclebin_index' 1000 { param($r) @((& $anyT $r ''), 'file deleted (recycle bin)', '', (& $leaf ($r.PSObject.Properties['OriginalPath'].Value)), "$($r.PSObject.Properties['OriginalPath'].Value)") } -IsUtc $true
+    # v4.0: recyclebin_index rows carry Deleted (not a *time*/*date* column - $anyT now
+    # matches 'deleted') and File (there is no OriginalPath column - the old lookup
+    # silently null'd every Entity, so recycle-bin deletions never reached the timeline).
+    & $weave 'recyclebin_index' 1000 { param($r) @((& $anyT $r ''), 'file deleted (recycle bin)', '', (& $leaf ($r.PSObject.Properties['File'].Value)), "$($r.File)") } -IsUtc $true
+    # RBCmd's recyclebin.csv has the ORIGINAL path + DeletedUTC - richer entity for the
+    # same deletion event; weave it too when the parser ran (source absent = no-op).
+    & $weave 'recyclebin' 1000 { param($r) @((& $anyT $r ''), 'file deleted (recycle bin, original path)', '', (& $leaf ($r.PSObject.Properties['OriginalPath'].Value)), "$($r.OriginalPath)") } -IsUtc $true
     & $weave 'browser_history' 2000 {
         param($r)
         $u = ''; foreach ($pn in @('URL', 'Url', 'url')) { $p2 = $r.PSObject.Properties[$pn]; if ($p2 -and "$($p2.Value)") { $u = "$($p2.Value)"; break } }
@@ -9160,14 +9181,33 @@ function New-EntityCorrelation {
     }
 
     # ---------- binaries: keyed by full path, name fallback ----------
+    # v4.0: count distinct \\device\harddiskvolumeN numbers across the path-heavy sources
+    # once - exactly one volume means a single-volume system (map it to C:), more than one
+    # means keep device paths verbatim (no phantom drive letters).
+    $volSeen = @{}
+    foreach ($vSrc in @('amcache', 'prefetch_parsed', 'processes', 'yara_scanned', 'srum_usage')) {
+        foreach ($rV in @(Import-CaseCsv $vSrc | Select-Object -First $CAP)) {
+            foreach ($pnV in @($rV.PSObject.Properties.Name)) {
+                if ($pnV -notmatch '(?i)path|fullname|application|file') { continue }
+                $vmV = [regex]::Match("$($rV.$pnV)", '(?i)harddiskvolume(\d+)')
+                if ($vmV.Success) { $volSeen[[int]$vmV.Groups[1].Value] = $true }
+            }
+        }
+    }
+    $volMapOne = if (@($volSeen.Keys).Count -eq 1) { [int](@($volSeen.Keys)[0]) } else { -1 }
     $binsByPath = @{}
     $binsByName = @{}
     $binNew = {
         param([string]$raw)
         $p = ("$raw").Trim().Trim('"')
-        # SRUM reports device-style paths - normalize to the drive letter (best effort: volume 3 is C: on the vast majority of systems)
-        # ponytail: fixed harddiskvolume->C: mapping; per-volume letter resolution needs the mounteddevices hive
-        $p = $p -replace '(?i)^\\device\\harddiskvolume\d+\\', 'C:\'
+        # SRUM reports device-style paths. v4.0: mapping \device\harddiskvolumeN to C: is
+        # only safe when the WHOLE case references exactly one volume number (single-volume
+        # systems) - on multi-volume boxes it fabricated phantom C:\ cards for paths that
+        # really lived on another drive. Multi-volume cases keep the honest device path.
+        $volM = [regex]::Match($p, '(?i)^\\device\\harddiskvolume(\d+)\\')
+        if ($volM.Success -and $volMapOne -ge 0 -and ([int]$volM.Groups[1].Value) -eq $volMapOne) {
+            $p = $p -replace '(?i)^\\device\\harddiskvolume\d+\\', 'C:\'
+        }
         if (-not $p) { return $null }
         $lk = $p.ToLower()
         $nk = Split-Path $lk -Leaf
@@ -9719,7 +9759,10 @@ function Get-KnownBadRegexes {
         [pscustomobject]@{ Pat = '(?i)^(svch0st|scvhost|svchosts|svhcost|svchost\.ex|1svchost|svchostt)\.exe$'; Sev = 'high'; Why = 'misspelled svchost masquerade' }
         [pscustomobject]@{ Pat = '(?i)^svchost\.exe\.[a-z0-9]+$'; Sev = 'high'; Why = 'svchost.exe.NNN suffix (SANS talk recycle-bin case)' }
         [pscustomobject]@{ Pat = '(?i)^(rundll|regsvr|cmd|ftp|tftp|debug)\.exe\.[a-z0-9]+$'; Sev = 'high'; Why = 'system tool name with appended suffix' }
-        [pscustomobject]@{ Pat = '(?i)^(readme|how_to|help_decrypt|restore_files|recover_files|decrypt_files?)'; Sev = 'medium'; Why = 'ransom-note naming' }
+        # v4.0: bare 'readme'/'how_to' prefixes flagged every benign readme.txt/how_to guide
+        # on disk - only ransom-note-SPECIFIC stems stay (the extension rule below still
+        # catches locked/encrypted/ransomed names).
+        [pscustomobject]@{ Pat = '(?i)^(help_decrypt|restore_files|recover_files|decrypt_files?|how_to_(recover|decrypt|restore)|readme_(decrypt|restore|recover))'; Sev = 'medium'; Why = 'ransom-note naming' }
         [pscustomobject]@{ Pat = '(?i)(locked|encrypted|ransomed)\.(txt|html|hta)$'; Sev = 'medium'; Why = 'ransom-note naming' }
         [pscustomobject]@{ Pat = '(?i)\.(old|bak|tmp|sav|backup)\.exe$'; Sev = 'medium'; Why = 'renamed executable (extension suffix)' }
         [pscustomobject]@{ Pat = '[\u0400-\u04FF]'; Sev = 'high'; Why = 'Cyrillic character in binary name (homoglyph masquerade)' }
@@ -11137,6 +11180,18 @@ function New-HuntFindings {
             }
         }
     }
+    # v4.0: Ophira already decodes the Win10+ executed-flag (shimcache_exec.csv) - a path
+    # whose flag says Executed="no" canNOT be a 'scrub survivor' (4 of 6 findings on a
+    # real case were provable FPs: installer/runonce stubs that never executed). Gate the
+    # survivor list on it; the flag itself is confidence-not-proof, so 'yes' rows still
+    # need the corroboration miss to be flagged.
+    $r37NoExec = @{}
+    foreach ($rX in @(Import-CaseCsv 'shimcache_exec')) {
+        if ("$($rX.Executed)" -eq 'no') {
+            try { $r37NoExec[(Split-Path "$($rX.Path)" -Leaf).ToLower()] = $true } catch { }
+            $r37NoExec[("$($rX.Path)").ToLower()] = $true
+        }
+    }
     $r37Surv = New-Object System.Collections.Generic.List[string]
     foreach ($p in $r37Paths.ToArray()) {
         if (-not (Test-IsUserWritablePath $p)) { continue }
@@ -11144,13 +11199,14 @@ function New-HuntFindings {
         $pLeaf = ''
         try { $pLeaf = (Split-Path $p -Leaf).ToLower() } catch { }
         if ($pLeaf -and $r37Leaf.ContainsKey($pLeaf)) { continue }
+        if ($r37NoExec.ContainsKey($p.ToLower()) -or ($pLeaf -and $r37NoExec.ContainsKey($pLeaf))) { continue }
         $null = $r37Surv.Add($p)
     }
     $r37Emit = [Math]::Min(6, $r37Surv.Count)
     for ($i = 0; $i -lt $r37Emit; $i++) {
         & $find 'ShimCache scrub survivor' 'medium' $r37Surv[$i] 'executed (ShimCache) but absent from all execution corroboration sources - possible cache scrubbing' 'T1070.006'
     }
-    & $trace 'R37' 'ShimCache scrub survivor' "corroboration amcache+prefetch_parsed+bam_lastexec: $($r37Paths.Count) paths -> $($r37Surv.Count) survivors -> $r37Emit emitted"
+    & $trace 'R37' 'ShimCache scrub survivor' "corroboration amcache+prefetch_parsed+bam_lastexec+shimcache_exec(no-flag gate): $($r37Paths.Count) paths -> $($r37Surv.Count) survivors -> $r37Emit emitted"
 
     # ---------- R38: execution hour-of-day stacking (v2.81; v2.91: UTC-normalized + earliest-stamp) ----------
     # First-seen hour-of-day per distinct binary (src|leaf key). v2.91 fixes two lies:
@@ -11349,7 +11405,11 @@ function New-HuntFindings {
     & $trace 'R52' 'wmi temp consumer' "wmi_activity: $($wmiEv.Count) EID 5861 row(s)"
     $winrmEv = @(Import-CaseCsv 'winrm_events')
     if ($winrmEv.Count -ge 3) {
-        & $find 'WinRM remote-management authentication observed' 'low' ($winrmEv.Count.ToString() + ' events') 'remote PowerShell reached this host (check for lateral movement) - sample: ' + (("$($winrmEv[0].Message)" -replace '\s+', ' ').Trim()) 'T1021.006'
+        # v4.0: the evidence string must be ONE argument - the old 'a' + (expr) split into
+        # two positional args, so the evidence was truncated to 'sample: ' and the ATT&CK
+        # tag received the concatenation (findings showed attack '+').
+        $r53Msg = ("$($winrmEv[0].Message)" -replace '\s+', ' ').Trim()
+        & $find 'WinRM remote-management authentication observed' 'low' ($winrmEv.Count.ToString() + ' events') "remote PowerShell reached this host (check for lateral movement) - sample: $r53Msg" 'T1021.006'
     }
     & $trace 'R53' 'winrm remote auth' "winrm_events: $($winrmEv.Count) row(s)"
     $ntlmClear = @(Import-CaseCsv 'ntlm_events' | Where-Object { "$($_.Id)" -eq '8002' })
@@ -12051,7 +12111,10 @@ function Get-TriageLeads {
         $leads.Add([pscustomobject]@{ Rank = 'crit'; Title = "$($io.Application)"; Class = 'IOC hash match (known-bad binary ran on this host)'; Why = "SHA1 $($io.Indicator) matched the IOC feed"; Ident = "$($io.SourceFile)"; Extra = ''; Anchor = 'ioc' })
     }
     # v2.55: medium-weight lead sources - a case can be SUSPICIOUS without any HIGH/YARA/beacon
-    $hayMed = @($hayRows | Where-Object { "$($_.Level)" -match '^(medium|high|crit)$' })
+    # v4.0: hayabusa levels are 'med'/'crit' (not medium/critical) - the old filter
+    # matched neither, so the Sigma-storm lead could never fire (50 'med' rows sat below
+    # the radar on a real case).
+    $hayMed = @($hayRows | Where-Object { "$($_.Level)" -match '^(medium|med|high|crit|critical)$' })
     if ($hayMed.Count -ge 20) {
         $hayTop = @($hayMed | Group-Object RuleTitle | Sort-Object Count -Descending | Select-Object -First 3)
         # v2.66 (B7): Rule = the noisiest rule, so the lead link can open that drill-down
