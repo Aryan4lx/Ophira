@@ -1,5 +1,5 @@
 <#
-Ophira v3.1  -  Windows Endpoint Triage Toolkit
+Ophira v3.2  -  Windows Endpoint Triage Toolkit
 READ-ONLY by design: never modifies the system, only reads and copies data
 into its own output folder. Intended to be handed to a system owner or run
 by a responder during early triage / threat hunting.
@@ -363,7 +363,7 @@ param(
     [switch]$ExitVerdict
 )
 
-$ScriptVersion = "3.1"
+$ScriptVersion = "3.2"
 $ErrorActionPreference = 'Continue'
 $ProgressPreference = 'SilentlyContinue'
 
@@ -6088,11 +6088,11 @@ function New-HtmlReport {
 [data-theme=light]{--bg:#f6f7fa;--bg2:#ffffff;--bg3:#eef1f6;--line:#dce1ea;--line2:#c7d0dd;--tx:#181e2c;--tx2:#525d76;--tx3:#8791a5;--acc:#2b6cb0;--ok:#1f8f5a;--warn:#a3671a;--bad:#c0392b;--info:#2278a0}
 body{background:radial-gradient(1100px 480px at 75% -8%, rgba(122,162,247,.055), transparent 62%), var(--bg);color:var(--tx);font-family:'Segoe UI',Arial,sans-serif;margin:0;padding:58px 30px 90px 278px}
 [data-theme=light] body{background:radial-gradient(1100px 480px at 75% -8%, rgba(43,108,176,.05), transparent 62%), var(--bg)}
-h1{font-size:24px;font-weight:800;letter-spacing:-.4px;margin:0 0 5px} h2{font-size:17px;font-weight:700;letter-spacing:-.2px;margin:38px 0 12px;color:var(--tx);border-left:4px solid var(--acc);padding:2px 0 2px 12px;border-radius:2px}
+h1{font-size:24px;font-weight:800;letter-spacing:-.4px;margin:0 0 5px} h2{font-size:20px;font-weight:700;letter-spacing:-.2px;margin:46px 0 14px;color:var(--tx);border-left:4px solid var(--acc);padding:2px 0 2px 12px;border-radius:2px}
 .meta{color:var(--tx2);font-size:12px}
 a{color:var(--acc);text-decoration:none}a:hover{color:var(--tx)}
-.topbar{position:fixed;top:0;left:250px;right:0;z-index:30;display:flex;align-items:center;gap:10px;padding:9px 30px;background:rgba(11,14,20,.82);backdrop-filter:blur(9px);border-bottom:1px solid var(--line)}
-[data-theme=light] .topbar{background:rgba(246,247,250,.82)}
+.topbar{position:fixed;top:0;left:250px;right:0;z-index:30;display:flex;align-items:center;gap:10px;height:50px;box-sizing:border-box;padding:0 30px;background:var(--bg);border-bottom:1px solid var(--line);box-shadow:0 2px 12px rgba(0,0,0,.32)}
+[data-theme=light] .topbar{background:var(--bg);box-shadow:0 2px 10px rgba(24,30,44,.10)}
 .topbar .brand{font-weight:700;font-size:14px}
 .tspacer{flex:1}
 .tbtn{background:var(--bg3);border:1px solid var(--line2);color:var(--tx2);border-radius:7px;font:inherit;font-size:12px;padding:5px 13px;cursor:pointer;transition:border-color .15s,color .15s,transform .15s}
@@ -6103,7 +6103,7 @@ a{color:var(--acc);text-decoration:none}a:hover{color:var(--tx)}
 .nbrand{font-weight:800;font-size:15px;letter-spacing:2.5px;color:var(--acc);padding:4px 12px 12px;border-bottom:1px solid var(--line);margin-bottom:10px}
 .nbrand span{display:block;font-size:10px;font-weight:500;letter-spacing:1.2px;color:var(--tx3);margin-top:3px}
 .ngh{font-size:10px;font-weight:700;letter-spacing:1.8px;text-transform:uppercase;color:var(--tx3);padding:14px 12px 5px}
-.nav a.act{background:linear-gradient(90deg, rgba(122,162,247,.14), transparent 75%);color:var(--acc);border-left-color:var(--acc);font-weight:600}
+.nav a.act{background:linear-gradient(90deg, rgba(122,162,247,.20), transparent 78%);color:var(--acc);border-left-color:var(--acc);font-weight:600;box-shadow:inset 0 0 0 1px rgba(122,162,247,.22)}
 .nav::-webkit-scrollbar{width:8px}.nav::-webkit-scrollbar-thumb{background:var(--line2);border-radius:4px}
 @media(max-width:1100px){.nav{position:static;width:auto;flex-direction:row;flex-wrap:wrap;border-bottom:1px solid var(--line)}body{padding-left:30px}.topbar{left:0}}
 .mkey{position:sticky;top:50px;z-index:5;background:var(--bg);border-bottom:1px solid var(--line);padding:3px 0;font-size:11px;color:var(--tx3)}
@@ -6114,8 +6114,8 @@ a{color:var(--acc);text-decoration:none}a:hover{color:var(--tx)}
 .HIGH{background:#3d1418;color:#ff8789}.MEDIUM{background:#3a2d0e;color:#ffce6b}.LOW{background:#12301e;color:#7ee2a8}.INFO{background:#1b2c42;color:#9ec1f0}
 [data-theme=light] .HIGH{background:#fbe4e5;color:#a12629}[data-theme=light] .MEDIUM{background:#faf0d7;color:#7a5a0a}[data-theme=light] .LOW{background:#ddf3e6;color:#136a3d}[data-theme=light] .INFO{background:#dde9f8;color:#1c4d86}
 .ev{display:inline-block;background:var(--bg3);border:1px solid var(--line2);border-radius:4px;padding:2px 8px;margin:3px 4px 0 0;font-size:11px;color:var(--tx2)}
-.path{font-family:Consolas,monospace;font-size:12px;color:var(--acc);overflow-wrap:break-word}
-table{border-collapse:collapse;width:100%;font-size:13px}th,td{border:1px solid var(--line);padding:6px 10px;text-align:left}
+.path{font-family:Consolas,monospace;font-size:12px;color:var(--acc);overflow-wrap:anywhere}
+table{border-collapse:collapse;width:100%;max-width:100%;font-size:13px}th,td{border:1px solid var(--line);padding:7px 11px;text-align:left;overflow-wrap:anywhere;line-height:1.5;vertical-align:top}
 th{background:linear-gradient(var(--bg3),var(--bg2));color:var(--acc);position:sticky;top:50px;z-index:2}tr:nth-child(even){background:var(--bg3)}
 details{margin:10px 0;padding:6px 10px;background:var(--bg2);border:1px solid var(--line);border-radius:8px}summary{cursor:pointer;padding:4px 0}
 .crit{color:var(--bad);font-weight:700}.high{color:#ffb35c}.med{color:var(--warn)}.low{color:var(--info)}.info{color:var(--tx3)}
@@ -6173,9 +6173,9 @@ body.nosb .topbar{left:0}
 .barcnt{flex:0 0 auto;margin-left:auto;text-align:right;color:var(--tx2)}
 .sevbar{display:flex;height:14px;border-radius:4px;overflow:hidden;border:1px solid var(--line)}
 .sevbar div{height:100%}
-.tiles{display:grid;grid-template-columns:repeat(auto-fit,minmax(124px,1fr));gap:10px;margin:14px 0}
+.tiles{display:grid;grid-template-columns:repeat(auto-fit,minmax(124px,1fr));gap:12px;margin:16px 0}
 .tile{background:var(--bg2);border:1px solid var(--line);border-radius:10px;padding:10px 14px;display:flex;flex-direction:column;gap:2px;border-top:3px solid var(--line2);transition:border-color .15s,transform .15s;cursor:pointer}
-.tile b{font-size:22px;color:var(--tx)}.tile span{font-size:11px;color:var(--tx2)}
+.tile b{font-size:24px;color:var(--tx)}.tile span{font-size:10.5px;letter-spacing:.8px;text-transform:uppercase;color:var(--tx2)}
 .tile:hover{border-color:var(--acc);transform:translateY(-1px)}
 .tile.tBad{border-top-color:var(--bad)}.tile.tBad b{color:var(--bad)}
 .tile.tWarn{border-top-color:var(--warn)}.tile.tWarn b{color:var(--warn)}
@@ -6187,7 +6187,8 @@ tr:hover{background:rgba(122,162,247,.06)}
 a:focus-visible,button:focus-visible,summary:focus-visible{outline:2px solid var(--acc);outline-offset:1px;border-radius:4px}
 ::selection{background:rgba(122,162,247,.35)}
 summary:hover{color:var(--acc)}
-h3{font-size:13.5px;margin:20px 0 8px;color:var(--tx)}
+h3{font-size:14.5px;margin:24px 0 9px;color:var(--tx)}
+a[name]{scroll-margin-top:66px}html{overflow-x:clip}[data-theme=light] .nav a.act{box-shadow:inset 0 0 0 1px rgba(43,108,176,.28)}
 @media (prefers-reduced-motion: reduce){*{transition:none!important;animation:none!important}}
 .nlegend{padding:10px 14px 16px;color:var(--tx3);font-size:11px;line-height:1.45;border-top:1px solid var(--line)}
 @media print{body{background:#fff;color:#111;font-size:11px;padding:6px}.nav,.topbar,#copied,.sbar,.pgr,.mkey,.tbtn,button,.tiles{display:none!important}h1{color:#111}h2{color:#111;border-left-color:#999}pre.ioc{background:#f4f4f4;color:#111;border-color:#bbb}table{font-size:10px}th{background:#eee;color:#111;position:static}tr:nth-child(even){background:#fafafa}.vbanner,.lead,.rec,.card{background:#fafafa;border-color:#bbb;box-shadow:none}.meta,.foot{color:#444}a{color:#111;text-decoration:none}.swall{display:none!important}.heatcell{outline:1px solid #ccc}.lead-crit{border-left-color:#c0392b}.lead-med{border-left-color:#a3671a}tr[id^='ev_']{display:table-row!important}td.clip{white-space:normal!important;word-break:break-word}}
@@ -14387,7 +14388,7 @@ function Invoke-FocusCore {
         # v2.56: $hint/$hintCls/$hintTxt computed once before the JSON write - reused here
         $h = New-Object System.Text.StringBuilder
         # v2.98: palette parity with the main report shell (v2.89 deep palette) + print CSS
-        [void]$h.AppendLine("<!DOCTYPE html><html><head><meta charset='utf-8'><title>Ophira focus - $Indicator</title><style>body{background:#0b0e14;color:#e6edf7;font:13px/1.55 'Segoe UI',sans-serif;margin:24px}h1{color:#e6edf7;font-size:20px;margin:0 0 6px}h2{color:#7aa2f7;font-size:15px;border-bottom:1px solid #232b3d;padding-bottom:5px;margin-top:26px}h3{color:#9aa8c0;font-size:13px;margin-top:18px}table{border-collapse:collapse;margin:8px 0;width:100%}th,td{border:1px solid #232b3d;padding:4px 8px;text-align:left;vertical-align:top}th{background:#121622;color:#7aa2f7}tr{transition:background .12s}tr:hover{background:rgba(122,162,247,.06)}.path{font-family:Consolas,monospace;font-size:12px;word-break:break-all}td{word-break:break-word}.banner{padding:12px 16px;border-radius:8px;margin:12px 0;font-weight:bold}.crit{background:#2a1216;color:#ff8789;border:1px solid #6e2a30}.med{background:#2a2110;color:#e0af68;border:1px solid #5a4a22}.info{background:#121622;color:#9ec1f0;border:1px solid #313c55}.meta{color:#6b7691;font-size:12px;margin:6px 0}.warn{color:#e0af68}td.clip{cursor:copy}td.clip .cpv{word-break:break-all}.swall{background:#121622;border:1px solid #313c55;color:#9ec1f0;border-radius:4px;padding:1px 8px;cursor:pointer;font-size:11px;margin-top:3px}#copied{position:fixed;bottom:14px;right:14px;background:#12301e;color:#7ee2a8;padding:8px 14px;border-radius:8px;display:none;z-index:99;font-size:12px;font-weight:700}::selection{background:rgba(122,162,247,.35)}@media print{body{background:#fff;color:#111}.crit{background:#fff;color:#b00020;border-color:#999}.med{background:#fff;color:#a06c00;border-color:#999}.info{background:#fff;color:#333;border-color:#999}.meta{color:#444}.swall{display:none}}</style></head><body>")
+        [void]$h.AppendLine("<!DOCTYPE html><html><head><meta charset='utf-8'><title>Ophira focus - $Indicator</title><style>body{background:#0b0e14;color:#e6edf7;font:13px/1.55 'Segoe UI',sans-serif;margin:24px}h1{color:#e6edf7;font-size:20px;margin:0 0 6px}h2{color:#7aa2f7;font-size:15px;border-bottom:1px solid #232b3d;padding-bottom:5px;margin-top:26px}h3{color:#9aa8c0;font-size:13px;margin-top:18px}table{border-collapse:collapse;margin:8px 0;width:100%}th,td{border:1px solid #232b3d;padding:5px 9px;text-align:left;vertical-align:top;overflow-wrap:anywhere;line-height:1.45}th{background:#121622;color:#7aa2f7}tr{transition:background .12s}tr:hover{background:rgba(122,162,247,.06)}.path{font-family:Consolas,monospace;font-size:12px;word-break:break-all}td{word-break:break-word}.banner{padding:12px 16px;border-radius:8px;margin:12px 0;font-weight:bold}.crit{background:#2a1216;color:#ff8789;border:1px solid #6e2a30}.med{background:#2a2110;color:#e0af68;border:1px solid #5a4a22}.info{background:#121622;color:#9ec1f0;border:1px solid #313c55}.meta{color:#6b7691;font-size:12px;margin:6px 0}.warn{color:#e0af68}td.clip{cursor:copy}td.clip .cpv{word-break:break-all}.swall{background:#121622;border:1px solid #313c55;color:#9ec1f0;border-radius:4px;padding:1px 8px;cursor:pointer;font-size:11px;margin-top:3px}#copied{position:fixed;bottom:14px;right:14px;background:#12301e;color:#7ee2a8;padding:8px 14px;border-radius:8px;display:none;z-index:99;font-size:12px;font-weight:700}::selection{background:rgba(122,162,247,.35)}@media print{body{background:#fff;color:#111}.crit{background:#fff;color:#b00020;border-color:#999}.med{background:#fff;color:#a06c00;border-color:#999}.info{background:#fff;color:#333;border-color:#999}.meta{color:#444}.swall{display:none}}</style></head><body>")
         [void]$h.AppendLine("<h1>FOCUS DOSSIER - $(& $esc $Indicator)</h1>")
         # v2.97: reading guide - users could not tell what relates to what or what is interactive
         [void]$h.AppendLine("<div class='meta'>How to read this dossier, top to bottom: verdict banner &gt; activity graph (each instance red, parents on the left, what it did on the right) &gt; entity groups (same-hash = same file; same-name-only = verify before merging) &gt; instances &gt; per-instance detail tables &gt; per-source evidence sections. Click any long path/command to copy it; <b>show all</b> expands it in place. Full data: focus\focus_hits.csv and focus\focus_chain.csv.</div>")

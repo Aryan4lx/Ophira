@@ -42,13 +42,13 @@ Check 'tactics: drill link emitted' ($src.Contains("open the Sigma drill-down fo
 Check 'brand: endpoint triage toolkit header' ($src.Contains('Windows Endpoint Triage Toolkit'))
 Check 'brand: no old IR banner left' (-not $src.Contains('Windows IR toolkit'))
 Check 'brand: nav brand sub' ($src.Contains('endpoint triage report'))
-Check 'brand: version 3.1' ($src.Contains('$ScriptVersion = "3.1"'))
+Check 'brand: version 3.2' ($src.Contains('$ScriptVersion = "3.2"'))
 
 # design v3 css
 Check 'css: body depth gradient' ($src.Contains('radial-gradient(1100px 480px'))
 Check 'css: h2 accent bar' ($src.Contains('border-left:4px solid var(--acc)'))
 Check 'css: verdict gradient + rail' ($src.Contains('.vbanner{border-radius:12px;padding:22px 26px'))
-Check 'css: blurred topbar' ($src.Contains('backdrop-filter:blur(9px)'))
+Check 'css: opaque topbar (no ghost-through)' (-not $src.Contains('backdrop-filter:blur') -and $src.Contains('box-shadow:0 2px 12px rgba(0,0,0,.32)'))
 Check 'css: nav active gradient' ($src.Contains('.nav a.act{background:linear-gradient(90deg'))
 Check 'css: print rules intact' ($src.Contains('tr[id^=') -and $src -match "@media print\{body\{background:#fff")
 

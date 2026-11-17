@@ -10,6 +10,15 @@
 
 
 
+
+## v3.2 - visual bug fixes + professional polish
+
+- Fixed horizontal table overflow (8 tables blew out the viewport by up to 370px in coverage/hunt/persistence/timeline/entities): td/th now wrap anywhere; .path cells use overflow-wrap:anywhere (break-word never reduced table min-content width). Focus report tables got the same fix.
+- Fixed the scroll "overlap": topbar is now fully opaque with a soft drop shadow instead of 82%-translucent blur - nothing ghosts through when scrolling.
+- Stronger active-state pill in the sidebar (gradient + inset ring), section headers upsized (h2 17->20px, h3 13.5->14.5px with more breathing room), table rows line-height 1.5 and comfier padding, stat tiles with uppercase labels and bigger tabular numbers.
+- Anchor jumps now clear the fixed topbar (scroll-margin-top on every section anchor); page-wide horizontal scrollbar eliminated (html overflow-x clip).
+- Responsive check: below 1100px the sidebar correctly stacks static above content.
+
 ## v3.1 - report UI polish + interaction repair
 
 - CRITICAL JS FIX: the scrollspy edit shipped an extra closing brace inside the main report script - the whole interaction layer (theme toggle, sidebar, section filters, copy-on-click, show-all buttons, drill-downs) silently died with 'missing ) after argument list' in every v3.1 render. Caught by live browser audit; report JS now parse-verified.
