@@ -1,5 +1,5 @@
 <#
-Ophira v4.1  -  Windows Endpoint Triage Toolkit
+Ophira v4.2  -  Windows Endpoint Triage Toolkit
 READ-ONLY by design: never modifies the system, only reads and copies data
 into its own output folder. Intended to be handed to a system owner or run
 by a responder during early triage / threat hunting.
@@ -363,7 +363,7 @@ param(
     [switch]$ExitVerdict
 )
 
-$ScriptVersion = "4.1"
+$ScriptVersion = "4.2"
 $ErrorActionPreference = 'Continue'
 $ProgressPreference = 'SilentlyContinue'
 
@@ -7616,12 +7616,13 @@ a[name]{scroll-margin-top:66px}html{overflow-x:clip}[data-theme=light] .nav a.ac
     }
     # v2.21: process lineage + session-attributed activity ($chains/$sessAct imported at the top)
     if ($chains.Count -gt 0) {
-        $null = $sb.AppendLine("<h3>Process lineage (how flagged binaries got there)</h3><table><tr><th>Flagged binary</th><th>Hops</th><th>Ancestry chain</th></tr>")
+        $null = $sb.AppendLine("<h3>Process lineage (how flagged binaries got there)</h3><table><tr><th>Flagged binary</th><th>Hops</th><th>Ancestry chain</th><th>Also launched</th></tr>")
         Add-CapNote @($chains).Count 15 'process_chains' 'Lineage chains'
         foreach ($c in ($chains | Sort-Object { ConvertTo-SafeInt $_.Steps } -Descending | Select-Object -First 15)) {
-            $null = $sb.AppendLine("<tr><td class='path'>$(ConvertTo-HtmlEsc $c.Entity)</td><td>$($c.Steps)</td><td class='path'><b>$(ConvertTo-HtmlEsc $c.Chain)</b>$(if ("$($c.Evidence)") { "<br>$(ConvertTo-HtmlEsc $c.Evidence)" })</td></tr>")
+            $cKids = if ("$($c.Children)") { "$(ConvertTo-HtmlEsc $c.Children)" + $(if ([int](ConvertTo-SafeInt $c.ChildrenN) -gt 6) { " (+$([int](ConvertTo-SafeInt $c.ChildrenN) - 6) more)" } else { '' }) } else { '-' }
+            $null = $sb.AppendLine("<tr><td class='path'>$(ConvertTo-HtmlEsc $c.Entity)</td><td>$($c.Steps)</td><td class='path'><b>$(ConvertTo-HtmlEsc $c.Chain)</b>$(if ("$($c.Evidence)") { "<br>$(ConvertTo-HtmlEsc $c.Evidence)" })</td><td class='path'>$cKids</td></tr>")
         }
-        $null = $sb.AppendLine("</table><div class='meta'>Rebuilt from 4688 parent-child + live PPID map. A user-path binary whose ancestry runs through office/browser/interpreter processes is a phishing/exploit story; ancestry from services.exe with no matching install event is suspicious. Source: csv\$(Get-CaseCsvPath 'process_chains')</div>")
+        $null = $sb.AppendLine("</table><div class='meta'>Rebuilt from 4688/Sysmon parent-child + live PPID map. A user-path binary whose ancestry runs through office/browser/interpreter processes is a phishing/exploit story; ancestry from services.exe with no matching install event is suspicious. Source: csv\$(Get-CaseCsvPath 'process_chains')</div>")
     }
     if ($sessAct.Count -gt 0) {
         $null = $sb.AppendLine("<h3>Attributed activity (which session did what)</h3><table><tr><th>Time</th><th>Session account</th><th>Source IP</th><th>Type</th><th>Logon</th><th>Activity</th></tr>")
@@ -9724,6 +9725,14 @@ function New-ProcessChains {
         if (-not $edges.ContainsKey($c)) { $edges[$c] = New-Object System.Collections.Generic.List[object] }
         $null = $edges[$c].Add([pscustomobject]@{ Parent = $p; ParentPath = "$($r.ParentProcess)"; Time = "$($r.Time)"; Cmd = "$($r.CommandLine)"; Src = '4688' })
     }
+    foreach ($r in (Import-CaseCsv 'sysmon_proc_create')) {
+        $c = ''; $p = ''
+        try { $c = (Split-Path "$($r.Image)" -Leaf).ToLower() } catch { }
+        try { $p = (Split-Path "$($r.ParentImage)" -Leaf).ToLower() } catch { }
+        if (-not $c -or -not $p -or $c -eq $p) { continue }
+        if (-not $edges.ContainsKey($c)) { $edges[$c] = New-Object System.Collections.Generic.List[object] }
+        $null = $edges[$c].Add([pscustomobject]@{ Parent = $p; ParentPath = "$($r.ParentImage)"; Time = ''; Cmd = "$($r.CommandLine)"; Src = 'sysmon' })
+    }
     $pidMap = @{}
     $live = @(Import-CaseCsv 'processes')
     foreach ($r in $live) { if ("$($r.PID)") { $pidMap["$($r.PID)"] = $r } }
@@ -9738,7 +9747,13 @@ function New-ProcessChains {
         if (-not $edges.ContainsKey($c)) { $edges[$c] = New-Object System.Collections.Generic.List[object] }
         $null = $edges[$c].Add([pscustomobject]@{ Parent = $p; ParentPath = "$($par.Path)"; Time = ''; Cmd = "$($par.Path)"; Src = 'live' })
     }
-    if ($edges.Count -eq 0) { Write-CaseLog '    process lineage: no parent-child edges (4688 off, no live map)' 'DarkGray'; return }
+    $children = @{}
+    foreach ($kk in $edges.Keys) {
+        $cp = $edges[$kk][0].Parent
+        if (-not $children.ContainsKey($cp)) { $children[$cp] = New-Object System.Collections.Generic.List[string] }
+        if (-not $children[$cp].Contains($kk)) { $null = $children[$cp].Add($kk) }
+    }
+    if ($edges.Count -eq 0) { Write-CaseLog '    process lineage: no parent-child edges (4688/sysmon off, no live map)' 'DarkGray'; return }
 
     $flagged = New-Object System.Collections.Generic.List[string]
     foreach ($r in ((Import-CaseCsv 'flash_process_scored') | Where-Object { "$($_.Verdict)" -match '^(HIGH|MEDIUM)$' -and "$($_.Path)" })) {
@@ -9753,7 +9768,7 @@ function New-ProcessChains {
     foreach ($f in (@($flagged | Select-Object -Unique) | Select-Object -First 40)) {
         $leaf = ''
         try { $leaf = (Split-Path $f -Leaf).ToLower() } catch { }
-        if (-not $leaf -or -not $edges.ContainsKey($leaf)) { continue }
+        if (-not $leaf -or (-not $edges.ContainsKey($leaf) -and -not $children.ContainsKey($leaf))) { continue }
         # walk ancestors, widest evidence per hop, cap depth 8
         $steps = New-Object System.Collections.Generic.List[string]
         $notes = New-Object System.Collections.Generic.List[string]
@@ -9770,10 +9785,21 @@ function New-ProcessChains {
             $depth++
         }
         $null = $steps.Add($leaf)
+        $kids = New-Object System.Collections.Generic.List[string]
+        if ($children.ContainsKey($leaf)) {
+            foreach ($kd in ($children[$leaf] | Sort-Object)) {
+                if ($kd -eq $leaf) { continue }
+                if ($kids.Count -lt 6) {
+                    $null = $kids.Add($kd)
+                    $ke = $edges[$kd][0]
+                    if ($ke -and "$($ke.Cmd)") { $null = $notes.Add("launched $kd ($($ke.Cmd))") }
+                }
+            }
+        }
         $chain = $steps -join ' -> '
-        if ($steps.Count -lt 2 -or $seenChains.ContainsKey($chain)) { continue }
+        if ($steps.Count -lt 2 -and $kids.Count -eq 0) { continue }
         $seenChains[$chain] = $true
-        $null = $out.Add([pscustomobject]@{ Entity = $f; Steps = $steps.Count; Chain = $chain; Evidence = (($notes | Select-Object -First 8) -join ' | ') })
+        $null = $out.Add([pscustomobject]@{ Entity = $f; Child = $leaf; Parent = $(if ($steps.Count -ge 2) { $steps[0] } else { '' }); Steps = $steps.Count; Chain = $chain; Children = (($kids | Select-Object -First 6) -join '; '); ChildrenN = $kids.Count; Evidence = (($notes | Select-Object -First 8) -join ' | ') })
     }
     Save-Rows -Name 'process_chains' -Rows $out.ToArray()
     if ($out.Count -gt 0) {

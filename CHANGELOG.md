@@ -14,6 +14,15 @@
 
 
 
+
+## v4.2 - process lineage upgrade
+
+- New-ProcessChains now ingests Sysmon process-create edges alongside 4688 and the live PPID map; flagged binaries get per-hop command-line evidence.
+- Chains gained a descendants view ("Also launched" - children per binary, deduped, capped at 6 with launch commands in the evidence trail); a flagged binary with no ancestry but with children now still produces a chain row.
+- process_chains.csv schema adds Child/Parent/Children/ChildrenN columns - the crit "process lineage" lead (dead since v2.56 because it read Child/Parent) and the focus-engine instance-parent pickup now actually fire when chains exist.
+- Report lineage block gained the "Also launched" column and Sysmon credit in the meta.
+- New fixture suite tests\test_v42.ps1 (17 checks); version pins updated.
+
 ## v4.1 - BAM + SRUM hunt batch
 
 - BAM last-execution evidence now feeds entity cards and hunt findings: R54 flags user-writable executables whose BAM timestamp is RECENT relative to collection (a true last-exec signal, unlike ShimCache mtime).
