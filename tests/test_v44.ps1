@@ -86,7 +86,9 @@ Check 'P3: UserAssist exe/dll filter' ($src.Contains('(exe|dll)$'))
 Check 'P3: shellbags h3 present' ($src.Contains('Folder access history (shellbags)'))
 Check 'P3: shellbags user from UsrClass.dat leaf' ($src.Contains('_UsrClass\.dat'))
 Check 'P3: ::ffff: strip comment pinned' ($src.Contains('IPv4-mapped IPv6 forms'))
-Check 'P3: version 4.4' ($src.Contains('Ophira v4.4') -and $src.Contains('$ScriptVersion = "4.4"'))
+Check 'P3: jump-list h3 + import wired' ($src.Contains('Recent file targets (jump lists)') -and $src.Contains("Import-CaseCsv 'jumplist_parsed_AutomaticDestinations'"))
+Check 'P3: jump-list sort falls back to CreationTime' ($src.Contains('else { $_.CreationTime }'))
+Check 'P3: version 4.5' ($src.Contains('Ophira v4.5') -and $src.Contains('$ScriptVersion = "4.5"'))
 
 Write-Host ''
 if ($script:fail -gt 0) { Write-Host "v4.4: $($script:pass) passed, $($script:fail) FAILED" -ForegroundColor Red; exit 1 }

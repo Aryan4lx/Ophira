@@ -1,3 +1,7 @@
+## v4.5 - jump-list join (user activity gains recent file targets)
+
+LECmd's AutomaticDestinations jump-list parse (jumplist_parsed_AutomaticDestinations.csv) was collected + parsed but never rendered anywhere - the user-activity section now gains a "Recent file targets (jump lists)" table. App id resolved to a friendly label via the Explorer AppID map (Windows Explorer / Quick Access / pinned app), sorted newest-first (LastModified with CreationTime fallback), capped at 15 rows with an honest +N more (csv\artifacts\jumplist_parsed_*.csv) pointer. Profile rows (profile_list.csv, v4.3) unchanged. Tests: test_v44.ps1 gains P3 wiring pins; suite green; E2E on 20261116_205959 renders real rows (Explorer targets, Quick Access, Downloads artifacts).
+
 ### v2.94 follow-up - parse-time window time-bomb (same family as the v2.91 Defender fix)
 
 - Re-parsing an aged case re-ran hayabusa with a RELATIVE 'last 168h' window anchored at the analyst's now - once the case was older than the window, detection re-runs returned 0 Sigma rows and the verdict silently lost its Sigma input (observed: 7-signal case dropped to 6 eleven days after collection). Also: hayabusa 4.x silently rejects --start-timeline (usage error -> 0 rows), so the explicit-window branch never worked.

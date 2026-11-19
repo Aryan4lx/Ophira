@@ -1,5 +1,5 @@
 <#
-Ophira v4.4  -  Windows Endpoint Triage Toolkit
+Ophira v4.5  -  Windows Endpoint Triage Toolkit
 READ-ONLY by design: never modifies the system, only reads and copies data
 into its own output folder. Intended to be handed to a system owner or run
 by a responder during early triage / threat hunting.
@@ -363,7 +363,7 @@ param(
     [switch]$ExitVerdict
 )
 
-$ScriptVersion = "4.4"
+$ScriptVersion = "4.5"
 $ErrorActionPreference = 'Continue'
 $ProgressPreference = 'SilentlyContinue'
 
@@ -6332,6 +6332,10 @@ a[name]{scroll-margin-top:66px}html{overflow-x:clip}[data-theme=light] .nav a.ac
     $profRows = @(Import-CaseCsv 'profile_list')
     $uaAssist = @(Import-CaseCsv 'userassist')
     $shellRows = @(Import-CaseCsv 'shellbags')
+    # v4.5: jump-list recent targets (Automatic Destinations) - what each app recently
+    # opened; per-user split is not captured (JLECmd ran case-wide), so no User column
+    $jlRows = @(Import-CaseCsv 'jumplist_parsed_AutomaticDestinations')
+    $jlReal = @($jlRows | Where-Object { "$($_.Path)" -and ("$($_.LastModified)" -or "$($_.CreationTime)") } | Sort-Object { if ("$($_.LastModified)") { $_.LastModified } else { $_.CreationTime } } -Descending | Select-Object -First 15)
     $profBySid = @{}
     foreach ($p7 in $profRows) { if ("$($p7.Sid)" -match '^S-1-5-21-' -and "$($p7.User)") { $profBySid["$($p7.Sid)"] = "$($p7.User)" } }
     $bamByLeaf = @{}
@@ -7456,6 +7460,21 @@ a[name]{scroll-margin-top:66px}html{overflow-x:clip}[data-theme=light] .nav a.ac
             [void]$sb7.AppendLine('</table>')
             $null = $sb.AppendLine($sb7.ToString())
             if ($shellRows.Count -gt 15) { $null = $sb.AppendLine("<div class='meta'>showing 15 most recent of $($shellRows.Count) folder records</div>") }
+        }
+        if ($jlReal.Count -gt 0) {
+            $null = $sb.AppendLine('<h3>Recent file targets (jump lists)</h3>')
+            $null = $sb.AppendLine("<div class='meta' style='margin-bottom:8px'>Files each app recently opened or created (Automatic Destinations, most recent first) - catches documents, archives and tools opened through GUI apps even when Explorer Recent is cleared. Full list: csv\artifacts\jumplist_parsed_AutomaticDestinations.csv</div>")
+            $sb8 = New-Object System.Text.StringBuilder
+            [void]$sb8.AppendLine('<table><tr><th>App</th><th>Target</th><th>Last opened</th><th>Times</th></tr>')
+            foreach ($j8 in $jlReal) {
+                $app8 = if ("$($j8.AppIdDescription)") { ConvertTo-HtmlEsc $j8.AppIdDescription } else { ConvertTo-HtmlEsc $j8.AppId }
+                $lm8 = if ("$($j8.LastModified)") { ConvertTo-HtmlEsc $j8.LastModified } else { ConvertTo-HtmlEsc $j8.CreationTime }
+                $ic8 = if ((ConvertTo-SafeInt $j8.InteractionCount) -gt 0) { ConvertTo-SafeInt $j8.InteractionCount } else { '<span class="meta">-</span>' }
+                [void]$sb8.AppendLine("<tr><td>$app8</td><td>$(ConvertTo-HtmlEsc $j8.Path)</td><td>$lm8</td><td>$ic8</td></tr>")
+            }
+            [void]$sb8.AppendLine('</table>')
+            $null = $sb.AppendLine($sb8.ToString())
+            if ($jlRows.Count -gt 15) { $null = $sb.AppendLine("<div class='meta'>showing 15 most recent of $($jlRows.Count) jump-list entries</div>") }
         }
     }
     # ---------- connections: correlated entities ----------
