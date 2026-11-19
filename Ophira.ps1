@@ -1,5 +1,5 @@
 <#
-Ophira v4.3  -  Windows Endpoint Triage Toolkit
+Ophira v4.4  -  Windows Endpoint Triage Toolkit
 READ-ONLY by design: never modifies the system, only reads and copies data
 into its own output folder. Intended to be handed to a system owner or run
 by a responder during early triage / threat hunting.
@@ -363,7 +363,7 @@ param(
     [switch]$ExitVerdict
 )
 
-$ScriptVersion = "4.3"
+$ScriptVersion = "4.4"
 $ErrorActionPreference = 'Continue'
 $ProgressPreference = 'SilentlyContinue'
 
@@ -847,6 +847,8 @@ function Get-IpCloudClass {
     # name for known cloud/CDN ranges, empty string for unknown/non-cloud. Ranges sourced
     # from provider published IP docs as of 2026-10; refresh periodically.
     param([string]$IpString)
+    # v4.4: IPv4-mapped IPv6 forms (::ffff:a.b.c.d) classify as their IPv4 counterpart
+    $IpString = "$IpString" -replace '^(?i)::ffff:', ''
     $ip = $null
     if (-not [System.Net.IPAddress]::TryParse($IpString, [ref]$ip)) { return '' }
     if ($ip.AddressFamily -ne 'InterNetwork') { return '' }
@@ -6328,6 +6330,8 @@ a[name]{scroll-margin-top:66px}html{overflow-x:clip}[data-theme=light] .nav a.ac
     # tags; works with process auditing (4688) OFF because BAM + ProfileList are registry-based
     $bamRows = @(Import-CaseCsv 'bam_lastexec')
     $profRows = @(Import-CaseCsv 'profile_list')
+    $uaAssist = @(Import-CaseCsv 'userassist')
+    $shellRows = @(Import-CaseCsv 'shellbags')
     $profBySid = @{}
     foreach ($p7 in $profRows) { if ("$($p7.Sid)" -match '^S-1-5-21-' -and "$($p7.User)") { $profBySid["$($p7.Sid)"] = "$($p7.User)" } }
     $bamByLeaf = @{}
@@ -6716,7 +6720,30 @@ a[name]{scroll-margin-top:66px}html{overflow-x:clip}[data-theme=light] .nav a.ac
     } else {
         [void]$actB.Append("<div class='meta'>No public connections recorded.</div>")
     }
-    [void]$actB.Append('</div></div>')
+    [void]$actB.Append('</div>')
+    # v4.4: SRUM top data consumers - hourly network-usage rollup per app; upload-dominant
+    # rows are the exfil-shaped ones (steady large send, little receive).
+    $srumTot = @(Import-CaseCsv 'srum_app_totals.csv')
+    if ($srumTot.Count -gt 0) {
+        $sTop = @($srumTot | Where-Object { [double]$_.TotalBytes -gt 0 } | Sort-Object { [double]$_.TotalBytes } -Descending | Select-Object -First 8)
+        [void]$actB.Append("<div class='card'><div class='meta' style='margin-bottom:8px'><b>Top data consumers (SRUM)</b> - total network volume per application (red = upload-dominant, ratio &gt;= 50%)</div>")
+        if ($sTop.Count -gt 0) {
+            $sMax = [double]$sTop[0].TotalBytes
+            foreach ($s4 in $sTop) {
+                $tb4 = [double]$s4.TotalBytes
+                $gb4 = if ($tb4 -ge 1GB) { '{0:N1} GB' -f ($tb4 / 1GB) } elseif ($tb4 -ge 1MB) { '{0:N1} MB' -f ($tb4 / 1MB) } else { '{0:N0} KB' -f ($tb4 / 1KB) }
+                $ur4 = if ($s4.PSObject.Properties['UploadRatio']) { [double]$s4.UploadRatio } else { 0 }
+                $sc4 = if ($ur4 -ge 0.5) { 'bad' } else { '' }
+                $sw4 = if ($sMax -gt 0) { [int][math]::Max(2, [int](100.0 * $tb4 / $sMax)) } else { 2 }
+                $sh4 = [System.Net.WebUtility]::HtmlEncode("$($s4.Users) | $($s4.FirstSeen) -> $($s4.LastSeen) ($($s4.Rounds) hourly rounds)")
+                [void]$actB.Append("<div class='barrow'><span class='bn' title='$sh4'>$(ConvertTo-HtmlEsc $s4.Leaf)</span><span class='bartr'><span class='barfill $sc4' style='width:$sw4%'></span></span><span class='barcnt'>$gb4 up$([math]::Round($ur4 * 100))%</span></div>")
+            }
+        } else {
+            [void]$actB.Append("<div class='meta'>SRUM usage rows exist but no per-app totals were computed.</div>")
+        }
+        [void]$actB.Append('</div>')
+    }
+    [void]$actB.Append('</div>')
     $null = $sb.AppendLine($actB.ToString())
 
     # v2.66 (B6/B7): which Sigma rules got a per-rule drill-down (top 12 by hit count). The
@@ -7388,6 +7415,48 @@ a[name]{scroll-margin-top:66px}html{overflow-x:clip}[data-theme=light] .nav a.ac
         if ($uaRows.Count -gt 15) { $null = $sb.AppendLine("<div class='meta'>showing top 15 of $($uaRows.Count) accounts</div>") }
     } else {
         $null = $sb.AppendLine("<div class='meta'>No account activity evidence available (no auth events and no process-creation events in this case).</div>")
+    }
+    # v4.4: per-user program counters + folder-access history join the rollup section
+    if ($uaAssist.Count -gt 0) {
+        $uaProg = @($uaAssist | Where-Object { "$($_.Kind)" -eq 'executable' -and [int]$_.RunCount -gt 0 -and "$($_.Entry)" -notmatch '^UEME_' -and "$($_.Entry)" -match '\.(exe|dll)$' })
+        if ($uaProg.Count -gt 0) {
+            $null = $sb.AppendLine('<h3>Program runs (UserAssist)</h3>')
+            $byUa = @{}
+            foreach ($u7 in $uaProg) {
+                $un7 = $profBySid["$($u7.User)"]
+                if (-not $un7) { $un7 = "$($u7.User)" }
+                if (-not $byUa.ContainsKey($un7)) { $byUa[$un7] = New-Object System.Collections.Generic.List[object] }
+                $byUa[$un7].Add($u7)
+            }
+            foreach ($uk7 in $byUa.Keys) {
+                $top7 = @($byUa[$uk7] | Sort-Object { [int]$_.RunCount } -Descending | Select-Object -First 6)
+                $bits7 = @()
+                foreach ($t7 in $top7) {
+                    $leaf7 = Split-Path -Leaf ("$($t7.Entry)")
+                    $bits7 += "$leaf7 ($($t7.RunCount)x)"
+                }
+                $null = $sb.AppendLine("<div class='meta' style='margin-bottom:4px'><b>$(ConvertTo-HtmlEsc $uk7)</b> - most-run: $(ConvertTo-HtmlEsc ($bits7 -join ', '))</div>")
+            }
+            $null = $sb.AppendLine("<div class='meta'>GUI-launched programs only (counters increment on Explorer launches; console runs are not counted). Full list: csv\artifacts\userassist.csv</div>")
+        }
+    }
+    if ($shellRows.Count -gt 0) {
+        $shellReal = @($shellRows | Where-Object { "$($_.AbsolutePath)".Length -gt 3 -and ("$($_.LastInteracted)" -or "$($_.FirstInteracted)") } | Sort-Object { if ("$($_.LastInteracted)") { $_.LastInteracted } else { $_.FirstInteracted } } -Descending | Select-Object -First 15)
+        if ($shellReal.Count -gt 0) {
+            $null = $sb.AppendLine('<h3>Folder access history (shellbags)</h3>')
+            $null = $sb.AppendLine("<div class='meta' style='margin-bottom:8px'>Folders each profile browsed to (Explorer window history per user hive) - most recent first; useful for 'they opened that USB folder' style questions. Full list: csv\artifacts\shellbags.csv</div>")
+            $sb7 = New-Object System.Text.StringBuilder
+            [void]$sb7.AppendLine('<table><tr><th>User</th><th>Folder</th><th>First interacted</th><th>Last interacted</th></tr>')
+            foreach ($s7 in $shellReal) {
+                $suser7 = if ("$($s7.SourceFile)" -match '(?i)([^\\]+)_UsrClass\.dat') { $Matches[1] } else { '?' }
+                $li7 = if ("$($s7.LastInteracted)") { ConvertTo-HtmlEsc $s7.LastInteracted } else { '<span class="meta">-</span>' }
+                $fi7 = if ("$($s7.FirstInteracted)") { ConvertTo-HtmlEsc $s7.FirstInteracted } else { '<span class="meta">-</span>' }
+                [void]$sb7.AppendLine("<tr><td>$(ConvertTo-HtmlEsc $suser7)</td><td>$(ConvertTo-HtmlEsc $s7.AbsolutePath)</td><td>$fi7</td><td>$li7</td></tr>")
+            }
+            [void]$sb7.AppendLine('</table>')
+            $null = $sb.AppendLine($sb7.ToString())
+            if ($shellRows.Count -gt 15) { $null = $sb.AppendLine("<div class='meta'>showing 15 most recent of $($shellRows.Count) folder records</div>") }
+        }
     }
     # ---------- connections: correlated entities ----------
     $null = $sb.AppendLine("<a name='entities'></a><h2>Correlated entities - binaries &amp; accounts</h2>")

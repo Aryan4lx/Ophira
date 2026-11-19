@@ -15,6 +15,13 @@
 
 
 
+## v4.4 - user-activity joins + SRUM consumers chart
+
+- Activity picture gains a Top data consumers (SRUM) card: per-app network volume, upload-dominant apps (ratio >= 50%) flagged red - exfil-shaped egress stands out next to the talker bars.
+- User activity rollup gains two joins: Program runs (UserAssist per-profile counters, UEME control rows skipped) and Folder access history (shellbags, most-recent-first, user resolved from the source hive).
+- Get-IpCloudClass now strips IPv4-mapped IPv6 prefixes (::ffff:a.b.c.d) so mapped addresses classify as their IPv4 counterpart at every consumer.
+- tests\test_v44.ps1: 25 checks (normalization, SRUM card render + bad flag, UserAssist/shellbags fragments, structure pins).
+
 ## v4.3 - BAM attribution + profile context
 
 - BAM (Background Activity Moderator) collection decoded properly: per-user last-execution timestamps (FileTime) for every registered binary - csv\artifacts\bam_lastexec.csv now carries User/Name/Path/LastExec and feeds the ran-as attribution in entity cards ('aryan (BAM)'), fixing the pre-4.1 rows that stored raw FILETIME bytes as the executable name.
