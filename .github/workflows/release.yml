@@ -39,12 +39,10 @@ jobs:
           $tag = $env:GITHUB_REF_NAME
           # v2.82: idempotent - a re-run of a workflow on an existing tag used to fail with
           # "a release with the same tag name already exists" (red email noise, no harm done)
-          # v2.88: report-overhaul line ships as PRE-release until declared stable - v2.85 stays
-          # the GitHub "Latest"; flip this to '' once the overhaul is blessed
-          $pre = @('--prerelease')
+          # v4.5: overhaul blessed by user - releases ship as full releases (v4.5 = Latest)
           if (gh release view $tag 2>$null) {
-            gh release edit $tag --prerelease
+            gh release edit $tag --prerelease=false
             gh release upload $tag "Ophira-$tag.zip" SHA256SUMS --clobber
           } else {
-            gh release create $tag "Ophira-$tag.zip" SHA256SUMS --title "Ophira $tag" --notes-file "$env:TEMP\release_notes.md" @pre
+            gh release create $tag "Ophira-$tag.zip" SHA256SUMS --title "Ophira $tag" --notes-file "$env:TEMP\release_notes.md"
           }
