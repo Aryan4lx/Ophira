@@ -341,6 +341,7 @@ while ($true) { try { (New-Object Net.Sockets.TcpClient('1.1.1.1', 443)).Close()
 - [x] **UI rounds v2.96-v2.99**: live-browser QA loop (agent-browser), sidebar grouping + collapse memory, sigma drill-down tabs, stat tiles, nav sync fixes, theme persistence, focus dossier reading guide
 - [x] **v3.0**: YARA Forge curated rule packs (Setup-installed second rules dir), per-case sigma suppress.txt noise floor, drill links from rule/tactic cells, endpoint-triage branding, design v3 polish
 - [x] **User-activity joins**: jump-list recent file targets join the user-activity section (AppID-resolved labels, newest-first, CreationTime fallback) (v4.5)
+- [x] **Sysmon deployment**: Setup fetches Sysmon + SwiftOnSecurity config; Deploy -InstallSysmon installs/refreshes the service per host before collecting (v4.6)
 - [x] **Focus precision (v2.90)**: expansion no longer pivots through ports (proxy-listener drift killed), dossier trail scoped to the indicator itself, user-activity rows merge domain/bare/profile identities per account leaf with parsed last-seen
 - [x] **Report UI wave 2**: grouped sidebar (Overview/Findings/Context/Host state/Reference) with scrollspy + collapsible hamburger, at-a-glance stat tiles under the verdict banner (severity-colored only when non-zero, jump to section), deepened palette, row hover, focus-visible, reduced-motion (v2.89)
 - [x] **TaskCache truth-telling (storm fix)**: collector re-opens registry keys so GID/SD reads work

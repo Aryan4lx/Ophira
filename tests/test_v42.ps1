@@ -1,4 +1,4 @@
-# test_v42.ps1 - v4.2 process-lineage upgrade (sysmon edges, descendants, Child/Parent columns, report block)
+# test_v42.ps1 - v4.6 process-lineage upgrade (sysmon edges, descendants, Child/Parent columns, report block)
 $ErrorActionPreference = 'Stop'
 $script:fail = 0
 function Check { param($name, $ok) if ($ok) { Write-Host "  [ok] $name" } else { $script:fail++; Write-Host "  [FAIL] $name" } }
@@ -60,7 +60,7 @@ Check 'P5: children map built' ($fnEx.Contains('$children'))
 Check 'P5: output has Child/Parent/Children columns' ($fnEx.Contains('Child = $leaf') -and $fnEx.Contains('ChildrenN'))
 Check 'P5: report renders Also launched column' ($src.Contains('<th>Also launched</th>'))
 Check 'P5: report meta mentions Sysmon' ($src.Contains('Rebuilt from 4688/Sysmon parent-child'))
-Check 'P5: version 4.2' ($src.Contains('Ophira v4.5') -and $src.Contains('$ScriptVersion = "4.5"'))
+Check 'P5: version 4.6' ($src.Contains('Ophira v4.6') -and $src.Contains('$ScriptVersion = "4.6"'))
 Check 'P5: leads consumer reads Child/Parent (dead since v2.56, now live)' ($src.Contains('$ch2.Parent) -> $($ch2.Child)'))
 
 Write-Host ''

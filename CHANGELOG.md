@@ -1,3 +1,12 @@
+## v4.6 - Sysmon deployment support (Setup + Deploy -InstallSysmon)
+
+Ophira can now put the single richest telemetry source on endpoints.
+
+- **-Mode Setup** downloads Sysmon (Sysinternals live link) + the SwiftOnSecurity sysmon-config community baseline into tools\endpoint\sysmon* (packed into the Deploy tool push like the other endpoint tools).
+- **-Mode Deploy -InstallSysmon** (or wizard question 5) copies the Sysmon files to each target over the existing WinRM session and runs an idempotent install script (New-SysmonRemoteInstall): sysmon -accepteula -i <config>, verifies the Sysmon64 service is Running, reports 'sysmon installed/updated' in the per-host deploy result; failures degrade to a note, never break the collection.
+- Module 4.3 already parses Sysmon telemetry when present - cases collected after install gain sysmon_proc_create/network/dns/image_load evidence + EID22 DNS correlation feeding connections_dns and t-corr automatically.
+- Tests: test_v46.ps1 (22 checks: install-script text, catalog entries, param/wizard/worker wiring pins); full suite green.
+
 ## v4.5 - jump-list join (user activity gains recent file targets)
 
 LECmd's AutomaticDestinations jump-list parse (jumplist_parsed_AutomaticDestinations.csv) was collected + parsed but never rendered anywhere - the user-activity section now gains a "Recent file targets (jump lists)" table. App id resolved to a friendly label via the Explorer AppID map (Windows Explorer / Quick Access / pinned app), sorted newest-first (LastModified with CreationTime fallback), capped at 15 rows with an honest +N more (csv\artifacts\jumplist_parsed_*.csv) pointer. Profile rows (profile_list.csv, v4.3) unchanged. Tests: test_v44.ps1 gains P3 wiring pins; suite green; E2E on 20261116_205959 renders real rows (Explorer targets, Quick Access, Downloads artifacts).

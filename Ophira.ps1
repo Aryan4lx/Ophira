@@ -1,5 +1,5 @@
 <#
-Ophira v4.5  -  Windows Endpoint Triage Toolkit
+Ophira v4.6  -  Windows Endpoint Triage Toolkit
 READ-ONLY by design: never modifies the system, only reads and copies data
 into its own output folder. Intended to be handed to a system owner or run
 by a responder during early triage / threat hunting.
@@ -81,6 +81,13 @@ by a responder during early triage / threat hunting.
     Deploy only: ship the bundled tools\endpoint\ folder to every remote
     host first (Kansa-style push, run, remove) so Sigma and prefetch
     parsing work on the endpoint too. Roughly 72 MB zipped per host.
+
+.PARAMETER InstallSysmon
+    Deploy only: copy tools\endpoint\sysmon* (Sysmon + a hardened config,
+    fetched by -Mode Setup) to each target and install/refresh the Sysmon
+    service before collecting. Endpoint telemetry then gains process,
+    network and DNS event sources that Ophira parses automatically
+    (sysmon_* CSVs + much stronger correlation).
 
 .PARAMETER Sequential
     Run collection modules one after another instead of the default parallel
@@ -333,6 +340,7 @@ param(
     [string]$LogLevel = 'Normal',
     [switch]$IncludeMemory,
     [switch]$PushTools,
+    [switch]$InstallSysmon,
     [switch]$Sequential,
     [switch]$NoElevate,
     [int]$LogHours = 168,
@@ -363,7 +371,7 @@ param(
     [switch]$ExitVerdict
 )
 
-$ScriptVersion = "4.5"
+$ScriptVersion = "4.6"
 $ErrorActionPreference = 'Continue'
 $ProgressPreference = 'SilentlyContinue'
 
@@ -1343,6 +1351,8 @@ function Invoke-SetupMode {
         [pscustomobject]@{ Name = 'RECmd';       Direct = 'https://download.ericzimmermanstools.com/RECmd.zip'; Zip = $true; Target = 'endpoint' }
         [pscustomobject]@{ Name = 'EvtxECmd';    Direct = 'https://download.ericzimmermanstools.com/EvtxECmd.zip'; Zip = $true; Target = 'analyst' }
         [pscustomobject]@{ Name = 'loldrivers';  Raw = @('https://raw.githubusercontent.com/magicsword-io/LOLDrivers/main/detections/hashes/samples_malicious.sha256', 'https://raw.githubusercontent.com/magicsword-io/LOLDrivers/main/detections/hashes/samples_vulnerable.sha256'); Zip = $false; Target = 'endpoint' }
+        [pscustomobject]@{ Name = 'sysmon';        Direct = 'https://download.sysinternals.com/files/Sysmon.zip'; Zip = $true; Target = 'endpoint' }
+        [pscustomobject]@{ Name = 'sysmon-config'; Raw = @('https://raw.githubusercontent.com/SwiftOnSecurity/sysmon-config/master/sysmonconfig-export.xml'); Zip = $false; Target = 'endpoint' }
         [pscustomobject]@{ Name = 'yara';        Repo = 'VirusTotal/yara-x';                 Pattern = '^yara-x-v[\d\.]+-x86_64-pc-windows-msvc\.zip$'; Zip = $true; Target = 'endpoint' }
         [pscustomobject]@{ Name = 'yaraforge';   Repo = 'Neo23x0/YaraForge';                 Pattern = '(?i)conservative.*\.zip$'; Zip = $true; Target = 'endpoint' }
     )
@@ -1371,7 +1381,7 @@ function Invoke-SetupMode {
             if ($t.PSObject.Properties['Direct' ] -and $t.Direct) {
                 $assetUrl = $t.Direct
                 $assetName = ($t.Direct -split '/')[-1]
-                Write-Host "  source: ericzimmermanstools.com ($assetName)"
+                Write-Host "  source: $(if ($assetUrl -match 'sysinternals') { 'Sysinternals live link' } else { 'ericzimmermanstools.com' }) ($assetName)"
             } else {
                 $rel = Invoke-RestMethod -Uri "https://api.github.com/repos/$($t.Repo)/releases/latest" -Headers @{ 'User-Agent' = 'Ophira' } -TimeoutSec 30 -ErrorAction Stop
                 $asset = @($rel.assets | Where-Object { $_.name -match $t.Pattern } | Select-Object -First 1)[0]
@@ -1455,8 +1465,30 @@ function Compress-ToolZip {
     return [pscustomobject]@{ Added = $added; Skipped = $skipped }
 }
 
+# v4.6: remote Sysmon install script (Deploy -InstallSysmon). Returns the script TEXT so
+# tests can pin it; the deploy worker turns it into a scriptblock over WinRM. Sysmon -i
+# with a config installs/updates the service AND applies that config; -i alone keeps the
+# built-in default. Idempotent: re-running refreshes the config in place.
+function New-SysmonRemoteInstall {
+    param([string]$RemoteDir)
+    return @"
+`$ErrorActionPreference = 'Stop'
+`$sm = Join-Path '$RemoteDir' 'sysmon'
+`$exe = Join-Path `$sm 'Sysmon64.exe'
+if (-not (Test-Path `$exe)) { `$exe = Join-Path `$sm 'Sysmon.exe' }
+if (-not (Test-Path `$exe)) { Write-Output 'SYSMON-FAIL:no Sysmon executable found'; exit 1 }
+`$cfg = Get-ChildItem `$sm -Filter '*.xml' -ErrorAction SilentlyContinue | Select-Object -First 1
+if (`$cfg) { & `$exe -accepteula -i `$cfg.FullName 2>&1 | Out-Null } else { & `$exe -accepteula -i 2>&1 | Out-Null }
+Start-Sleep -Seconds 2
+`$svc = Get-Service -Name Sysmon64 -ErrorAction SilentlyContinue
+if (-not `$svc) { `$svc = Get-Service -Name Sysmon -ErrorAction SilentlyContinue }
+if (`$svc -and `$svc.Status -eq 'Running') { Write-Output ('SYSMON-OK:' + `$svc.Name + ' running') }
+else { Write-Output 'SYSMON-FAIL:service not running after install' }
+"@
+}
+
 function Invoke-DeployMode {
-    param([string[]]$Targets, [string]$DeployPreset, $Cred, [string]$DeployCaseID, [string]$DeploySharePath, [int]$Threads = 8, [bool]$PushBin = $false, [int]$DeployLogHours = 0, [string]$DeployLogWindow = '')
+    param([string[]]$Targets, [string]$DeployPreset, $Cred, [string]$DeployCaseID, [string]$DeploySharePath, [int]$Threads = 8, [bool]$PushBin = $false, [int]$DeployLogHours = 0, [string]$DeployLogWindow = '', [switch]$InstallSysmon)
 
     $kit = Get-KitRoot
     $scriptPath = Join-Path $kit 'Ophira.ps1'
@@ -1483,7 +1515,7 @@ function Invoke-DeployMode {
     }
 
     $worker = {
-        param($c, $scriptPath, $toolsDir, $preset, $caseID, $sharePath, $cred, $outFolder, $binZip, $logHours, $logWindow)
+        param($c, $scriptPath, $toolsDir, $preset, $caseID, $sharePath, $cred, $outFolder, $binZip, $logHours, $logWindow, $insSysmon)
         $result = [pscustomobject]@{ Host = $c; Ok = $false; Detail = '' }
         $s = $null
         $remoteDir = 'C:\Windows\Temp\Ophira'
@@ -1521,6 +1553,24 @@ function Invoke-DeployMode {
                     Remove-Item "$using:remoteDir\bin.zip" -Force -ErrorAction SilentlyContinue
                 } -ErrorAction Stop
             }
+            $smNote = ''
+            if ($insSysmon) {
+                $smDirs = @()
+                if ($toolsDir -and (Test-Path (Join-Path $toolsDir 'endpoint'))) { $smDirs = @(Get-ChildItem (Join-Path $toolsDir 'endpoint') -Directory -Filter 'sysmon*' -ErrorAction SilentlyContinue) }
+                if ($smDirs.Count -gt 0) {
+                    try {
+                        Invoke-Command -Session $s -ScriptBlock { $null = New-Item -ItemType Directory -Path $args[0] -Force } -ArgumentList "$remoteDir\sysmon" -ErrorAction Stop | Out-Null
+                        foreach ($sd in $smDirs) {
+                            Get-ChildItem -LiteralPath $sd.FullName -File -ErrorAction SilentlyContinue | ForEach-Object {
+                                Copy-Item -Path $_.FullName -Destination "$remoteDir\sysmon\$($_.Name)" -ToSession $s -Force -ErrorAction Stop
+                            }
+                        }
+                        $smRes = Invoke-Command -Session $s -ScriptBlock ([scriptblock]::Create((New-SysmonRemoteInstall -RemoteDir $remoteDir))) -ErrorAction Stop
+                        if ("$smRes" -match 'SYSMON-OK') { $smNote = 'sysmon installed/updated; ' }
+                        else { $smNote = "sysmon install issue ($smRes); " }
+                    } catch { $smNote = "sysmon install failed ($($_.Exception.Message)); " }
+                } else { $smNote = 'sysmon files missing - run -Mode Setup sysmon first; ' }
+            }
             $cmd = "powershell.exe -NoProfile -ExecutionPolicy Bypass -File `"$remoteDir\Ophira.ps1`" -Mode Collect -NoMenu -NoElevate -Preset $preset -OutputPath `"$remoteDir\out`""
             if ($caseID) { $cmd += " -CaseID `"$caseID`"" }
             if ($sharePath) { $cmd += " -SharePath `"$sharePath`"" }
@@ -1541,6 +1591,7 @@ function Invoke-DeployMode {
                 }
                 $result.Ok = $true
             } else { $result.Detail = "no result zip ($res)" }
+            if ($smNote) { $result.Detail = $smNote + $result.Detail }
         } catch { $result.Detail = $_.Exception.Message }
         finally {
             if ($s) {
@@ -1558,7 +1609,7 @@ function Invoke-DeployMode {
         $jobs = New-Object System.Collections.ArrayList
         foreach ($c in $Batch) {
             $ps = [powershell]::Create()
-            $null = $ps.AddScript($worker.ToString()).AddArgument($c).AddArgument($scriptPath).AddArgument($toolsDir).AddArgument($DeployPreset).AddArgument($DeployCaseID).AddArgument($DeploySharePath).AddArgument($Cred).AddArgument($outFolder).AddArgument($binZip).AddArgument($DeployLogHours).AddArgument($DeployLogWindow)
+            $null = $ps.AddScript($worker.ToString()).AddArgument($c).AddArgument($scriptPath).AddArgument($toolsDir).AddArgument($DeployPreset).AddArgument($DeployCaseID).AddArgument($DeploySharePath).AddArgument($Cred).AddArgument($outFolder).AddArgument($binZip).AddArgument($DeployLogHours).AddArgument($DeployLogWindow).AddArgument([bool]$InstallSysmon)
             $ps.RunspacePool = $pool
             $null = $jobs.Add(@{ PS = $ps; Handle = $ps.BeginInvoke(); Target = $c })
         }
@@ -15545,6 +15596,7 @@ function Invoke-DeployWizard {
     $cred = $null
     $preset = $defPreset
     $push = [bool]$script:CfgPushTools
+    $insSysmon = $false
     $shareIn = ''
     $advLogHours = -1
     $advLogWindow = ''
@@ -15599,42 +15651,48 @@ function Invoke-DeployWizard {
                 $step = 5
             }
             5 {
+                $smIn = Read-WizardLine "  Install/refresh Sysmon telemetry on targets first (needs tools\endpoint\sysmon* from -Mode Setup)? [y/N]"
+                if ($null -eq $smIn) { $step = 4; continue }
+                $insSysmon = if ($smIn) { $smIn -match '^y' } else { $false }
+                $step = 6
+            }
+            6 {
                 if ($script:CfgDeployShare) {
                     $shareIn = Read-WizardLine "  Upload results to share (UNC path, 'none' = pull to collections\, ENTER = $($script:CfgDeployShare))"
-                    if ($null -eq $shareIn) { $step = 4; continue }
+                    if ($null -eq $shareIn) { $step = 5; continue }
                     if (-not $shareIn) { $shareIn = $script:CfgDeployShare }
                     if ($shareIn -ieq 'none') { $shareIn = '' }
                 } else {
                     $shareIn = Read-WizardLine "  Upload results to a central share instead of pulling back? (UNC path, ENTER = pull to collections\)"
-                    if ($null -eq $shareIn) { $step = 4; continue }
+                    if ($null -eq $shareIn) { $step = 5; continue }
                 }
                 if ($shareIn -and -not (Test-Path $shareIn)) {
                     Write-Host "  WARNING: share not reachable right now ($shareIn) - will retry during run" -ForegroundColor Yellow
                 }
-                $step = 6
+                $step = 7
             }
-            6 {
+            7 {
                 $advLogHours = -1
                 $advLogWindow = ''
                 $advIn = Read-WizardLine "  Advanced options (Full depth, log window, parallelism)? [y/N]"
-                if ($null -eq $advIn) { $step = 5; continue }
-                if ($advIn -notmatch '^y') { $step = 7; continue }
+                if ($null -eq $advIn) { $step = 6; continue }
+                if ($advIn -notmatch '^y') { $step = 8; continue }
                 $dIn = Read-WizardLine "  Depth: 1=Quick  2=Standard  3=Full - heaviest, includes SRUM etc. [current: $preset]"
-                if ($null -eq $dIn) { $step = 5; continue }
+                if ($null -eq $dIn) { $step = 6; continue }
                 if ($dIn -match '^3' -or $dIn -match '^f(ull)?$') { $preset = 'Full' }
                 $lhIn = Read-WizardLine "  Log analysis window (168 = hours, 30d, 3m, 0 = all, or start date 2026-09-01) [ENTER = 168 = 7 days]"
-                if ($null -eq $lhIn) { $step = 5; continue }
+                if ($null -eq $lhIn) { $step = 6; continue }
                 if ($lhIn) {
                     if ($lhIn -match '^\d+$') { $advLogHours = [int]$lhIn }
                     elseif ($null -eq (ConvertTo-LogStart $lhIn)) { Write-Host "  window not understood - keeping the default 7 days" -ForegroundColor Yellow }
                     else { $advLogWindow = $lhIn }
                 }
                 $thIn = Read-WizardLine "  Hosts to process in parallel (ENTER = current setting)"
-                if ($null -eq $thIn) { $step = 5; continue }
+                if ($null -eq $thIn) { $step = 6; continue }
                 if ($thIn -match '^\d+$' -and [int]$thIn -gt 0) { $threads = [int]$thIn }
-                $step = 7
+                $step = 8
             }
-            7 {
+            8 {
                 $shown = ($targets | Select-Object -First 5) -join ', '
                 if ($targets.Count -gt 5) { $shown += ", ...($($targets.Count) total)" }
                 $credNote = if ($cred) { $cred.UserName } else { "$env:USERDOMAIN\$env:USERNAME (current)" }
@@ -15647,17 +15705,18 @@ function Invoke-DeployWizard {
                 if ($advLogWindow) { Write-Host "    Log window: from $advLogWindow" }
                 Write-Host "    Account   : $credNote"
                 Write-Host "    hayabusa  : $(if ($push) { 'push + run + remove' } else { 'not pushed' })"
+                Write-Host "    Sysmon    : $(if ($insSysmon) { 'install/refresh before collect' } else { 'untouched' })"
                 Write-Host "    Results   : $(if ($shareIn) { "upload to $shareIn" } else { 'pull to collections\' })"
                 if ($CaseID) { Write-Host "    Case ID   : $CaseID" }
                 Write-Host "    Parallel  : $threads hosts at once"
                 Write-Host "  ----------------------------------------------------------------" -ForegroundColor Cyan
                 $go = Read-WizardLine "  Start? [Y/n]"
-                if ($null -eq $go) { $step = 6; continue }
+                if ($null -eq $go) { $step = 7; continue }
                 if ($go -match '^[Nn]') { Write-Host "  Deploy cancelled." -ForegroundColor Yellow; return }
-                $step = 8
+                $step = 9
             }
-            8 {
-                Invoke-DeployMode -Targets $targets -DeployPreset $preset -Cred $cred -DeployCaseID $CaseID -DeploySharePath $shareIn -Threads $threads -PushBin $push -DeployLogHours $advLogHours -DeployLogWindow $advLogWindow
+            9 {
+                Invoke-DeployMode -Targets $targets -DeployPreset $preset -Cred $cred -DeployCaseID $CaseID -DeploySharePath $shareIn -Threads $threads -PushBin $push -DeployLogHours $advLogHours -DeployLogWindow $advLogWindow -InstallSysmon:$insSysmon
                 $rem = Read-WizardLine "  Remember these answers for next time? [y/N]"
                 if ($rem -match '^y') {
                     $vals = @{ TARGETS = $targetsIn; PRESET = $preset; PUSHTOOLS = $(if ($push) { 'yes' } else { 'no' }) }
@@ -15787,7 +15846,7 @@ if ($Mode -ne 'Collect') {
                 $ComputerName += @(Get-Content -LiteralPath $TargetsFile | ForEach-Object { ($_ -replace '#.*$', '').Trim() } | Where-Object { $_ })
             }
             if (-not $ComputerName) { Write-Host "-ComputerName or -TargetsFile required for Deploy mode" -ForegroundColor Red; exit 1 }
-            Invoke-DeployMode -Targets $ComputerName -DeployPreset $Preset -Cred $Credential -DeployCaseID $CaseID -DeploySharePath $SharePath -Threads $MaxThreads -PushBin ([bool]$PushTools) -DeployLogHours $LogHours -DeployLogWindow $LogWindow
+            Invoke-DeployMode -Targets $ComputerName -DeployPreset $Preset -Cred $Credential -DeployCaseID $CaseID -DeploySharePath $SharePath -Threads $MaxThreads -PushBin ([bool]$PushTools) -DeployLogHours $LogHours -DeployLogWindow $LogWindow -InstallSysmon:$InstallSysmon
         }
         'UpdateRules' { Invoke-UpdateRulesMode }
         'Tune' { Invoke-TuneMode | Out-Null }
