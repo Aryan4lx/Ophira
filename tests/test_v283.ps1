@@ -218,7 +218,7 @@ Check "wire: verdict signal - ntds backup noted weight 0" ($src.Contains("Add-Si
 Check "wire: CsvCatMap - scheduled_taskcache persistence" ($src.Contains("'scheduled_taskcache' = 'persistence'"))
 Check "wire: CsvCatMap - shimcache_exec timeline" ($src.Contains("'shimcache_exec' = 'timeline'"))
 Check "wire: CsvCatMap - radar/appswitched artifacts" ($src.Contains("'radar_exec' = 'artifacts'; 'appswitched' = 'artifacts'"))
-Check "wire: anchor switch - task_deletions/esent -> persistence" ($src.Contains("'^(autoruns|asep|services|scheduled_task|task_deletions|esent_ntds)'"))
+Check "wire: anchor switch - task_deletions/esent -> persistence" ($src.Contains("'^(autoruns|asep|services|scheduled_task|task_deletions|task_updates|esent_ntds)'"))
 Check "wire: anchor switch - radar/appswitched -> snapshot" ($src.Contains("'^(radar_exec|appswitched)'"))
 foreach ($k in @('scheduled_taskcache', 'task_deletions', 'esent_ntds', 'shimcache_exec', 'radar_exec', 'appswitched')) {
     Check "wire: desc + emptyWhy maps carry $k (2 spots)" (([regex]::Matches($src, "(?m)^\s+'$k'\s*=\s*'")).Count -ge 2)

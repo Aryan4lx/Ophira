@@ -1,4 +1,5 @@
-# Ophira
+#- [x] v4.8 SRUM analyst-completion honesty (verdict caveats pending deep-parse; no more silent SUSPICIOUS -> LIKELY COMPROMISED jump after Parse)
+ Ophira
 
 **One PowerShell script** (5.1+, zero dependencies) for Windows incident response: collect evidence on an endpoint, push it across a fleet, analyze the results, and fetch companion tools.
 
@@ -347,6 +348,7 @@ while ($true) { try { (New-Object Net.Sockets.TcpClient('1.1.1.1', 443)).Close()
 - [x] **TaskCache truth-telling (storm fix)**: collector re-opens registry keys so GID/SD reads work
 - [x] **Correlation wave + plaso option (v2.88)**: ran-as attribution per binary, entity evidence trails with diversity caps, leaf-identity merge, account/remote cards, connections woven into the supertimeline (DNS-resolved), dossier trail, hunt severity rails, `-PlasoTimeline` deep timeline elevated; VALUE-READ-DENIED distinguished from true null; R45 semantics corrected (SD-stripped+linked = HIGH, tree-blind = aggregated info, ghost orphan = LOW capped); verdict orphan door removed; global hunt-findings storm guard (15 per rule+severity + '+N more'); Microsoft task-flag exemption (v2.87)
 - [x] **Role presets + correlation spine**: auto-detected host role (DC/WebServer/Workstation) + `DC`/`WebServer` presets with auto role-pack; module 4.9 Kerberos/DS parses (4768/4769/4771/4776, 4662 DCSync GUIDs, 5136), module 8.12 IIS/HTTPERR raw + W3C parse; hunt rules R16-R21 (DCSync, Kerberoasting, AS-REP, password spray, webshell chains, web anomalies); session attribution (4624 LogonId x 4688/5145), process-lineage chains for flagged binaries, new sources in entity correlation; Win7/PS2.0 parse-compat sweep (friendly gate fires everywhere) (v2.21)
+- [x] **SRUM analyst-completion honesty (v4.8)**: collection verdicts now carry an explicit caveat when the SRUDB was copied but the analyst-side deep-parse hasn't run - no more silent SUSPICIOUS -> LIKELY COMPROMISED jump after -Mode Parse
 
 ## Coverage vs Velociraptor (built-in Windows artifacts)
 

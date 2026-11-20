@@ -1,5 +1,5 @@
 <#
-Ophira v4.6  -  Windows Endpoint Triage Toolkit
+Ophira v4.8  -  Windows Endpoint Triage Toolkit
 READ-ONLY by design: never modifies the system, only reads and copies data
 into its own output folder. Intended to be handed to a system owner or run
 by a responder during early triage / threat hunting.
@@ -371,7 +371,7 @@ param(
     [switch]$ExitVerdict
 )
 
-$ScriptVersion = "4.6"
+$ScriptVersion = "4.8"
 $ErrorActionPreference = 'Continue'
 $ProgressPreference = 'SilentlyContinue'
 
@@ -605,6 +605,8 @@ $script:CsvCatMap = @{
     'defender_events' = 'defender'; 'defender_config_events' = 'defender'
     # v2.95: secondary security logs + defender hardening posture
     'wmi_activity' = 'logs'; 'winrm_events' = 'logs'; 'bits_transfers' = 'logs'; 'ntlm_events' = 'logs'; 'applocker_events' = 'logs'; 'wdac_events' = 'logs'; 'defender_posture' = 'defender'
+    # v4.7: track-2 completion
+    'task_updates' = 'persistence'; 'ps_module_log' = 'logs'; 'laps_state' = 'context'
     # MEMORY
     'memory_live_scan' = 'memory'; 'memory_malfind' = 'memory'; 'memory_netscan' = 'memory'
     # CONTEXT
@@ -3987,6 +3989,22 @@ $script:Modules = @(
             $wdac = Get-FilteredEvents -LogName 'Microsoft-Windows-CodeIntegrity/Operational' -Ids @(3076, 3077) -Start $start
             Save-Rows -Name 'wdac_events' -Rows $wdac
             if ($wdac.Count -gt 0) { Write-CaseLog "    WDAC/CodeIntegrity audit+block events: $($wdac.Count)" 'Yellow' }
+            # v4.7: Track-2 completion - task updates, PS Module Logging, LAPS state
+            $taskUpd = @(Get-FilteredEvents -LogName 'Microsoft-Windows-TaskScheduler/Operational' -Ids @(4702) -Start $start)
+            Save-Rows -Name 'task_updates' -Rows $taskUpd
+            if ($taskUpd.Count -gt 0) { Write-CaseLog "    Scheduled task updates (4702): $($taskUpd.Count) - task redefinitions pair with 4699 deletions" 'Gray' }
+            $psMod = @(Get-FilteredEvents -LogName 'Microsoft-Windows-PowerShell/ModuleLog' -Ids @(4103) -Start $start)
+            Save-Rows -Name 'ps_module_log' -Rows $psMod
+            if ($psMod.Count -gt 0) { Write-CaseLog "    PowerShell Module Logging (4103): $($psMod.Count) - module pipeline executions" 'Gray' }
+            $lapsSvc = Get-Service -Name 'LAPS' -ErrorAction SilentlyContinue
+            $lapsDir = (Test-Path -LiteralPath "$env:ProgramFiles\LAPS")
+            $lapsEv = @(Get-FilteredEvents -LogName 'Microsoft-Windows-LAPS/Operational' -Ids $null -Start $start)
+            $lapsKind = if ($lapsSvc) { 'service running' } elseif ($lapsDir) { 'legacy installed' } elseif ($lapsEv.Count -gt 0) { 'Windows LAPS events' } else { 'not installed' }
+            $lapsRows = @([pscustomobject]@{ Kind = $lapsKind; Detail = "service=$(if ($lapsSvc) { $lapsSvc.Status } else { 'none' }); legacy dir=$lapsDir; Windows-LAPS events=$($lapsEv.Count)" })
+            Save-Rows -Name 'laps_state' -Rows $lapsRows
+            if ($lapsKind -ne 'not installed') { Write-CaseLog "    LAPS state: $lapsKind" 'Gray' }
+            Export-Evtx -LogName 'Microsoft-Windows-LAPS/Operational' -FileName 'LAPS_Operational.evtx'
+            Export-Evtx -LogName 'Microsoft-Windows-PowerShell/ModuleLog' -FileName 'PowerShell_ModuleLog.evtx'
             Export-Evtx -LogName 'Microsoft-Windows-WMI-Activity/Operational' -FileName 'WMI_Activity.evtx'
             Export-Evtx -LogName 'Microsoft-Windows-Bits-Client/Operational' -FileName 'Bits_Client.evtx'
             Export-Evtx -LogName 'Microsoft-Windows-AppLocker/EXE and DLL' -FileName 'AppLocker_EXE_DLL.evtx'
@@ -5406,7 +5424,8 @@ public class OphiraDump {
 function Get-FilteredEvents {
     param([string]$LogName, [int[]]$Ids, $Start, [int]$MaxMsg = 500)
     try {
-        $filter = @{ LogName = $LogName; Id = $Ids }
+        $filter = @{ LogName = $LogName }
+        if ($Ids) { $filter.Id = $Ids }
         if ($Start) { $filter.StartTime = $Start }
         if ($script:LogEndDT) { $filter.EndTime = $script:LogEndDT }
         $events = Get-WinEvent -FilterHashtable $filter -ErrorAction SilentlyContinue
@@ -5809,7 +5828,7 @@ function Get-SectionAnchorForSource {
         '^(ioc_hits|flash_ioc_hits)'                   { 'ioc'; break }
         '^(flash_process_scored|processes|process_hashes|sysmon_proc_create|sysmon_proc_tamper)' { 'processes'; break }
         '^(security_auth|bruteforce|rdp_|logon)'       { 'logons'; break }
-        '^(autoruns|asep|services|scheduled_task|task_deletions|esent_ntds)' { 'persistence'; break }
+        '^(autoruns|asep|services|scheduled_task|task_deletions|task_updates|esent_ntds)' { 'persistence'; break }
         '^(radar_exec|appswitched)'                    { 'snapshot'; break }
         '^(mft_recent|usn_write_bursts|prefetch|shellbags|sysmon_file)' { 'filesystem'; break }
         '^(flash_public_connections|connections|sysmon_network|srum_|net_)' { 'network'; break }
@@ -8604,6 +8623,9 @@ a[name]{scroll-margin-top:66px}html{overflow-x:clip}[data-theme=light] .nav a.ac
     'ntlm_events'                    = 'NTLM operational log (8001/8002) - 8002 = credentials sent in clear text'
     'applocker_events'               = 'AppLocker execution-control events (8000-8025) - blocked/allowed executions show what tried to run'
     'wdac_events'                    = 'WDAC/CodeIntegrity audit+block events (3076/3077) - unsigned/untrusted code stopped or flagged'
+'task_updates'                   = 'Scheduled task updates (4702) - task redefinitions pair with 4699 deletions'
+'ps_module_log'                  = 'PowerShell Module Logging events (4103) - only present if Module Logging was enabled via GPO'
+'laps_state'                     = 'Local admin password solution (LAPS) state - rotation capability on this host'
     'defender_posture'               = 'Defender ASR (attack-surface reduction) rules and their mode - a hardening snapshot, not detections'
         'connections_dns'                 = 'Public connections resolved via the DNS cache (CNAME chains walked) - what each remote IP actually was'
         'arp_table'                       = 'ARP cache - hosts on the local segment'
@@ -8832,6 +8854,9 @@ a[name]{scroll-margin-top:66px}html{overflow-x:clip}[data-theme=light] .nav a.ac
     'ntlm_events'                    = 'no NTLM auth events (NTLM log disabled is common; empty here is not proof of absence)'
     'applocker_events'               = 'no AppLocker events (policy not deployed on this host) - execution control state unknown'
     'wdac_events'                    = 'no WDAC/CodeIntegrity audit events (no WDAC policy, or nothing audited/blocked)'
+'task_updates'                   = 'no scheduled task updates (4702) in the window (channel may be disabled by default)'
+'ps_module_log'                  = 'no PowerShell Module Logging events (4103) - Module Logging is opt-in via GPO and usually off'
+'laps_state'                     = 'no LAPS state recorded - collect always writes this row (Kind = installed/not installed)'
     'defender_posture'               = 'no ASR rules configured (Get-MpPreference returned none) - attack-surface reduction is off or unqueryable'
     'exec_tcorr'                     = 'no t-corr seeds: medium/high hunt findings absent (t-corr correlates around them) or no timestamped execution evidence'
         'domain_info'                     = 'Win32_ComputerSystem returned nothing - the WMI repository may be damaged on this host (itself an IR-relevant condition; check collection.log for other WMI failures)'
@@ -9207,6 +9232,8 @@ function New-SuperTimeline {
     & $weave 'security_share_access' 5000 { param($r) @("$($r.Time)", "share access (EID $($r.EventId))", "$($r.Account)", "$("$($r.ShareName)" -replace '^[\*\\\s]+', '')\$("$($r.RelativeTargetName)" -replace '\\', '/')", "from $($r.SourceIp) [$(("$($r.AccessList)" -replace '%%', ''))]") }
     & $weave 'security_task_install' 500 { param($r) @("$($r.Time)", 'scheduled task installed (4698)', "$($r.Account)", "$($r.TaskName)", "$($r.Command)") }
     & $weave 'task_deletions' 200 { param($r) @("$($r.Time)", 'scheduled task deleted (4699)', "$($r.User)", (& $leaf $r.TaskName), "$($r.Message)") }
+    & $weave 'task_updates' 200 { param($r) @("$($r.TimeCreated)", 'scheduled task updated (4702)', '', '', "$(("$($r.Message)" -replace '\s+', ' ').Trim())") }
+    & $weave 'ps_module_log' 500 { param($r) @("$($r.TimeCreated)", 'PowerShell module logging (4103)', '', '', "$(("$($r.Message)" -replace '\s+', ' ').Trim())") }
     & $weave 'esent_ntds' 200 { param($r) @("$($r.Time)", 'ntds.dit accessed (ESENT 325/326)', '', '', "$(if ("$($r.BackupPattern)" -eq 'True') { 'backup-pattern' } else { 'NON-BACKUP - theft prep?' }) | $($r.Message)") }
     # v2.95 secondary security logs - quiet unless abused
     & $weave 'wmi_activity' 500 { param($r) @("$($r.TimeCreated)", "WMI activity (EID $($r.Id))", '', '', "$(("$($r.Message)" -replace '\s+', ' ').Trim())") }
@@ -12317,6 +12344,10 @@ function Get-CompromiseVerdict {
     if (-not (Test-Path $MemDir)) { $caveats.Add('No RAM capture - fileless / in-memory-only malware is not covered') }
     if (-not (Test-CaseCsv 'prefetch_index')) { $caveats.Add('Prefetch unavailable - program execution history limited') }
     if (-not (Test-CaseCsv 'amcache')) { $caveats.Add('Amcache unavailable - historical execution inventory missing') }
+    # SRUM deep-parse (SrumECmd) is analyst-side by design (net9, never shipped) - a fresh
+    # collection has the raw DB but no srum_usage rows, so R56 egress signals CANNOT exist
+    # yet. Say so instead of silently diverging from the post-Parse verdict (v4.8).
+    if ((Test-Path (Join-Path $script:RawDir 'sru\SRUDB.dat')) -and -not (Test-CaseCsv 'srum_usage')) { $caveats.Add('SRUM network usage copied but not deep-parsed yet - run -Mode Parse with the analyst toolkit; upload-egress signals may appear then') }
     if (-not (Test-Path $evtxDir)) { $caveats.Add('Event logs not exported - Sigma detection could not run') }
     # v2.55: 4688 auditing off = the whole process-lineage / session-attribution /
     # Office-chain detection layer is blind. Say it plainly instead of empty CSVs.

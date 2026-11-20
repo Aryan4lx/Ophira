@@ -1,3 +1,7 @@
+## v4.8 - SRUM analyst-completion honesty
+
+The collection-time verdict can never include SRUM upload-egress signals (SrumECmd is analyst-side by design - net9, never shipped to endpoints), but it silently diverged from the post-Parse verdict: a fresh collection said SUSPICIOUS while -Mode Parse later said LIKELY COMPROMISED with no explanation. Now the verdict engine adds an explicit caveat when raw\sru\SRUDB.dat exists but srum_usage is absent: "SRUM network usage copied but not deep-parsed yet - run -Mode Parse with the analyst toolkit; upload-egress signals may appear then". Proven end-to-end on a real case: no-toolkit parse = SUSPICIOUS + caveat; toolkit parse = LIKELY COMPROMISED, caveat gone, R56 upload-dominant fires (3 findings). Also ships tests\test_v47.ps1 + the test_v283 task_updates pin that were missed by the v4.7 commit (worktree-green, repo-broken).
+
 ## v4.6 - Sysmon deployment support (Setup + Deploy -InstallSysmon)
 
 Ophira can now put the single richest telemetry source on endpoints.
@@ -176,6 +180,11 @@ LECmd's AutomaticDestinations jump-list parse (jumplist_parsed_AutomaticDestinat
 - +26 checks in tests\test_v292.ps1; 28 suites updated for the new clip-cell architecture.
 
 # Changelog
+
+## v4.8 - SRUM analyst-completion honesty
+
+The collection-time verdict can never include SRUM upload-egress signals (SrumECmd is analyst-side by design - net9, never shipped to endpoints), but it silently diverged from the post-Parse verdict: a fresh collection said SUSPICIOUS while -Mode Parse later said LIKELY COMPROMISED with no explanation. Now the verdict engine adds an explicit caveat when raw\sru\SRUDB.dat exists but srum_usage is absent: "SRUM network usage copied but not deep-parsed yet - run -Mode Parse with the analyst toolkit; upload-egress signals may appear then". Proven end-to-end on a real case: no-toolkit parse = SUSPICIOUS + caveat; toolkit parse = LIKELY COMPROMISED, caveat gone, R56 upload-dominant fires (3 findings). Also ships tests\test_v47.ps1 + the test_v283 task_updates pin that were missed by the v4.7 commit (worktree-green, repo-broken).
+
 
 ## v2.91
 - Master timeline timezone truth (A1): Z-less tool stamps (PECmd/LECmd/AmcacheParser/MFTECmd/RBCmd/SBECmd/IIS/W3C/browser) were parsed as analyst-local and shifted -3:30 vs the event-log rows already UTC - the chronology was split-brained and mis-sorted. New `$addUtc` path (AssumeUniversal) + per-source `-IsUtc` routing on all 12 UTC-dialect weaves; mixed-source sorts and +/-30min windows are now coherent.
