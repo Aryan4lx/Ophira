@@ -1,5 +1,5 @@
 <#
-Ophira v4.8  -  Windows Endpoint Triage Toolkit
+Ophira v4.9  -  Windows Endpoint Triage Toolkit
 READ-ONLY by design: never modifies the system, only reads and copies data
 into its own output folder. Intended to be handed to a system owner or run
 by a responder during early triage / threat hunting.
@@ -371,7 +371,7 @@ param(
     [switch]$ExitVerdict
 )
 
-$ScriptVersion = "4.8"
+$ScriptVersion = "4.9"
 $ErrorActionPreference = 'Continue'
 $ProgressPreference = 'SilentlyContinue'
 
@@ -1668,6 +1668,39 @@ function Invoke-DeployMode {
     Write-Host "================================================================" -ForegroundColor Cyan
 }
 
+function New-FleetWaveRows {
+    # v4.9 (Track 4, fleet t-corr): deployment-wave detection. For every binary name
+    # first-seen on >= 2 hosts, compare the first-seen timestamps: same-window or
+    # same-day appearances across hosts mean a pushed deployment OR a mass infection
+    # (the attacker's tooling arrives on many boxes at once; normal software does not).
+    # Input: List of {Host, Leaf, Stamp}; output: wave/stagger rows only (slow rollups
+    # are dropped - 'chrome exists on 3 hosts' is not a finding).
+    param([object]$Stamps, [int]$WaveMaxMin = 30, [int]$StaggerMaxH = 12)
+    $byLeaf = @{}
+    foreach ($s in $Stamps) {
+        $leaf = ("$($s.Leaf)").Trim().ToLower()
+        $h = ("$($s.Host)").Trim()
+        if (-not $leaf -or -not $h -or $leaf.Length -lt 4) { continue }
+        $t = [datetime]::MinValue
+        if (-not [datetime]::TryParse("$($s.Stamp)", [ref]$t)) { continue }
+        if (-not $byLeaf.ContainsKey($leaf)) { $byLeaf[$leaf] = @{} }
+        $prev = $byLeaf[$leaf][$h]
+        if (-not $prev -or $t.Ticks -lt $prev) { $byLeaf[$leaf][$h] = $t.Ticks }
+    }
+    $rows = @()
+    foreach ($k in $byLeaf.Keys) {
+        $hh = $byLeaf[$k]
+        if (@($hh.Keys).Count -lt 2) { continue }
+        $ticks = @($hh.Values | Sort-Object)
+        $spreadMin = [int](($ticks[-1] - $ticks[0]) / 600000000)
+        if ($spreadMin -gt ($StaggerMaxH * 60)) { continue }
+        $cls = if ($spreadMin -le $WaveMaxMin) { 'wave' } else { 'staggered' }
+        $hl = @($hh.Keys | Sort-Object) -join ', '
+        $rows += [pscustomobject]@{ Name = $k; Class = $cls; SpreadMinutes = $spreadMin; HostCount = @($hh.Keys).Count; Hosts = $hl; FirstSeen = $(if ($ticks[0] -gt 0) { (New-Object System.DateTime($ticks[0])).ToString('yyyy-MM-dd HH:mm') } else { '' }) }
+    }
+    @($rows | Sort-Object -Property @{Expression = { if ($_.Class -eq 'wave') { 0 } else { 1 } } }, @{Expression = 'HostCount'; Descending = $true }, @{Expression = 'SpreadMinutes' })
+}
+
 function Invoke-AnalyzeMode {
     param([string]$Path, [string]$HayabusaExe)
     if (-not (Test-Path $Path)) { Write-Host "Path not found: $Path" -ForegroundColor Red; return }
@@ -1692,6 +1725,7 @@ function Invoke-AnalyzeMode {
     $hosts = @()
     $evtxDirs = @()
     $signerRows = @()
+    $leafStamps = New-Object 'System.Collections.Generic.List[object]'
     $extractWorker = {
         param($zipPath, $tmp)
         Add-Type -AssemblyName System.IO.Compression.FileSystem
@@ -1822,6 +1856,30 @@ function Invoke-AnalyzeMode {
                     }
                 } catch { }
             }
+            # v4.9 fleet waves: amcache first-seen stamps per binary leaf (install-time proxy)
+            $am = Join-Path $csvDir 'amcache.csv'
+            if (-not (Test-Path $am)) { $am = Join-Path $csvDir (Get-CaseCsvPath 'amcache.csv') }
+            if ((Test-Path $am) -and $leafStamps.Count -lt 40000) {
+                try {
+                    foreach ($r in (Import-Csv $am)) {
+                        $stamp = ''
+                        foreach ($cn in @('FileKeyLastWriteTimestamp', 'KeyLastWriteTimestamp', 'LastWriteTimestamp')) {
+                            $cp = $r.PSObject.Properties[$cn]
+                            if ($cp -and "$($cp.Value)") { $stamp = "$($cp.Value)"; break }
+                        }
+                        if (-not $stamp) { continue }
+                        $fp = ''
+                        foreach ($cn in @('FullPath', 'Name')) {
+                            $cp = $r.PSObject.Properties[$cn]
+                            if ($cp -and "$($cp.Value)") { $fp = "$($cp.Value)"; break }
+                        }
+                        if (-not $fp) { continue }
+                        try { $lf = (Split-Path $fp -Leaf) } catch { $lf = $fp }
+                        if (-not $lf) { continue }
+                        $null = $leafStamps.Add([pscustomobject]@{ Host = $host_; Leaf = $lf; Stamp = $stamp })
+                    }
+                } catch { }
+            }
         }
         $e = Join-Path $dir 'raw\evtx'
         if (Test-Path $e) { $evtxDirs += $e }
@@ -1889,6 +1947,15 @@ function Invoke-AnalyzeMode {
             $pl += @($proposedTrusted | Select-Object -ExpandProperty Signer)
             $pl | Set-Content -LiteralPath $pt -Encoding UTF8
             Write-Host "`n  Baselining: $($proposedTrusted.Count) publishers proposed as trusted -> proposed_trusted.txt" -ForegroundColor Cyan
+        }
+    }
+    $waveRows = @()
+    if ($hosts.Count -ge 2 -and $leafStamps.Count -ge 2) { $waveRows = @(New-FleetWaveRows $leafStamps) }
+    if ($waveRows.Count -gt 0) {
+        $waveRows | Export-Csv -LiteralPath (Join-Path $OutFolder 'fleet_waves.csv') -NoTypeInformation -Encoding UTF8
+        Write-Host "`n  DEPLOYMENT WAVES: $($waveRows.Count) binary name(s) first-seen within hours across multiple hosts -> fleet_waves.csv" -ForegroundColor Magenta
+        foreach ($w in ($waveRows | Select-Object -First 5)) {
+            Write-Host ("    [{0}] {1} - {2} host(s), spread {3} min: {4}" -f $w.Class, $w.Name, $w.HostCount, $w.SpreadMinutes, $w.Hosts) -ForegroundColor Magenta
         }
     }
     if ($crossHost.Count) {
@@ -1994,6 +2061,14 @@ a{color:#7aa2f7;text-decoration:none}a:hover{color:#9ec1f0}.foot{margin-top:40px
             $null = $fsb.AppendLine("<tr><td class='IOC'>$(ConvertTo-HtmlEsc $l.FromHost)</td><td>$(ConvertTo-HtmlEsc $l.ToHost)</td><td>$(ConvertTo-HtmlEsc $l.Account)</td><td>$(ConvertTo-HtmlEsc $l.Share)</td><td class='path'>$(ConvertTo-HtmlEsc $l.Target)</td><td>$(ConvertTo-HtmlEsc $l.Time)</td><td>$(ConvertTo-HtmlEsc $l.SourceIp)</td></tr>")
         }
         $null = $fsb.AppendLine("</table><div class='meta'>Joined each host's csv\security_share_access.csv SourceIp against every other host's csv\net_interfaces.csv. CSV: fleet_lateral_chain.csv</div>")
+    }
+    if ($waveRows.Count -gt 0) {
+        $null = $fsb.AppendLine("<h2>Deployment waves (coordinated first-seen across hosts)</h2><table><tr><th>Binary</th><th>Pattern</th><th>Spread</th><th>Hosts</th><th>Host list</th><th>Earliest first-seen</th></tr>")
+        foreach ($w in ($waveRows | Select-Object -First 25)) {
+            $wc = if ($w.Class -eq 'wave') { 'HIGH' } else { 'med' }
+            $null = $fsb.AppendLine("<tr><td class='path'>$(ConvertTo-HtmlEsc $w.Name)</td><td><span class='$wc'>$(ConvertTo-HtmlEsc $w.Class)</span></td><td>$($w.SpreadMinutes) min</td><td><b>$($w.HostCount)</b></td><td class='path'>$(ConvertTo-HtmlEsc $w.Hosts)</td><td>$(ConvertTo-HtmlEsc $w.FirstSeen)</td></tr>")
+        }
+        $null = $fsb.AppendLine("</table><div class='meta'>A binary first appearing on several hosts within the same window is either a pushed deployment (GPO/SCCM/attacker) or mass infection - both deserve a look. Install-time proxy from amcache registry last-writes; clock skew between hosts is real, treat minutes as approximate. Full list: fleet_waves.csv.</div>")
     }
     if ($hayOut -and (Test-Path $hayOut)) {
         $ftech = @{}

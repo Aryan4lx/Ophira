@@ -17,3 +17,9 @@ logs/lfcheck/
 logs/
 
 .opencode/
+
+fleet_*.csv
+fleet_*.html
+fleet_*.txt
+fleet_*.json
+attack_layer_fleet.json
