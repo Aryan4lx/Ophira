@@ -1,3 +1,9 @@
+## v5.1 - locale-invariant evidence-time parsing
+
+- **Get-InvariantDate culture-safe**: the shared evidence-time parser now falls back through InvariantCulture, NumberStyles/DateTimeStyles with AdjustToUniversal|AllowWhiteSpaces, raw ISO substring parse and epoch-millis before giving up - evidence stamps from non-en-US analyst machines (or mixed-dialect CSVs) can no longer mis-sort or degrade to 'unknown'. All five consumer sites routed through it: user-activity last-seen ticks, report evidence-time formatting, entity-card First/Last-seen sort, Defender-detected detail line, focus-engine group First/Last-seen sort.
+- **Suite**: new tests\test_v51.ps1 (17 checks: the helper itself, the five consumer sites wired, version pin); test_v260/test_v264 gained real Get-InvariantDate extraction (their IEX'd verdict/parser blocks now call it); version pins bumped in 6 suites.
+- Full suite green; E2E on the newest real case reproduces its pre-existing verdict exactly (the LIKELY COMPROMISED escalation there came from the legitimate v4.x SRUM egress signal at a pre-v5.1 regen, not from this change).
+
 ## v5.0 - QA/tooling hardening (Track 5 complete)
 
 - **Setup supply-chain guard**: tools\tool_pins.txt (lines name=sha256) - a pinned tool whose downloaded hash mismatches is refused, never installed. Every successful download appends name|asset|sha256|date to tools\tool_receipts.txt, so a case can later prove which binary version produced its evidence.

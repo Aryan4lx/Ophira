@@ -20,8 +20,8 @@ Check 'caveat sits inside the verdict engine'  (($iVd -lt $iCav) -and ($iCav -lt
 Check 'why-note explains the divergence design' ($src -match "net9, never shipped")
 
 # P2: version
-Check 'header bumped to v5.0' ($src -match 'Ophira v5\.0  -  Windows Endpoint Triage Toolkit')
-Check 'ScriptVersion 4.9'     ($src -match '\$ScriptVersion = "5\.0"')
+Check 'header bumped to v5.1' ($src -match 'Ophira v5\.1  -  Windows Endpoint Triage Toolkit')
+Check 'ScriptVersion 5.1'     ($src -match '\$ScriptVersion = "5\.1"')
 
 # P3: functional - the caveat condition is a pure expression; evaluate its logic shape
 # by simulating the two branches with a sandboxed Test-Path/Test-CaseCsv pair.

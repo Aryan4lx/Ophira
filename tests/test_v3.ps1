@@ -42,7 +42,7 @@ Check 'tactics: drill link emitted' ($src.Contains("open the Sigma drill-down fo
 Check 'brand: endpoint triage toolkit header' ($src.Contains('Windows Endpoint Triage Toolkit'))
 Check 'brand: no old IR banner left' (-not $src.Contains('Windows IR toolkit'))
 Check 'brand: nav brand sub' ($src.Contains('endpoint triage report'))
-Check 'brand: version 4.9' ($src.Contains('$ScriptVersion = "5.0"'))
+Check 'brand: version 5.1' ($src.Contains('$ScriptVersion = "5.1"'))
 
 # design v3 css
 Check 'css: body depth gradient' ($src.Contains('radial-gradient(1100px 480px'))

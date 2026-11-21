@@ -9,6 +9,9 @@ function Check([string]$label, [bool]$ok) {
 }
 
 # ---- behavioral: Get-CompromiseVerdict - credential signal + Defender weight split ----
+$m = [regex]::Match($src, '(?s)function Get-InvariantDate \{.*?\r?\n\}')
+if (-not $m.Success) { throw 'Get-InvariantDate extract failed' }
+Invoke-Expression $m.Value
 foreach ($n in 'Get-CompromiseVerdict', 'Get-LvlRank') {
     $m = [regex]::Match($src, "(?s)function $n \{.*?\r?\n\}")
     if (-not $m.Success) { throw "$n extract failed" }

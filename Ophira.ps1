@@ -1,5 +1,5 @@
 <#
-Ophira v5.0  -  Windows Endpoint Triage Toolkit
+Ophira v5.1  -  Windows Endpoint Triage Toolkit
 READ-ONLY by design: never modifies the system, only reads and copies data
 into its own output folder. Intended to be handed to a system owner or run
 by a responder during early triage / threat hunting.
@@ -371,7 +371,7 @@ param(
     [switch]$ExitVerdict
 )
 
-$ScriptVersion = "5.0"
+$ScriptVersion = "5.1"
 $ErrorActionPreference = 'Continue'
 $ProgressPreference = 'SilentlyContinue'
 
@@ -6526,9 +6526,10 @@ a[name]{scroll-margin-top:66px}html{overflow-x:clip}[data-theme=light] .nav a.ac
     # v2.88 USER-ACTIVITY ROLLUP (who did what): auth 4624/4625 + 4688 process creations +
     # user-profile MFT activity, keyed per account; feeds the section and the nav counts
     $userAct = [ordered]@{}
-    # v2.90: parse-dont-compare helper for 'last seen' - lexical compare made '9:58 AM'
-    # beat '1:59 PM' (en-US M/d/yyyy h:mm:ss tt sorts '9' after '1' as text)
-    $uaTicks = { param([string]$s) $d = [datetime]::MinValue; if ($s -and [datetime]::TryParse($s, [ref]$d)) { $d.Ticks } else { [long]::MinValue } }
+    # v5.1: parse-dont-compare helper for 'last seen' - lexical compare made '9:58 AM'
+    # beat '1:59 PM' (en-US M/d/yyyy h:mm:ss tt sorts '9' after '1' as text); v5.1 routes
+    # through Get-InvariantDate so en-US stamps parse the same on every analyst locale
+    $uaTicks = { param([string]$s) $(if ($s) { (Get-InvariantDate $s).Ticks } else { [long]::MinValue }) }
     foreach ($a2 in $authEv) {
         if (@('4624', '4625') -notcontains "$($a2.EventId)") { continue }
         $disp2 = "$(if ("$($a2.AccountDomain)" -and "$($a2.AccountDomain)" -ne '-') { "$($a2.AccountDomain)\" })$($a2.Account)".Trim('\')
@@ -6796,7 +6797,7 @@ a[name]{scroll-margin-top:66px}html{overflow-x:clip}[data-theme=light] .nav a.ac
         }
         # v3.1: parse-and-format helper for mixed-dialect timestamps (ISO, en-US, Z-suffixed) -
         # First/Last seen cells used to mix '2025-12-31T20:30:00Z' with '10/28/2026 1:13:14 PM'
-        $fmtTs = { param($v5) $d5 = [datetime]::MinValue; if ("$v5" -and [datetime]::TryParse("$v5", [ref]$d5)) { $d5.ToString('yyyy-MM-dd HH:mm:ss') } else { "$v5" } }
+        $fmtTs = { param($v5) $d5 = Get-InvariantDate "$v5"; if ("$v5" -and $d5 -ne [datetime]::MinValue) { $d5.ToString('yyyy-MM-dd HH:mm:ss') } else { "$v5" } }
         $sgHi = @($hayRows | Where-Object { "$($_.Level)" -match '^(critical|high)$' }).Count
         $pcHi = @($scored | Where-Object { "$($_.Verdict)" -match 'HIGH' }).Count
         $bcN = $beacons.Count + $dnsBeacons.Count
@@ -8526,8 +8527,8 @@ a[name]{scroll-margin-top:66px}html{overflow-x:clip}[data-theme=light] .nav a.ac
                 foreach ($eg in @($ft.EntityGroups)) { if ($eg -and "$($eg.Path)") { $egMap["$($eg.Path)"] = "$($eg.Hash)" } }
                 foreach ($p in @($ft.Paths | Select-Object -First 20)) {
                     $g = @($fHits | Where-Object { "$($_.Detail)".ToLower().Contains("$p") })
-                    $fs = ($g | Where-Object { "$($_.Time)" } | Sort-Object { $d3 = [datetime]::MinValue; if ([datetime]::TryParse("$($_.Time)", [ref]$d3)) { $d3.Ticks } else { [long]::MaxValue } } | Select-Object -First 1).Time
-                    $ls = ($g | Where-Object { "$($_.Time)" } | Sort-Object { $d3 = [datetime]::MinValue; if ([datetime]::TryParse("$($_.Time)", [ref]$d3)) { $d3.Ticks } else { [long]::MinValue } } | Select-Object -Last 1).Time
+                    $fs = ($g | Where-Object { "$($_.Time)" } | Sort-Object { $d3 = Get-InvariantDate $_.Time; if ($d3.Ticks) { $d3.Ticks } else { [long]::MaxValue } } | Select-Object -First 1).Time
+                    $ls = ($g | Where-Object { "$($_.Time)" } | Sort-Object { (Get-InvariantDate $_.Time).Ticks } | Select-Object -Last 1).Time
                     $hCell = if ($egMap.ContainsKey("$p")) { $egMap["$p"] } else { '' }
                     $null = $sb.AppendLine("<tr><td class='path'>$(ConvertTo-HtmlEsc $p)</td><td class='path'>$(ConvertTo-HtmlEsc $hCell)</td><td>$($g.Count)</td><td>$(if ($fs) { ConvertTo-HtmlEsc (& $fmtTs $fs) } else { '-' })</td><td>$(if ($ls) { ConvertTo-HtmlEsc (& $fmtTs $ls) } else { '-' })</td></tr>")
                 }
@@ -12315,7 +12316,7 @@ function Get-CompromiseVerdict {
     $defDetail = { param($list) $named = @($list | Where-Object { "$($_.ThreatName)".Trim() })
         ((@($named | Select-Object -First 3 | ForEach-Object {
             $ts = "$($_.DetectedUTC)".Trim()
-            if ($ts) { $d = [datetime]::MinValue; if ([datetime]::TryParse($ts, [ref]$d)) { $ts = $d.ToString('yyyy-MM-dd HH:mm') } }
+            if ($ts) { $d = Get-InvariantDate $ts; if ($d -ne [datetime]::MinValue) { $ts = $d.ToString('yyyy-MM-dd HH:mm') } }
             "$($_.ThreatName)".Trim() + "$(if ("$($_.SeverityID)") { ' (sev ' + $_.SeverityID + ')' })$(if ($ts) { " @ $ts" })"
         }) -join '; ') + $(if ($named.Count -gt 3) { "; +$($named.Count - 3) more" })) }
     Add-Signal 'Defender detection - active or in log window' 2 $defFresh.Count (& $defDetail $defFresh)
@@ -14661,8 +14662,8 @@ function Invoke-FocusCore {
             Key = $pt; Name = $gName; Path = $pt
             Hash = $hashByPath[$pt]
             HitCount = $gHits.Count
-            FirstSeen = ($gHits | Where-Object { "$($_.Time)" } | Sort-Object { $d2 = [datetime]::MinValue; if ([datetime]::TryParse("$($_.Time)", [ref]$d2)) { $d2.Ticks } else { [long]::MaxValue } } | Select-Object -First 1).Time
-            LastSeen = ($gHits | Where-Object { "$($_.Time)" } | Sort-Object { $d2 = [datetime]::MinValue; if ([datetime]::TryParse("$($_.Time)", [ref]$d2)) { $d2.Ticks } else { [long]::MinValue } } | Select-Object -Last 1).Time
+            FirstSeen = ($gHits | Where-Object { "$($_.Time)" } | Sort-Object { $d2 = Get-InvariantDate $_.Time; if ($d2.Ticks) { $d2.Ticks } else { [long]::MaxValue } } | Select-Object -First 1).Time
+            LastSeen = ($gHits | Where-Object { "$($_.Time)" } | Sort-Object { (Get-InvariantDate $_.Time).Ticks } | Select-Object -Last 1).Time
         })
     }
     $masq = @()
