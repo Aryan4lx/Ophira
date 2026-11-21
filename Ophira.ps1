@@ -1,5 +1,5 @@
 <#
-Ophira v4.9  -  Windows Endpoint Triage Toolkit
+Ophira v5.0  -  Windows Endpoint Triage Toolkit
 READ-ONLY by design: never modifies the system, only reads and copies data
 into its own output folder. Intended to be handed to a system owner or run
 by a responder during early triage / threat hunting.
@@ -371,7 +371,7 @@ param(
     [switch]$ExitVerdict
 )
 
-$ScriptVersion = "4.9"
+$ScriptVersion = "5.0"
 $ErrorActionPreference = 'Continue'
 $ProgressPreference = 'SilentlyContinue'
 
@@ -1335,6 +1335,33 @@ function Invoke-SetupMode {
     if ($Wanted) { $Wanted = @($Wanted | ForEach-Object { $_ -split ',' } | ForEach-Object { $_.Trim() } | Where-Object { $_ }) }
     $toolsDir = Join-Path (Get-KitRoot) 'tools'
     New-Item -ItemType Directory -Path $toolsDir -Force | Out-Null
+    # v5.0 (Track 5): supply-chain guard. tools\tool_pins.txt carries lines 'name=sha256';
+    # when a pin exists the downloaded asset MUST match it (fail loud, never install).
+    # Every successful download appends 'name|asset|sha256|date' to tools\tool_receipts.txt
+    # so a case can prove later which binary version produced its evidence.
+    $pinsFile = Join-Path $toolsDir 'tool_pins.txt'
+    $pins = @{}
+    if (Test-Path -LiteralPath $pinsFile) {
+        foreach ($ln in (Get-Content -LiteralPath $pinsFile -ErrorAction SilentlyContinue)) {
+            $l = ($ln -replace '#.*$', '').Trim()
+            if ($l -match '^([^=]+)=(.{32,})$') { $pins[$Matches[1].Trim().ToLower()] = $Matches[2].Trim().ToLower() }
+        }
+    }
+    $receiptFile = Join-Path $toolsDir 'tool_receipts.txt'
+    $confirmTool = {
+        param([string]$Name, [string]$AssetFile)
+        if (-not (Test-Path -LiteralPath $AssetFile)) { return $true }
+        $h = (Get-FileHash -LiteralPath $AssetFile -Algorithm SHA256).Hash.ToLower()
+        $pin = $null; if ($pins.ContainsKey($Name.ToLower())) { $pin = $pins[$Name.ToLower()] }
+        if ($pin -and $pin -ne $h) {
+            Write-Host "  PIN MISMATCH for $Name - expected $pin got $h" -ForegroundColor Red
+            Write-Host '  refusing to install a binary that does not match the pinned hash. Update tools\tool_pins.txt consciously if the new version is trusted.' -ForegroundColor Yellow
+            return $false
+        }
+        try { Add-Content -LiteralPath $receiptFile -Value "$Name|$([IO.Path]::GetFileName($AssetFile))|$h|$(Get-Date -Format 'yyyy-MM-dd HH:mm')" -ErrorAction SilentlyContinue } catch { }
+        if ($pin) { Write-Host "  hash OK (pinned): $h" -ForegroundColor Green } else { Write-Host "  sha256: $h" -ForegroundColor DarkGray }
+        return $true
+    }
     $catalog = @(
         [pscustomobject]@{ Name = 'winpmem';     Repo = 'Velocidex/winpmem';                Pattern = '^go-winpmem_amd64.*signed\.exe$|^winpmem.*x64.*\.exe$'; Zip = $false; Target = 'endpoint' }
         [pscustomobject]@{ Name = 'hayabusa';    Repo = 'Yamato-Security/hayabusa';         Pattern = '^hayabusa-[\d\.]+-win-x64\.zip$'; Zip = $true; Target = 'endpoint' }
@@ -1373,6 +1400,7 @@ function Invoke-SetupMode {
                 foreach ($u in @($t.Raw)) {
                     $fn = ($u -split '/')[-1]
                     Invoke-WebRequest -Uri $u -OutFile (Join-Path $dest $fn) -UseBasicParsing -ErrorAction Stop
+                    if (-not (& $confirmTool $t.Name (Join-Path $dest $fn))) { Remove-Item (Join-Path $dest $fn) -Force -ErrorAction SilentlyContinue; continue }
                 }
                 Write-Host "  saved -> tools\$target\$($t.Name)\" -ForegroundColor Green
                 $installed += $t.Name
@@ -1397,6 +1425,7 @@ function Invoke-SetupMode {
             if ($confirm -match '^[Nn]') { continue }
             $tmp = Join-Path ([IO.Path]::GetTempPath()) $assetName
             Invoke-WebRequest -Uri $assetUrl -OutFile $tmp -UseBasicParsing -ErrorAction Stop
+            if (-not (& $confirmTool $t.Name $tmp)) { Remove-Item $tmp -Force -ErrorAction SilentlyContinue; continue }
             if ($t.Zip) {
                 $dest = Join-Path (Join-Path $toolsDir $target) $t.Name
                 $keepRules = $null

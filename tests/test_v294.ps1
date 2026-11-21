@@ -121,8 +121,8 @@ Check 'D8c: Get-FilteredEvents invariant' ($src.Contains("TimeCreated = `$e.Time
 Check 'D7f: mapped-prefix strip count' (([regex]::Matches($src, [regex]::Escape('(?i)^::ffff:'))).Count -ge 3)
 
 # ---- P7: version
-Check 'version: header bumped' ($src.Contains('Ophira v4.'))
-Check 'version: ScriptVersion 3.x' ($src.Contains('$ScriptVersion = "4.'))
+Check 'version: header bumped' ($src.Contains('Ophira v5.'))
+Check 'version: ScriptVersion 3.x' ($src.Contains('$ScriptVersion = "5.'))
 
 Write-Host ''
 Write-Host "v294: $script:pass passed, $script:fail failed" -ForegroundColor $(if ($script:fail -eq 0) { 'Green' } else { 'Red' })

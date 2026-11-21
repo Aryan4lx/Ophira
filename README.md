@@ -350,6 +350,7 @@ while ($true) { try { (New-Object Net.Sockets.TcpClient('1.1.1.1', 443)).Close()
 - [x] **Role presets + correlation spine**: auto-detected host role (DC/WebServer/Workstation) + `DC`/`WebServer` presets with auto role-pack; module 4.9 Kerberos/DS parses (4768/4769/4771/4776, 4662 DCSync GUIDs, 5136), module 8.12 IIS/HTTPERR raw + W3C parse; hunt rules R16-R21 (DCSync, Kerberoasting, AS-REP, password spray, webshell chains, web anomalies); session attribution (4624 LogonId x 4688/5145), process-lineage chains for flagged binaries, new sources in entity correlation; Win7/PS2.0 parse-compat sweep (friendly gate fires everywhere) (v2.21)
 - [x] **SRUM analyst-completion honesty (v4.8)**: collection verdicts now carry an explicit caveat when the SRUDB was copied but the analyst-side deep-parse hasn't run - no more silent SUSPICIOUS -> LIKELY COMPROMISED jump after -Mode Parse
 - [x] **Fleet deployment waves (v4.9)**: -Mode Analyze flags binaries first-seen across hosts within the same window (wave/staggered) - mass-deploy vs mass-infection triage at fleet scale
+- [x] **QA/tooling hardening (v5.0)**: Setup tool pinning + download receipts, verdict-regression replay gate over real cases, CI-runnable synthetic E2E fixture (xray.exe story)
 
 ## Coverage vs Velociraptor (built-in Windows artifacts)
 
