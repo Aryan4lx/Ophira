@@ -1,3 +1,9 @@
+## v5.2 - lint hardening + fleet-wave time parsing
+
+- **Fleet deployment-wave timestamps** now parse through Get-InvariantDate (culture-safe) instead of a bare [datetime]::TryParse - wave detection is stable on non-en-US analyst machines.
+- **Analyzer-clean**: netstat collector no longer assigns the automatic $PID variable (renamed to $ownerPid); canary-mode credential build uses the SecureString char-loop (same behavior, no plaintext-conversion call); explicit SuppressMessage attributes document the six PSReviewUnusedParameter false positives (params are used in nested scriptblocks the analyzer's body slice misses - each verified by source scan).
+- Version pins updated in 10 suites; full suite green; verdict regression clean (3 real cases unchanged).
+
 ## v5.1 - locale-invariant evidence-time parsing
 
 - **Get-InvariantDate culture-safe**: the shared evidence-time parser now falls back through InvariantCulture, NumberStyles/DateTimeStyles with AdjustToUniversal|AllowWhiteSpaces, raw ISO substring parse and epoch-millis before giving up - evidence stamps from non-en-US analyst machines (or mixed-dialect CSVs) can no longer mis-sort or degrade to 'unknown'. All five consumer sites routed through it: user-activity last-seen ticks, report evidence-time formatting, entity-card First/Last-seen sort, Defender-detected detail line, focus-engine group First/Last-seen sort.

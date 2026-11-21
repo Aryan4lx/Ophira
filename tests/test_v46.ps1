@@ -56,7 +56,7 @@ Check 'catalog source line handles sysinternals' ($src -match 'if \(\$assetUrl -
 Write-Host "== P3: wiring ==" -ForegroundColor Cyan
 Check 'param InstallSysmon declared' ($src -match '\[switch\]\$InstallSysmon,') ''
 Check 'param doc present' ($src -match '\.PARAMETER InstallSysmon') ''
-Check 'Invoke-DeployMode param gains InstallSysmon' ($src -match '(?s)function Invoke-DeployMode \{\r?\n    param\(\[string\[\]\]\$Targets.*?\[switch\]\$InstallSysmon\)') ''
+Check 'Invoke-DeployMode param gains InstallSysmon' ($src -match '(?s)function Invoke-DeployMode \{.*?param\(\[string\[\]\]\$Targets.*?\[switch\]\$InstallSysmon\)') ''
 Check 'worker param gains insSysmon' ($src -match 'param\(\$c, \$scriptPath, \$toolsDir, \$preset, \$caseID, \$sharePath, \$cred, \$outFolder, \$binZip, \$logHours, \$logWindow, \$insSysmon\)') ''
 Check 'worker sysmon copy block' ($src -match "Filter 'sysmon\*'") ''
 Check 'worker uses -ToSession copy' ($src -match '-ToSession \$s -Force -ErrorAction Stop') ''
@@ -66,7 +66,7 @@ Check 'wizard step 5 sysmon question' ($src -match "Install/refresh Sysmon telem
 Check 'wizard confirm line' ($src -match 'Sysmon    : \$\(if \(\$insSysmon\) \{ ''install/refresh before collect'' \}') ''
 Check 'wizard run passes -InstallSysmon' ($src -match 'Invoke-DeployMode -Targets \$targets -DeployPreset \$preset -Cred \$cred -DeployCaseID \$CaseID -DeploySharePath \$shareIn -Threads \$threads -PushBin \$push -DeployLogHours \$advLogHours -DeployLogWindow \$advLogWindow -InstallSysmon:\$insSysmon') ''
 Check 'direct dispatch passes -InstallSysmon' ($src -match '-InstallSysmon:\$InstallSysmon') ''
-Check 'version bumped' ($src -match 'Ophira v5\.1' -and $src -match '\$ScriptVersion = "5\.1"') ''
+Check 'version bumped' ($src -match 'Ophira v5\.2' -and $src -match '\$ScriptVersion = "5\.2"') ''
 
 Write-Host ''
 if ($script:Fails.Count -gt 0) {

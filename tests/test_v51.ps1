@@ -1,4 +1,4 @@
-# test_v51.ps1 - v5.1 locale-invariant evidence-time parsing
+# test_v51.ps1 - v5.2 locale-invariant evidence-time parsing
 # The 5 report/focus/verdict sort+format sites now route through Get-InvariantDate, so
 # evidence stamps parse identically on ANY analyst locale. Proof: compute ticks under
 # en-US and de-DE current culture - must match, and en-US stamps must not fail on de-DE.
@@ -46,7 +46,7 @@ Check 'no culture-default TryParse left in report sorts' (-not $src.Contains('if
 Check 'report fmtTs routes Get-InvariantDate' $src.Contains('$fmtTs = { param($v5) $d5 = Get-InvariantDate')
 Check 'focus group sort routes Get-InvariantDate' $src.Contains('Sort-Object { (Get-InvariantDate $_.Time).Ticks }')
 Check 'defender detail routes Get-InvariantDate' $src.Contains('$d = Get-InvariantDate $ts; if ($d -ne [datetime]::MinValue)')
-Check 'version bumped' ($src.Contains('Ophira v5.1') -and $src.Contains('$ScriptVersion = "5.1"'))
+Check 'version bumped' ($src.Contains('Ophira v5.2') -and $src.Contains('$ScriptVersion = "5.2"'))
 
 Write-Host ''
 if ($fails -eq 0) { Write-Host 'ALL PASSED' ; exit 0 } else { Write-Host "$fails FAILED"; exit 1 }
