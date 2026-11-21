@@ -198,6 +198,18 @@ New-HuntFindings
 $r36c = @($script:saved['hunt_findings'] | Where-Object { "$_" -match 'Lookalike' })
 Check "R36: missing user-writable absolute path = HIGH" (@($r36c | Where-Object { $_.Severity -eq 'high' }).Count -eq 1)
 
+# run D (v5.3): user-writable path with VALID vendor signature -> LOW (nvm.exe case -
+# the vendor legitimately ships that name; only unsigned/broken near-names stay high)
+$script:sigByPath['c:\users\aryan\appdata\local\author software\nvm\nvm.exe'] = [pscustomobject]@{ Status = 'Valid'; SignerCertificate = [pscustomobject]@{ Subject = 'CN=nvm' } }
+$script:caseCsv['amcache'] = @(
+    [pscustomobject]@{ FullPath = 'C:\Users\Aryan\AppData\Local\Author Software\nvm\nvm.exe' }
+)
+$script:saved = @{}
+New-HuntFindings
+$r36d = @($script:saved['hunt_findings'] | Where-Object { "$_" -match 'Lookalike' })
+Check "R36 v5.3: signed user-writable near-name = LOW (not masquerade)" (@($r36d | Where-Object { $_.Severity -eq 'low' }).Count -eq 1 -and @($r36d | Where-Object { $_.Severity -eq 'high' }).Count -eq 0)
+Check "R36 v5.3: signed near-name evidence still names the distance" ("$($r36d[0].Evidence)" -match [regex]::Escape("near 'dwm.exe' (distance")) -and ("$($r36d[0].Evidence)" -match 'signature Valid')
+
 # ============================================================================
 Write-Host ""
 if ($fail -eq 0) { Write-Host "v2.82: all $pass checks passed" -ForegroundColor Green; exit 0 }

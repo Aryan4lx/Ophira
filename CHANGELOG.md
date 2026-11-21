@@ -1,3 +1,9 @@
+## v5.3 - hunt-FP fix: signed near-name binaries + Hyper-V account fold
+
+- **R36 no longer escalates validly-signed vendor binaries** (the verdict-drift bug found on the 20261121 case): a near-name hit whose on-disk signature is Valid stays LOW report-only even in a user-writable path - the vendor really ships that name (nvm.exe vs dwm.exe is a name coincidence, not masquerade). HIGH is now reserved for missing/uncheckable files (v2.81 semantics) and user-writable paths whose signature is NotSigned/HashMismatch/None. New test_v282 run-D pins it (45 checks).
+- **Hyper-V VM session accounts fold into one card**: 4624 logons whose account is a bare per-session GUID ('NT VIRTUAL MACHINE' domain) previously spawned one raw-GUID account card each (28 on the ref case); they now aggregate under 'NT VIRTUAL MACHINE (Hyper-V VM sessions)'. Public-connections table got the missing 'VT' column header.
+- Verdict regression: ref case parse goes LIKELY COMPROMISED 6 signals -> SUSPICIOUS 5 signals (hunt high 1 -> 0), matching its collection-time verdict. Full suite green.
+
 ## v5.2 - lint hardening + fleet-wave time parsing
 
 - **Fleet deployment-wave timestamps** now parse through Get-InvariantDate (culture-safe) instead of a bare [datetime]::TryParse - wave detection is stable on non-en-US analyst machines.

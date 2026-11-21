@@ -1,5 +1,5 @@
 <#
-Ophira v5.2  -  Windows Endpoint Triage Toolkit
+Ophira v5.3  -  Windows Endpoint Triage Toolkit
 READ-ONLY by design: never modifies the system, only reads and copies data
 into its own output folder. Intended to be handed to a system owner or run
 by a responder during early triage / threat hunting.
@@ -371,7 +371,7 @@ param(
     [switch]$ExitVerdict
 )
 
-$ScriptVersion = "5.2"
+$ScriptVersion = "5.3"
 $ErrorActionPreference = 'Continue'
 $ProgressPreference = 'SilentlyContinue'
 
@@ -8123,7 +8123,7 @@ a[name]{scroll-margin-top:66px}html{overflow-x:clip}[data-theme=light] .nav a.ac
         # v2.56: one row per destination with connection count + every talking process
         $entLeaf = @{}
         foreach ($eb3 in $entB) { if ("$($eb3.Path)") { $entLeaf[(Split-Path "$($eb3.Path)" -Leaf).ToLower()] = $true } }
-        $null = $sb.AppendLine("<table><tr><th>Remote</th><th>Provider</th><th>Resolved (DNS)</th><th>Conns</th><th>Talking processes</th><th></th></tr>")
+        $null = $sb.AppendLine("<table><tr><th>Remote</th><th>Provider</th><th>Resolved (DNS)</th><th>Conns</th><th>Talking processes</th><th>VT</th></tr>")
         # v2.82: DNS-attributed connections - resolve column + provider upgrade from domain
         $domByIp = @{}
         foreach ($cd in $connDns) { if ("$($cd.RemoteAddress)" -and -not $domByIp.ContainsKey("$($cd.RemoteAddress)")) { $domByIp["$($cd.RemoteAddress)"] = $cd } }
@@ -9767,6 +9767,9 @@ function New-EntityCorrelation {
         # v2.94 (D4): SIDs (rdp_client_targets, autoruns HKU, bam) resolve to DOMAIN\name so
         # they join the same account card as the auth-event names; unresolvable SID = skip
         if ($a2 -match '^S-1-5-') { $r5 = Get-SidName $a2; if ($r5 -and $r5 -ne $a2) { $a2 = $r5 } else { return $null } }
+        # Hyper-V VM session logons arrive as per-session GUIDs ('NT VIRTUAL MACHINE' domain);
+        # fold them into one card or they flood the account list with raw GUID rows
+        if ($a2 -match '^[0-9A-Fa-f]{8}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{12}$') { $a2 = 'NT VIRTUAL MACHINE (Hyper-V VM sessions)' }
         if (-not $a2 -or $a2 -match '^(-|\$|DWM-|UMFD-)$' -or @('SYSTEM', 'LOCAL SERVICE', 'NETWORK SERVICE', 'ANONYMOUS LOGON') -contains $a2) { return $null }
         $lk = $a2.ToLower()
         if (-not $accts.ContainsKey($lk)) {
@@ -11533,7 +11536,13 @@ function New-HuntFindings {
         $r36Sys = ($r36Path -match $r36SysRe)
         if ($r36Sys -and $r36Sig -and "$($r36Sig.Status)" -eq 'Valid') { continue } # signed copy in a system dir = the real binary
         $r36SigTxt = if ($r36Bare) { 'no executable path in evidence (name-only match)' } elseif ($r36Sig) { "signature $($r36Sig.Status)" } else { 'signature uncheckable (file missing or no signature data)' }
-        $r36Sev = if ($r36Bare) { 'low' } elseif ((Test-IsUserWritablePath $r36Path) -or -not $r36Sig) { 'high' } else { 'low' }
+        # v5.3: a VALID vendor signature means the vendor really shipped this name (nvm.exe vs
+        # dwm.exe is a name coincidence, not masquerade) - only unsigned/broken-signature
+        # near-names in user-writable paths stay high (HashMismatch/NotSigned/None)
+        $r36Sev = if ($r36Bare) { 'low' }
+                  elseif (-not $r36Sig) { 'high' }
+                  elseif ((Test-IsUserWritablePath $r36Path) -and "$($r36Sig.Status)" -ne 'Valid') { 'high' }
+                  else { 'low' }
         & $find 'Lookalike system binary (Levenshtein near-name)' $r36Sev $r36Path "near '$($h.Crit)' (distance $($h.Dist)), $r36Path, $r36SigTxt" 'T1036.005'
         $r36Emitted++
     }
