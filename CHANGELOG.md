@@ -1,3 +1,11 @@
+## v5.4 - fleet campaign clustering (cross-host intrusion grouping)
+
+- **-Mode Analyze now groups hosts into campaigns** before the per-host rollup: hosts are unioned into the same campaign when tied by ANY cross-host evidence - lateral-movement chains (RDT parent executed on host A connects to host B which then shows the same child binary), multi-host binary hashes, shared high/med indicators (hunt findings + IOCs + beacon entities), shared public endpoints, or deployment waves (-DeployCaseID). Union-find over the tie list, singletons stay singleton.
+- Each campaign emits a `fleet_campaigns.csv` row: CampaignID, HostCount, host list, worst verdict (rank order: LIKELY COMPROMISED > SUSPICIOUS > NO EVIDENCE > UNKNOWN), tie types, and first-seen/last-seen across the member cases. The fleet report gains a 'Campaigns' section (multi-host first, singleton count in the meta line).
+- Fleet console banner now opens with the campaign count ('CAMPAIGNS: 1 campaign(s) covering N of M host(s)') - the analyst-facing question "which of these hosts are ONE intrusion" is answered up front.
+- Evidence coverage in campaign ties is honest: hash ties only fire when both hosts actually produced binary hashes; chain ties note which direction (A ran parent -> B got child); single-host fleets (like this dev box) correctly produce zero campaigns.
+- New tests: tests\test_v54.ps1 (19 checks - union-find, chain/hash/indicator/wave ties, worst-verdict ranking, single-node early-out, tie-label honesty) + wiring pins in test_v279/test_v3/test_v400; suite re-pinned (test_v267 B5 region4 window 8100 -> 8300).
+
 ## v5.3 - hunt-FP fix: signed near-name binaries + Hyper-V account fold
 
 - **R36 no longer escalates validly-signed vendor binaries** (the verdict-drift bug found on the 20261121 case): a near-name hit whose on-disk signature is Valid stays LOW report-only even in a user-writable path - the vendor really ships that name (nvm.exe vs dwm.exe is a name coincidence, not masquerade). HIGH is now reserved for missing/uncheckable files (v2.81 semantics) and user-writable paths whose signature is NotSigned/HashMismatch/None. New test_v282 run-D pins it (45 checks).

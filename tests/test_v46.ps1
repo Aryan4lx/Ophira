@@ -66,7 +66,7 @@ Check 'wizard step 5 sysmon question' ($src -match "Install/refresh Sysmon telem
 Check 'wizard confirm line' ($src -match 'Sysmon    : \$\(if \(\$insSysmon\) \{ ''install/refresh before collect'' \}') ''
 Check 'wizard run passes -InstallSysmon' ($src -match 'Invoke-DeployMode -Targets \$targets -DeployPreset \$preset -Cred \$cred -DeployCaseID \$CaseID -DeploySharePath \$shareIn -Threads \$threads -PushBin \$push -DeployLogHours \$advLogHours -DeployLogWindow \$advLogWindow -InstallSysmon:\$insSysmon') ''
 Check 'direct dispatch passes -InstallSysmon' ($src -match '-InstallSysmon:\$InstallSysmon') ''
-Check 'version bumped' ($src -match 'Ophira v5\.3' -and $src -match '\$ScriptVersion = "5\.3"') ''
+Check 'version bumped' ($src -match 'Ophira v5\.4' -and $src -match '\$ScriptVersion = "5\.4"') ''
 
 Write-Host ''
 if ($script:Fails.Count -gt 0) {

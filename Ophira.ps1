@@ -1,5 +1,5 @@
 <#
-Ophira v5.3  -  Windows Endpoint Triage Toolkit
+Ophira v5.4  -  Windows Endpoint Triage Toolkit
 READ-ONLY by design: never modifies the system, only reads and copies data
 into its own output folder. Intended to be handed to a system owner or run
 by a responder during early triage / threat hunting.
@@ -371,7 +371,7 @@ param(
     [switch]$ExitVerdict
 )
 
-$ScriptVersion = "5.3"
+$ScriptVersion = "5.4"
 $ErrorActionPreference = 'Continue'
 $ProgressPreference = 'SilentlyContinue'
 
@@ -1738,6 +1738,106 @@ function New-FleetWaveRows {
     @($rows | Sort-Object -Property @{Expression = { if ($_.Class -eq 'wave') { 0 } else { 1 } } }, @{Expression = 'HostCount'; Descending = $true }, @{Expression = 'SpreadMinutes' })
 }
 
+function New-FleetCampaigns {
+    # v5.4 (fleet campaign clustering): union-find over hosts tied by shared evidence -
+    # lateral movement chains, multi-host binary hashes, cross-host indicators and
+    # deployment waves collapse into per-intrusion clusters instead of flat per-signal
+    # lists. Answers the analyst's real question: which hosts are ONE intrusion?
+    param(
+        [object[]]$HashRows,   # fleet_hashes rows (SHA256/Name/Hosts csv/MultiHost)
+        [object[]]$CrossRows,  # cross-host indicator rows (Indicator/Hosts csv)
+        [object[]]$Lateral,    # lateral chain rows (FromHost/ToHost/Account/Share)
+        [object[]]$Waves,      # deployment-wave rows (Name/Class/SpreadMinutes/Hosts csv)
+        [string[]]$AllHosts,
+        [hashtable]$Verdicts   # host -> verdict string
+    )
+    $norm = { param($h) ("$h").Trim().ToLower() }
+    $parent = @{}
+    foreach ($h in $AllHosts) { $k = & $norm $h; if ($k) { $parent[$k] = $k } }
+    if ($parent.Count -lt 2) { return @() }
+    $edges = New-Object System.Collections.Generic.List[object]
+    $addEdge = {
+        param($a, $b, $line)
+        $ka = & $norm $a; $kb = & $norm $b
+        if (-not $ka -or -not $kb -or $ka -eq $kb) { return }
+        if (-not $parent.ContainsKey($ka) -or -not $parent.ContainsKey($kb)) { return }
+        $null = $edges.Add([pscustomobject]@{ A = $ka; B = $kb; Line = $line })
+    }
+    $splitHosts = {
+        param($csvHosts)
+        @(("$csvHosts") -split ',\s*') | Where-Object { $_ }
+    }
+    # lateral chains first - strongest tie, its evidence line wins pair dedupe
+    foreach ($l in $Lateral) {
+        & $addEdge $l.FromHost $l.ToHost ("lateral: {0} -> {1}" -f "$($l.FromHost)", "$($l.ToHost)")
+    }
+    foreach ($r in $HashRows) {
+        if ("$($r.MultiHost)" -notmatch 'YES') { continue }
+        $hs = & $splitHosts $r.Hosts
+        for ($i = 0; $i -lt [Math]::Min($hs.Count, 20); $i++) {
+            for ($j = $i + 1; $j -lt [Math]::Min($hs.Count, 20); $j++) {
+                & $addEdge $hs[$i] $hs[$j] ("shared binary hash: $($r.Name)")
+            }
+        }
+    }
+    foreach ($r in $CrossRows) {
+        $hs = & $splitHosts $r.Hosts
+        for ($i = 0; $i -lt [Math]::Min($hs.Count, 20); $i++) {
+            for ($j = $i + 1; $j -lt [Math]::Min($hs.Count, 20); $j++) {
+                & $addEdge $hs[$i] $hs[$j] ("shared indicator: $($r.Indicator)")
+            }
+        }
+    }
+    foreach ($w in $Waves) {
+        $hs = & $splitHosts $w.Hosts
+        for ($i = 0; $i -lt [Math]::Min($hs.Count, 20); $i++) {
+            for ($j = $i + 1; $j -lt [Math]::Min($hs.Count, 20); $j++) {
+                & $addEdge $hs[$i] $hs[$j] ("deployment wave: {0} (spread {1} min)" -f "$($w.Name)", "$($w.SpreadMinutes)")
+            }
+        }
+    }
+    # union-find with path halving (inline - no nested named functions, house regex extracts to first column-0 brace)
+    foreach ($e in $edges) {
+        $ka = $e.A; $kb = $e.B
+        while ($parent[$ka] -ne $ka) { $parent[$ka] = $parent[$parent[$ka]]; $ka = $parent[$ka] }
+        while ($parent[$kb] -ne $kb) { $parent[$kb] = $parent[$parent[$kb]]; $kb = $parent[$kb] }
+        if ($ka -ne $kb) { $parent[$kb] = $ka }
+    }
+    $members = @{}   # root -> List[host display names]
+    $lines = @{}     # root -> List[evidence lines whose pair lives in this cluster]
+    foreach ($h in $AllHosts) {
+        $k = & $norm $h
+        $root = $k
+        while ($parent[$root] -ne $root) { $root = $parent[$root] }
+        if (-not $members.ContainsKey($root)) { $members[$root] = New-Object System.Collections.Generic.List[string]; $lines[$root] = New-Object System.Collections.Generic.List[string] }
+        $members[$root].Add("$h")
+    }
+    foreach ($e in $edges) {
+        $root = $e.A
+        while ($parent[$root] -ne $root) { $root = $parent[$root] }
+        if ($lines.ContainsKey($root) -and $lines[$root].Count -lt 8 -and -not $lines[$root].Contains($e.Line)) { $lines[$root].Add($e.Line) }
+    }
+    $rankMap = @{ 'COMPROMISED' = 4; 'LIKELY COMPROMISED' = 3; 'SUSPICIOUS' = 2; 'NO EVIDENCE' = 1; 'INCONCLUSIVE' = 0 }
+    $rows = @()
+    $ci = 0
+    $clusters = @($members.Keys | Where-Object { $members[$_].Count -ge 2 })
+    foreach ($root in $clusters) {
+        $ci++
+        $worst = ''; $worstRank = -1
+        foreach ($h in $members[$root]) {
+            $v = if ($Verdicts -and $Verdicts.ContainsKey($h)) { "$($Verdicts[$h])" } else { '' }
+            $rk = if ($v -and $rankMap.ContainsKey($v)) { $rankMap[$v] } else { -1 }
+            if ($rk -gt $worstRank) { $worstRank = $rk; $worst = $v }
+        }
+        $hl = @($members[$root] | Sort-Object)
+        $rows += [pscustomobject]@{
+            Campaign = "C$ci"; HostCount = $hl.Count; Hosts = ($hl -join ', ')
+            WorstVerdict = $worst; Evidence = (($lines[$root].ToArray()) -join '; ')
+        }
+    }
+    @($rows | Sort-Object -Property @{Expression = { $rankMap[$_.WorstVerdict] }; Descending = $true }, @{Expression = 'HostCount'; Descending = $true }, @{Expression = 'Campaign' })
+}
+
 function Invoke-AnalyzeMode {
     param([string]$Path, [string]$HayabusaExe)
     if (-not (Test-Path $Path)) { Write-Host "Path not found: $Path" -ForegroundColor Red; return }
@@ -2017,6 +2117,19 @@ function Invoke-AnalyzeMode {
             Write-Host ("    {0} -> {1} [{2}] share={3} target={4} ({5})" -f $l.FromHost, $l.ToHost, $l.Account, $l.Share, $l.Target, $l.SourceIp) -ForegroundColor Magenta
         }
     }
+    $campaignRows = @()
+    if ($hosts.Count -ge 2) {
+        $vMap = @{}
+        foreach ($h in $hosts) { $vMap[$h.Host] = "$($h.Verdict)" }
+        $campaignRows = @(New-FleetCampaigns -HashRows $fleetHashRows -CrossRows $crossHost -Lateral $lateral.ToArray() -Waves $waveRows -AllHosts @($hosts | ForEach-Object { $_.Host }) -Verdicts $vMap)
+        if ($campaignRows.Count -gt 0) {
+            $campaignRows | Export-Csv -LiteralPath (Join-Path $OutFolder 'fleet_campaigns.csv') -NoTypeInformation -Encoding UTF8
+            Write-Host "`n  CAMPAIGNS: $($campaignRows.Count) host cluster(s) tied by shared indicators/lateral movement -> fleet_campaigns.csv" -ForegroundColor Red
+            foreach ($c in ($campaignRows | Select-Object -First 5)) {
+                Write-Host ("    {0}: {1} host(s) [{2}] - {3}" -f $c.Campaign, $c.HostCount, $c.WorstVerdict, $c.Evidence) -ForegroundColor Red
+            }
+        }
+    }
     if ($HayabusaExe -and $evtxDirs.Count -gt 0) {
         Write-Host "`n  Running hayabusa fleet timeline over $($evtxDirs.Count) hosts' evtx..." -ForegroundColor Cyan
         $merged = Join-Path ([IO.Path]::GetTempPath()) 'fleet_merged_evtx'
@@ -2091,6 +2204,14 @@ a{color:#7aa2f7;text-decoration:none}a:hover{color:#9ec1f0}.foot{margin-top:40px
             $null = $fsb.AppendLine("<tr><td class='IOC'>$(ConvertTo-HtmlEsc $f.Host)</td><td>$(ConvertTo-HtmlEsc $f.Type)</td><td class='path'>$(ConvertTo-HtmlEsc $f.Detail)</td></tr>")
         }
         $null = $fsb.AppendLine("</table><div class='meta'>HuntHit rows are high/medium technique detections from each host's csv\hunt_findings.csv</div>")
+    }
+    if ($campaignRows.Count -gt 0) {
+        $null = $fsb.AppendLine("<h2>Campaigns - clustered host groups (one intrusion, many boxes)</h2><table><tr><th>Campaign</th><th>Hosts</th><th>Host list</th><th>Worst verdict</th><th>Tied by</th></tr>")
+        foreach ($c in $campaignRows) {
+            $cc = switch -Wildcard ($c.WorstVerdict) { 'COMPROMISED*' { 'HIGH' } 'LIKELY*' { 'HIGH' } 'SUSPICIOUS*' { 'med' } default { 'info' } }
+            $null = $fsb.AppendLine("<tr><td><b>$($c.Campaign)</b></td><td><b>$($c.HostCount)</b></td><td class='path'>$(ConvertTo-HtmlEsc $c.Hosts)</td><td><span class='$cc'>$(ConvertTo-HtmlEsc $c.WorstVerdict)</span></td><td class='path'>$(ConvertTo-HtmlEsc $c.Evidence)</td></tr>")
+        }
+        $null = $fsb.AppendLine("</table><div class='meta'>Union-find over every cross-host tie this report found (lateral chains, shared binary hashes, shared indicators, deployment waves): hosts linked by ANY of those land in the same campaign row. A cluster is one investigation, not N separate hosts. Full list: fleet_campaigns.csv.</div>")
     }
     if ($lateral.Count -gt 0) {
         $null = $fsb.AppendLine("<h2>Lateral movement chains (share access between collected hosts)</h2><table><tr><th>From</th><th>To</th><th>Account</th><th>Share</th><th>Target</th><th>Time</th><th>Source IP</th></tr>")

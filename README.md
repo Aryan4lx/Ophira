@@ -350,6 +350,8 @@ while ($true) { try { (New-Object Net.Sockets.TcpClient('1.1.1.1', 443)).Close()
 - [x] **SRUM analyst-completion honesty (v4.8)**: collection verdicts now carry an explicit caveat when the SRUDB was copied but the analyst-side deep-parse hasn't run - no more silent SUSPICIOUS -> LIKELY COMPROMISED jump after -Mode Parse
 - [x] **Fleet deployment waves (v4.9)**: -Mode Analyze flags binaries first-seen across hosts within the same window (wave/staggered) - mass-deploy vs mass-infection triage at fleet scale
 - [x] **QA/tooling hardening (v5.0)**: Setup tool pinning + download receipts, verdict-regression replay gate over real cases, CI-runnable synthetic E2E fixture (xray.exe story)
+- [x] **Locale-invariant parsing + signed-near-name truth (v5.1-v5.3)**: evidence times parse culture-safe at every consumer (Get-InvariantDate fallback chain); R36 masquerade stays LOW for validly-signed vendor binaries in user paths (nvm.exe vs dwm.exe coincidence no longer flips verdicts to LIKELY COMPROMISED on analyst re-parse); Hyper-V GUID session accounts fold into one card; fleet-wave timestamps culture-safe; analyzer-clean
+- [x] **Fleet campaign clustering (v5.4)**: -Mode Analyze unions hosts tied by ANY cross-host evidence (lateral chains, multi-host binary hashes, shared indicators, deployment waves) into per-intrusion campaign rows (`fleet_campaigns.csv` + fleet-report section with worst-verdict per cluster) - "which hosts are ONE intrusion" answered directly
 
 ## Coverage vs Velociraptor (built-in Windows artifacts)
 
