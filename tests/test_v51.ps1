@@ -46,7 +46,7 @@ Check 'no culture-default TryParse left in report sorts' (-not $src.Contains('if
 Check 'report fmtTs routes Get-InvariantDate' $src.Contains('$fmtTs = { param($v5) $d5 = Get-InvariantDate')
 Check 'focus group sort routes Get-InvariantDate' $src.Contains('Sort-Object { (Get-InvariantDate $_.Time).Ticks }')
 Check 'defender detail routes Get-InvariantDate' $src.Contains('$d = Get-InvariantDate $ts; if ($d -ne [datetime]::MinValue)')
-Check 'version bumped' ($src.Contains('Ophira v5.5') -and $src.Contains('$ScriptVersion = "5.5"'))
+Check 'version bumped' ($src.Contains('Ophira v5.6') -and $src.Contains('$ScriptVersion = "5.6"'))
 
 Write-Host ''
 if ($fails -eq 0) { Write-Host 'ALL PASSED' ; exit 0 } else { Write-Host "$fails FAILED"; exit 1 }

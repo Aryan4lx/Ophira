@@ -1,5 +1,5 @@
 <#
-Ophira v5.5  -  Windows Endpoint Triage Toolkit
+Ophira v5.6  -  Windows Endpoint Triage Toolkit
 READ-ONLY by design: never modifies the system, only reads and copies data
 into its own output folder. Intended to be handed to a system owner or run
 by a responder during early triage / threat hunting.
@@ -115,8 +115,13 @@ by a responder during early triage / threat hunting.
     -LogStart.
 
 .PARAMETER SharePath
-    Copy the finished case zip to this UNC share (e.g. \\IR-SRV\collections$)
-    after collection, in addition to leaving it in the output folder.
+    Collect/Deploy: copy the finished case zip to this UNC share (e.g.
+    \\IR-SRV\collections$) after collection, in addition to leaving it in
+    the output folder. Share mode: parent folder for the client-safe
+    bundle (default: .\share).
+
+.PARAMETER ShareZip
+    Share mode: also pack the client-safe bundle into a zip next to it.
 
 .PARAMETER ComputerName
     Deploy mode: one or more remote host names to push and run on, in
@@ -134,7 +139,7 @@ by a responder during early triage / threat hunting.
     or case folder) to merge into the fleet report. Default: current folder.
 
 .PARAMETER ParsePath
-    Case to operate on for Parse, Focus/Process and Timeline: an
+    Case to operate on for Parse, Focus/Process, Timeline and Share: an
     OPHIRA_*.zip or its unzipped folder. Prompts when omitted.
 
 .PARAMETER ProcessName
@@ -339,7 +344,7 @@ by a responder during early triage / threat hunting.
 
 [CmdletBinding()]
 param(
-    [ValidateSet('Collect', 'Deploy', 'Analyze', 'Setup', 'Links', 'UpdateRules', 'Tune', 'Parse', 'Process', 'Timeline', 'Canary', 'Focus', 'Watch', 'SeedIocs', 'Help')]
+    [ValidateSet('Collect', 'Deploy', 'Analyze', 'Setup', 'Links', 'UpdateRules', 'Tune', 'Parse', 'Process', 'Timeline', 'Canary', 'Focus', 'Watch', 'SeedIocs', 'Share', 'Help')]
     [string]$Mode = 'Collect',
     [string]$CaseID = "",
     [string]$Analyst = "",
@@ -382,10 +387,11 @@ param(
     [string]$SeedValue = '',
     [switch]$ExitVerdict,
     [string]$ClientName = '',
-    [switch]$Redact
+    [switch]$Redact,
+    [switch]$ShareZip
 )
 
-$ScriptVersion = "5.5"
+$ScriptVersion = "5.6"
 $ErrorActionPreference = 'Continue'
 $ProgressPreference = 'SilentlyContinue'
 
@@ -13534,6 +13540,7 @@ function Show-TaskMenu {
         Write-Host "   [C]  Detection canary (self-test the pipeline on this PC)" -ForegroundColor Yellow
         # v2.69 (F2): the flags-only help gap - one key renders the full help (modes, examples)
         Write-Host "   [H]  Help (what the modes and flags do, with examples)" -ForegroundColor Yellow
+        Write-Host "   [S]  Share case (client-safe bundle: redacted report + findings JSON)" -ForegroundColor Yellow
         Write-Host ""
         Write-Host "   [Q]  Quit" -ForegroundColor DarkGray
         Write-Host ""
@@ -13554,6 +13561,7 @@ function Show-TaskMenu {
             '^(?i)w$' { return 'Watch' }
             '^(?i)c$' { return 'Canary' }
             '^(?i)h$' { return 'Help' }
+            '^(?i)s$' { return 'Share' }
             '^(?i)q$' { return $null }
             default { }
         }
@@ -13822,6 +13830,85 @@ function Open-CaseSession {
     $script:StartTime = $st
     $script:OpenCaseTmp = $tmp
     return $meta
+}
+
+function Invoke-ShareMode {
+    # v5.6 (ADR-0006): analyst-side client-safe bundle - copy a finished case into
+    # share\<case>\ minus analyst-only files (redact_map.csv first among them), with
+    # the report swapped for its redacted copy when one exists (run -Mode Parse
+    # -Redact first for a client-safe report). The original case is never touched;
+    # ophira_findings.json travels as-is (client-safe by schema). -SharePath
+    # overrides the destination parent, -ShareZip also packs the bundle.
+    param([string]$CasePath, [string]$OutDir, [switch]$ShareZip)
+    $kit = Get-KitRoot
+    if (-not $CasePath) {
+        # auto-detect like Focus: single candidate wins; several -> newest (share is
+        # post-collection - there is deliberately no collect-now wizard here)
+        $cands = @(Get-ChildItem -Path $kit -Directory -Filter 'OPHIRA_*' -ErrorAction SilentlyContinue | Sort-Object Name -Descending)
+        if ($cands.Count -eq 0) { Write-Host '  no OPHIRA_* case folder found - point at one with: .\Ophira.ps1 -Mode Share -ParsePath <case folder or zip>' -ForegroundColor Red; return }
+        $CasePath = $cands[0].FullName
+        if ($cands.Count -gt 1) { Write-Host "  multiple cases found - sharing the newest: $(Split-Path -Leaf $CasePath) (pin one with -ParsePath)" -ForegroundColor DarkYellow }
+    }
+    $meta = Open-CaseSession -Path $CasePath
+    if (-not $meta) { return }
+    $caseDir = $script:CaseDir
+    $caseName = Split-Path -Leaf $caseDir
+    if ($script:OpenCaseTmp) { $caseName = "OPHIRA_$($meta.Computer)_$($meta.CaseID)" }
+    $parent = if ($OutDir) { $OutDir } else { Join-Path $kit 'share' }
+    $dest = Join-Path $parent $caseName
+    if ($dest -like "$caseDir*") { Write-Host '  share destination is inside the case itself - give -SharePath' -ForegroundColor Red; return }
+    try { $null = New-Item -ItemType Directory -Path $parent -Force -ErrorAction Stop } catch { Write-Host "  cannot create share folder: $($_.Exception.Message)" -ForegroundColor Red; return }
+    if (Test-Path -LiteralPath $dest) { Remove-Item -LiteralPath $dest -Recurse -Force }
+    try { Copy-Item -LiteralPath $caseDir -Destination $dest -Recurse -Force -ErrorAction Stop } catch { Write-Host "  copy failed: $($_.Exception.Message)" -ForegroundColor Red; return }
+    # strip analyst-only files from the COPY (originals keep everything)
+    $stripped = @()
+    foreach ($pat in @('redact_map.csv', '*.ps1', '*.psm1', '*.exe', '*.bat', '*.py', '*.dll')) {
+        foreach ($f in @(Get-ChildItem -Path $dest -Recurse -File -Filter $pat -ErrorAction SilentlyContinue)) {
+            $stripped += $f.FullName.Substring($dest.Length + 1)
+            Remove-Item -LiteralPath $f.FullName -Force
+        }
+    }
+    $red = Join-Path $dest 'report_redacted.html'
+    $redacted = $false
+    if (Test-Path -LiteralPath $red) {
+        Copy-Item -LiteralPath $red -Destination (Join-Path $dest 'report.html') -Force
+        Remove-Item -LiteralPath $red -Force
+        $redacted = $true
+    }
+    $vLine = ''
+    $vj = Join-Path $dest 'verdict.json'
+    if (Test-Path -LiteralPath $vj) { try { $v = Get-Content -LiteralPath $vj -Raw | ConvertFrom-Json; $vLine = "$($v.level) - $($v.confidence_percent)% evidence coverage" } catch { } }
+    $cl = if ("$($meta.ClientName)") { "$($meta.ClientName)" } else { '(not recorded)' }
+    $repLine = if ($redacted) { 'the full assessment report (REDACTED copy - hostnames/usernames/internal IPs tokenized)' } else { "the full assessment report (WARNING: no redacted copy existed - hostnames/usernames intact; run -Mode Parse -Redact for a client-safe report)" }
+    $readme = @(
+        "OPHIRA CASE SHARE - $caseName",
+        "Generated: $((Get-Date).ToUniversalTime().ToString('yyyy-MM-dd HH:mm')) UTC by Ophira v$ScriptVersion -Mode Share",
+        "Host: $($meta.Computer)   Case: $($meta.CaseID)   Client: $cl   Analyst: $($meta.Analyst)",
+        "Verdict: $(if ($vLine) { $vLine } else { 'not generated (run -Mode Parse to finish the case first)' })",
+        '',
+        'What is in this folder:',
+        "  report.html            - $repLine",
+        '  ophira_findings.json   - machine-readable verdict + coverage + leads (safe to ingest)',
+        '  csv\, raw\             - the collected evidence',
+        '  ANALYST-START-HERE.txt - orientation',
+        '',
+        "Removed from this bundle (analyst-side only): $(if ($stripped) { $stripped -join ', ' } else { '(nothing found)' })"
+    )
+    Set-Content -LiteralPath (Join-Path $dest 'SHARE-README.txt') -Value $readme -Encoding UTF8
+    $nFiles = @(Get-ChildItem -Path $dest -Recurse -File -ErrorAction SilentlyContinue).Count
+    $zp = $null
+    if ($ShareZip) {
+        $zp = "$dest.zip"
+        if (Test-Path -LiteralPath $zp) { Remove-Item -LiteralPath $zp -Force }
+        try { Compress-Archive -Path (Join-Path $dest '*') -DestinationPath $zp -Force -ErrorAction Stop } catch { $zp = $null; Write-Host "  zip failed: $($_.Exception.Message)" -ForegroundColor DarkYellow }
+    }
+    Write-Host ''
+    Write-Host '================================================================' -ForegroundColor Cyan
+    Write-Host "  CLIENT-SAFE SHARE BUILT: $dest" -ForegroundColor Green
+    Write-Host "  $nFiles file(s); report is $(if ($redacted) { 'REDACTED' } else { 'NOT redacted - see SHARE-README.txt' }); analyst-side files stripped: $($stripped.Count)" -ForegroundColor $(if ($redacted) { 'Gray' } else { 'Yellow' })
+    if ($zp) { Write-Host "  zip: $zp" -ForegroundColor Gray }
+    if ($script:OpenCaseTmp) { Remove-Item -LiteralPath $script:OpenCaseTmp -Recurse -Force -ErrorAction SilentlyContinue }
+    Write-Host '================================================================' -ForegroundColor Cyan
 }
 
 function New-RedactedCopy {
@@ -16282,6 +16369,7 @@ if ($Mode -ne 'Collect') {
         'Timeline' { Invoke-TimelineMode -Path $ParsePath -Start $TimelineStart -End $TimelineEnd | Out-Null }
         'Watch' { Invoke-WatchMode -Interval $WatchInterval | Out-Null }
         'SeedIocs' { Invoke-SeedIocsMode -Value $SeedValue | Out-Null }
+        'Share' { Invoke-ShareMode -CasePath $ParsePath -OutDir $SharePath -ShareZip:$ShareZip }
         'Canary' { Invoke-CanaryMode -KeepLogging:$KeepLogging -Target $CanaryTarget -TargetUser $CanaryTargetUser | Out-Null }
     }
     # v2.51: opt-in verdict exit codes (-ExitVerdict): Parse/Collect regenerate the verdict in-session

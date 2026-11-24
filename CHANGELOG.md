@@ -1,3 +1,18 @@
+## v5.6 - client-safe share bundles (-Mode Share)
+
+- **-Mode Share** (new): builds a client-safe share bundle from a case - copies the whole case EXCEPT analyst-side files (redact_map.csv and any script/binary artifacts), swaps in the redacted report when `-Redact` ran (falls back to the original with an explicit WARNING in the README), and writes a `SHARE-README.txt` (client label, verdict + coverage line, what was stripped, redaction state, generated-by stamp). `-SharePath` overrides the destination (default `<kit>\share\<case>`), `-ShareZip` also produces `<case>.zip` for one-attachment email handoff.
+- Safety rails: destination inside the case itself is refused (no recursive self-copy); auto-detect picks the newest OPHIRA_* case with a "pin one with -ParsePath" note when several exist; copy failures per-file are reported, never fatal.
+- Wired into the Advanced menu ([S] Share case) and the mode dispatch/ValidateSet; the Advanced wizard help text mentions the bundle.
+- New tests: tests\test_v56.ps1 (28 checks - redacted swap, stripping, README contents, zip, newest-case auto-detect, -ParsePath pin, dest-inside-case guard, no-verdict honesty, wiring pins).
+
+## v5.5 - client boundaries, findings JSON, redacted copy (ADR-0005 / ADR-0006)
+
+- **-ClientName** (new param, all modes): optional MSSP client label stamped into case.json, the report provenance line, the findings JSON and the fleet view. Adopted automatically on -Mode Parse from the case metadata.
+- **Fleet campaigns never merge across clients** (ADR-0006): New-FleetCampaigns takes a host->client map; a tie chain spanning two clients yields one campaign per client plus a `fleet_cross_client_ties.csv` row (ClientA/HostA/ClientB/HostB/tie evidence) - never one merged campaign. fleet_hosts.csv + fleet report gain a Client column; console banners label campaigns with their client.
+- **ophira_findings.json** (ADR-0005): one normalized machine-readable findings file per case - verdict (level/signals/caveats), coverage (collected/total/percent/missing), top 50 leads and identity (host/client/case/analyst/preset/role) in a stable ADDITIVE-ONLY schema (`ophira-findings/1`). Written by a new regen step (24 total) so both New-Package and -Mode Parse produce it; SIEM/automation ingest no longer needs the HTML.
+- **-Redact** (with -Mode Parse): writes `report_redacted.html` next to the untouched original - hostnames (case Computer + *.local/.lan/.internal/.corp/.localdomain), usernames (case Analyst + entities_accounts, well-known SID names excluded), internal (RFC1918) IPs and MACs tokenized as HOST-N/USER-N/IP-INT-N/MAC-N, case-insensitively (evidence stores 'Aryan', 'aryan' for one identity). Public/attacker indicators are untouched; the token map stays analyst-side in `redact_map.csv`.
+- New tests: tests\test_v55.ps1 (54 checks - findings schema + caps + null-verdict shape, cross-client guard incl partial chains + legacy no-map merge, redaction tokens/leaks/map). Suite re-pinned (regen 23->24 steps, version pins incl the escaped-regex '5\.4' form).
+
 ## v5.4 - fleet campaign clustering (cross-host intrusion grouping)
 
 - **-Mode Analyze now groups hosts into campaigns** before the per-host rollup: hosts are unioned into the same campaign when tied by ANY cross-host evidence - lateral-movement chains (RDT parent executed on host A connects to host B which then shows the same child binary), multi-host binary hashes, shared high/med indicators (hunt findings + IOCs + beacon entities), shared public endpoints, or deployment waves (-DeployCaseID). Union-find over the tie list, singletons stay singleton.
@@ -216,14 +231,6 @@ LECmd's AutomaticDestinations jump-list parse (jumplist_parsed_AutomaticDestinat
 - +26 checks in tests\test_v292.ps1; 28 suites updated for the new clip-cell architecture.
 
 # Changelog
-
-## v5.5 - client boundaries, findings JSON, redacted copy (ADR-0005 / ADR-0006)
-
-- **-ClientName** (new param, all modes): optional MSSP client label stamped into case.json, the report provenance line, the findings JSON and the fleet view. Adopted automatically on -Mode Parse from the case metadata.
-- **Fleet campaigns never merge across clients** (ADR-0006): New-FleetCampaigns takes a host->client map; a tie chain spanning two clients yields one campaign per client plus a `fleet_cross_client_ties.csv` row (ClientA/HostA/ClientB/HostB/tie evidence) - never one merged campaign. fleet_hosts.csv + fleet report gain a Client column; console banners label campaigns with their client.
-- **ophira_findings.json** (ADR-0005): one normalized machine-readable findings file per case - verdict (level/signals/caveats), coverage (collected/total/percent/missing), top 50 leads and identity (host/client/case/analyst/preset/role) in a stable ADDITIVE-ONLY schema (`ophira-findings/1`). Written by a new regen step (24 total) so both New-Package and -Mode Parse produce it; SIEM/automation ingest no longer needs the HTML.
-- **-Redact** (with -Mode Parse): writes `report_redacted.html` next to the untouched original - hostnames (case Computer + *.local/.lan/.internal/.corp/.localdomain), usernames (case Analyst + entities_accounts, well-known SID names excluded), internal (RFC1918) IPs and MACs tokenized as HOST-N/USER-N/IP-INT-N/MAC-N, case-insensitively (evidence stores 'Aryan', 'aryan' for one identity). Public/attacker indicators are untouched; the token map stays analyst-side in `redact_map.csv`.
-- New tests: tests\test_v55.ps1 (54 checks - findings schema + caps + null-verdict shape, cross-client guard incl partial chains + legacy no-map merge, redaction tokens/leaks/map). Suite re-pinned (regen 23->24 steps, version pins incl the escaped-regex '5\.4' form).
 
 ## v4.8 - SRUM analyst-completion honesty
 

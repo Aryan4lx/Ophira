@@ -23,3 +23,6 @@ fleet_*.html
 fleet_*.txt
 fleet_*.json
 attack_layer_fleet.json
+
+# -Mode Share client bundles (analyst-side originals stay in the case folders)
+share/

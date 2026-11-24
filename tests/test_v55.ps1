@@ -1,4 +1,4 @@
-# test_v55.ps1 - v5.5: findings JSON, client boundaries, redacted copy
+# test_v55.ps1 - v5.6: findings JSON, client boundaries, redacted copy
 $ErrorActionPreference = 'Stop'
 $src = Get-Content (Join-Path $PSScriptRoot '..\Ophira.ps1') -Raw
 $fail = 0
@@ -25,7 +25,7 @@ $tmp = Join-Path $env:TEMP ("oph_v55_" + [guid]::NewGuid().ToString('N').Substri
 New-Item -ItemType Directory -Path $tmp | Out-Null
 
 $Computer = 'LAB-HOST-01'
-$ScriptVersion = '5.5'
+$ScriptVersion = '5.6'
 $Preset = 'Standard'
 $script:HostRole = 'Workstation'
 $script:ClientName = 'Contoso Ltd'
@@ -42,7 +42,7 @@ $script:Verdict = [pscustomobject]@{
     )
 }
 [IO.File]::WriteAllText((Join-Path $tmp 'case.json'), '{"Computer":"LAB-HOST-01","CaseID":"INC-TEST-42","Analyst":"aryan","ClientName":"Contoso Ltd","Preset":"Standard","StartedUTC":"2026-11-24T08:00:00.0000000Z"}')
-[IO.File]::WriteAllText((Join-Path $tmp 'report.html'), "<html><body><h1>report for LAB-HOST-01</h1><p>user aryan did things</p><p>alice and bob ran tools</p><p>10.1.2.3 and 8.8.8.8 and 192.168.5.5</p><p>MAC aa:bb:cc:dd:ee:ff here</p><p>intranet.corp and evil.example.com</p><p>NT VIRTUAL MACHINE sessions; SYSTEM stays</p></body></html>")
+[IO.File]::WriteAllText((Join-Path $tmp 'report.html'), "<html><body><h1>report for LAB-HOST-01</h1><p>user aryan did things</p><p>alice and bob ran tools</p><p>10.1.2.3 and 8.8.8.8 and 192.168.5.6</p><p>MAC aa:bb:cc:dd:ee:ff here</p><p>intranet.corp and evil.example.com</p><p>NT VIRTUAL MACHINE sessions; SYSTEM stays</p></body></html>")
 $script:caseCsv['entities_accounts'] = @(
     [pscustomobject]@{ Account = 'DESKTOP-LAB-01\alice' },
     [pscustomobject]@{ Account = 'bob' },
@@ -54,7 +54,7 @@ $script:caseCsv['entities_accounts'] = @(
 New-FindingsJson -CaseDir $tmp
 $fj = Get-Content (Join-Path $tmp 'ophira_findings.json') -Raw | ConvertFrom-Json
 Check 'P1 schema key' ("$($fj.schema)" -eq 'ophira-findings/1')
-Check 'P1 tool key' ("$($fj.tool)" -match 'Ophira v5\.5')
+Check 'P1 tool key' ("$($fj.tool)" -match 'Ophira v5\.6')
 Check 'P1 identity host' ("$($fj.identity.host)" -eq 'LAB-HOST-01')
 Check 'P1 identity client' ("$($fj.identity.client)" -eq 'Contoso Ltd')
 Check 'P1 identity case_id' ("$($fj.identity.case_id)" -eq 'INC-TEST-42')
@@ -124,7 +124,7 @@ Check 'P3 host tokenized' ($red -notmatch 'LAB-HOST-01' -and $red -match 'HOST-1
 Check 'P3 user tokenized' ($red -notmatch '\balice\b' -and $red -match 'USER-2')
 Check 'P3 analyst tokenized as user' ($red -notmatch '\baryan\b' -and $red -match 'USER-1')
 Check 'P3 bare user tokenized' ($red -notmatch '\bbob\b' -and $red -match 'USER-3')
-Check 'P3 internal IP tokenized' ($red -notmatch '10\.1\.2\.3' -and $red -notmatch '192\.168\.5\.5' -and $red -match 'IP-INT-1' -and $red -match 'IP-INT-2')
+Check 'P3 internal IP tokenized' ($red -notmatch '10\.1\.2\.3' -and $red -notmatch '192\.168\.5\.6' -and $red -match 'IP-INT-1' -and $red -match 'IP-INT-2')
 Check 'P3 public IP untouched' ($red -match '8\.8\.8\.8')
 Check 'P3 MAC tokenized' ($red -notmatch 'aa:bb:cc:dd:ee:ff' -and $red -match 'MAC-1')
 Check 'P3 corp-domain tokenized' ($red -notmatch 'intranet\.corp' -and $red -match 'HOST-2')
