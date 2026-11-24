@@ -200,7 +200,7 @@ Check "whitelist: Get-IisW3cRows in SharedFunctions" ($src -match "'Get-IisW3cRo
 Check "regen: hunt runs BEFORE entity correlation (hunt category fresh in one pass)" ([regex]::Match($src, "\{ New-HuntFindings \}[\s\S]*?\{ New-EntityCorrelation \}").Success) # v2.79: producers moved into $rgStep scriptblocks - ordering pin kept
 Check "regen: session attribution + lineage called" ($src -match 'New-SessionAttribution' -and $src -match 'New-ProcessChains')
 Check "case.json records Role" ($src -match 'Role = \$script:HostRole')
-Check "fleet: Role column in fleet_hosts" ($src -match 'Select-Object Host, Verdict, VerdictRank, Confidence, Role,')
+Check "fleet: Role column in fleet_hosts" ($src -match 'Select-Object Host, Client, Verdict, VerdictRank, Confidence, Role,')
 Check "verdict: huntHi regex covers DCSync/spray/webshell" ($src -match 'DCSync\|Password spray\|Web server spawned')
 Check "modules: 4.9 saves kerberos + ds CSVs" ($src -match "Save-Rows -Name 'security_kerberos'" -and $src -match "Save-Rows -Name 'security_ds_access'")
 Check "modules: 8.12 saves iis_requests + iis_anomalies" ($src -match "Save-Rows -Name 'iis_requests'" -and $src -match "Save-Rows -Name 'iis_anomalies'")

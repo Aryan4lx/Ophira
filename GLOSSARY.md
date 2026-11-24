@@ -10,9 +10,13 @@ Terms as used in this repo. Use these names in issues, specs, tests, and code co
 
 ## Workflow
 
+- **Client** - the MSSP's customer that owns a fleet of endpoints; recorded per case (`ClientName` in `case.json`, set via `-ClientName`). Fleet rollups group by Client; **campaigns never cross Client boundaries** - a tie chain spanning two Clients yields two campaigns plus an explicit cross-client tie flag, never one merged campaign.
+- **Findings JSON** - one normalized machine-readable `ophira_findings.json` per case (verdict, signals, coverage, leads, campaign membership); the automation/SIEM-ingest contract, jq-able, no server. Stable schema - additive-only changes.
+- **Redacted copy** - a second `report.html` produced by `-Redact` with hostnames, usernames and internal IPs swapped for stable tokens; the original report is untouched and the token map stays analyst-side, so the client deliverable never carries identifying data it doesn't need.
 - **Collect** - run modules on the endpoint, write CSVs + raw exports.
 - **Parse** (`-Mode Parse -ParsePath <case>`) - analyst-side completion of a package collected elsewhere: re-runs derived artifacts, rebuilds the report.
 - **Analyze** - full collect + parse + package in one run (used when the analyst is on the endpoint).
+- **Legacy shim** - planned small PS 2.0-compatible sibling script (`Ophira-Legacy.ps1`) that only copies raw artifacts on pre-Win7 boxes (XP/2003/Vista); no parsing on the legacy host - the analyst machine does all interpretation via `-Mode Parse`. Out of scope until the vision features ship.
 - **Derived artifacts** - outputs rebuilt from collected CSVs (supertimeline, gaps, verdict, report, connections_dns, exec stacks, recon sessions, ...). All rebuilt by `Invoke-RegenerateOutputs`.
 
 ## Verdict machinery

@@ -2,6 +2,14 @@
 
 **One PowerShell script** (5.1+, zero dependencies) for Windows incident response: collect evidence on an endpoint, push it across a fleet, analyze the results, and fetch companion tools.
 
+## Vision & positioning
+
+Built first for the **MSSP / fleet responder**: triage endpoints across many clients with no server, no agent, no console to buy. The one-liner: *KAPE's speed, Velociraptor's scale awareness, and a verdict neither gives you - from one file.*
+
+- **The judgment step neither tool gives you**: every case ends with a deterministic verdict (rules + weighted signals + honest coverage - never a probability, never an LLM), per-host fleet rollups, and campaign clustering that answers "which hosts are ONE intrusion" across a fleet.
+- **Zero infrastructure**: copy the script, run it, hand the report to a human. Optional REST-delivered analysis stays out of the judgment path (see ADR-0006); client-safe `-Redact` copies and a machine-readable `ophira_findings.json` per case make results deliverable and ingestable.
+- **Honest scoping**: Windows endpoints only (a choice, see ADR-0005); pre-Win7 hosts get a dumb-collector shim later - parsing always happens on the analyst box.
+
 ## Get the kit
 
 `git clone` is the reliable path (long file paths in the bundled rule packs exceed Windows' 260-char ZIP limit in some locations):
@@ -352,6 +360,7 @@ while ($true) { try { (New-Object Net.Sockets.TcpClient('1.1.1.1', 443)).Close()
 - [x] **QA/tooling hardening (v5.0)**: Setup tool pinning + download receipts, verdict-regression replay gate over real cases, CI-runnable synthetic E2E fixture (xray.exe story)
 - [x] **Locale-invariant parsing + signed-near-name truth (v5.1-v5.3)**: evidence times parse culture-safe at every consumer (Get-InvariantDate fallback chain); R36 masquerade stays LOW for validly-signed vendor binaries in user paths (nvm.exe vs dwm.exe coincidence no longer flips verdicts to LIKELY COMPROMISED on analyst re-parse); Hyper-V GUID session accounts fold into one card; fleet-wave timestamps culture-safe; analyzer-clean
 - [x] **Fleet campaign clustering (v5.4)**: -Mode Analyze unions hosts tied by ANY cross-host evidence (lateral chains, multi-host binary hashes, shared indicators, deployment waves) into per-intrusion campaign rows (`fleet_campaigns.csv` + fleet-report section with worst-verdict per cluster) - "which hosts are ONE intrusion" answered directly
+- [x] **Client boundaries + findings JSON + redacted copy (v5.5)**: -ClientName stamps an MSSP client label into cases, the report, the fleet view and the new machine-readable `ophira_findings.json` (verdict + coverage + leads, additive schema); fleet campaigns never merge across clients (cross-client ties reported separately per ADR-0006); `-Redact` writes a client-safe `report_redacted.html` (hosts/users/internal IPs/MACs tokenized case-insensitively, attacker indicators untouched, analyst-side map)
 
 ## Coverage vs Velociraptor (built-in Windows artifacts)
 

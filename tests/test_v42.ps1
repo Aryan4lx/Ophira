@@ -60,7 +60,7 @@ Check 'P5: children map built' ($fnEx.Contains('$children'))
 Check 'P5: output has Child/Parent/Children columns' ($fnEx.Contains('Child = $leaf') -and $fnEx.Contains('ChildrenN'))
 Check 'P5: report renders Also launched column' ($src.Contains('<th>Also launched</th>'))
 Check 'P5: report meta mentions Sysmon' ($src.Contains('Rebuilt from 4688/Sysmon parent-child'))
-Check 'P5: version 5.1' ($src.Contains('Ophira v5.4') -and $src.Contains('$ScriptVersion = "5.4"'))
+Check 'P5: version 5.1' ($src.Contains('Ophira v5.5') -and $src.Contains('$ScriptVersion = "5.5"'))
 Check 'P5: leads consumer reads Child/Parent (dead since v2.56, now live)' ($src.Contains('$ch2.Parent) -> $($ch2.Child)'))
 
 Write-Host ''

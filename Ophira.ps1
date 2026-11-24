@@ -1,5 +1,5 @@
 <#
-Ophira v5.4  -  Windows Endpoint Triage Toolkit
+Ophira v5.5  -  Windows Endpoint Triage Toolkit
 READ-ONLY by design: never modifies the system, only reads and copies data
 into its own output folder. Intended to be handed to a system owner or run
 by a responder during early triage / threat hunting.
@@ -206,6 +206,18 @@ by a responder during early triage / threat hunting.
     (2 = SUSPICIOUS, 3 = LIKELY COMPROMISED, 4 = COMPROMISED; otherwise 0).
     Lets a scheduler sort hundreds of hosts by exit code alone.
 
+.PARAMETER ClientName
+    Optional MSSP client label (e.g. 'Contoso Ltd') stamped into case.json,
+    the findings JSON, the report and the fleet view. Fleet campaigns never
+    merge hosts across client boundaries (ADR-0006): a tie chain spanning two
+    clients yields one campaign per client plus a cross-client tie row.
+
+.PARAMETER Redact
+    With -Mode Parse: after regeneration, also write report_redacted.html -
+    a client-safe copy with hostnames, usernames, internal (RFC1918) IPs and
+    MACs tokenized (HOST-N/USER-N/IP-INT-N/MAC-N). The original report is
+    untouched; the token map stays analyst-side in redact_map.csv.
+
 .EXAMPLE
     .\Ophira.ps1
     Interactive start: pick your role, then collect this PC from the menu or
@@ -368,10 +380,12 @@ param(
     [System.Management.Automation.PSCredential]$Credential,
     [int]$WatchInterval = 15,
     [string]$SeedValue = '',
-    [switch]$ExitVerdict
+    [switch]$ExitVerdict,
+    [string]$ClientName = '',
+    [switch]$Redact
 )
 
-$ScriptVersion = "5.4"
+$ScriptVersion = "5.5"
 $ErrorActionPreference = 'Continue'
 $ProgressPreference = 'SilentlyContinue'
 
@@ -1749,7 +1763,8 @@ function New-FleetCampaigns {
         [object[]]$Lateral,    # lateral chain rows (FromHost/ToHost/Account/Share)
         [object[]]$Waves,      # deployment-wave rows (Name/Class/SpreadMinutes/Hosts csv)
         [string[]]$AllHosts,
-        [hashtable]$Verdicts   # host -> verdict string
+        [hashtable]$Verdicts,  # host -> verdict string
+        [hashtable]$ClientBy = @{}  # normalized host -> client label (MSSP multi-tenant guard, ADR-0006)
     )
     $norm = { param($h) ("$h").Trim().ToLower() }
     $parent = @{}
@@ -1797,11 +1812,22 @@ function New-FleetCampaigns {
         }
     }
     # union-find with path halving (inline - no nested named functions, house regex extracts to first column-0 brace)
+    $script:FleetCrossClientTies = New-Object System.Collections.Generic.List[object]
     foreach ($e in $edges) {
         $ka = $e.A; $kb = $e.B
         while ($parent[$ka] -ne $ka) { $parent[$ka] = $parent[$parent[$ka]]; $ka = $parent[$ka] }
         while ($parent[$kb] -ne $kb) { $parent[$kb] = $parent[$parent[$kb]]; $kb = $parent[$kb] }
-        if ($ka -ne $kb) { $parent[$kb] = $ka }
+        if ($ka -ne $kb) {
+            # v5.5 (ADR-0006): evidence ties never merge hosts belonging to different
+            # MSSP clients - the would-be pair is recorded as a cross-client tie instead.
+            $ca = if ($ClientBy.ContainsKey($ka)) { "$($ClientBy[$ka])" } else { '' }
+            $cb = if ($ClientBy.ContainsKey($kb)) { "$($ClientBy[$kb])" } else { '' }
+            if ("$ca" -and "$cb" -and $ca -ne $cb) {
+                $null = $script:FleetCrossClientTies.Add([pscustomobject]@{ ClientA = $ca; HostA = $ka; ClientB = $cb; HostB = $kb; Tie = $e.Line })
+                continue
+            }
+            $parent[$kb] = $ka
+        }
     }
     $members = @{}   # root -> List[host display names]
     $lines = @{}     # root -> List[evidence lines whose pair lives in this cluster]
@@ -1830,8 +1856,10 @@ function New-FleetCampaigns {
             if ($rk -gt $worstRank) { $worstRank = $rk; $worst = $v }
         }
         $hl = @($members[$root] | Sort-Object)
+        $cLbl = ''
+        foreach ($hm in $hl) { $hk = & $norm $hm; if ($ClientBy.ContainsKey($hk) -and "$($ClientBy[$hk])") { $cLbl = "$($ClientBy[$hk])"; break } }
         $rows += [pscustomobject]@{
-            Campaign = "C$ci"; HostCount = $hl.Count; Hosts = ($hl -join ', ')
+            Campaign = "C$ci"; Client = $cLbl; HostCount = $hl.Count; Hosts = ($hl -join ', ')
             WorstVerdict = $worst; Evidence = (($lines[$root].ToArray()) -join '; ')
         }
     }
@@ -1919,6 +1947,7 @@ function Invoke-AnalyzeMode {
         if (Test-Path $verdictJson) { try { $vd = Get-Content $verdictJson -Raw | ConvertFrom-Json } catch { } }
         $hosts += [pscustomobject]@{
             Host = $host_; Source = $src.Name; CaseID = $meta.CaseID
+            Client = $(if ($meta -and "$($meta.ClientName)") { "$($meta.ClientName)" } else { '' })
             Role = $(if ($meta -and $meta.Role) { "$($meta.Role)" } else { '' })
             Preset = $(if ($meta -and $meta.Preset) { "$($meta.Preset)" } else { '' })
             Collected = $meta.StartedUTC; Admin = $meta.AdminElevated; Sysmon = $meta.SysmonPresent
@@ -2121,13 +2150,20 @@ function Invoke-AnalyzeMode {
     if ($hosts.Count -ge 2) {
         $vMap = @{}
         foreach ($h in $hosts) { $vMap[$h.Host] = "$($h.Verdict)" }
-        $campaignRows = @(New-FleetCampaigns -HashRows $fleetHashRows -CrossRows $crossHost -Lateral $lateral.ToArray() -Waves $waveRows -AllHosts @($hosts | ForEach-Object { $_.Host }) -Verdicts $vMap)
+        $clientBy = @{}
+        foreach ($h in $hosts) { if ("$($h.Client)") { $clientBy[("$($h.Host)").Trim().ToLower()] = "$($h.Client)" } }
+        $campaignRows = @(New-FleetCampaigns -HashRows $fleetHashRows -CrossRows $crossHost -Lateral $lateral.ToArray() -Waves $waveRows -AllHosts @($hosts | ForEach-Object { $_.Host }) -Verdicts $vMap -ClientBy $clientBy)
         if ($campaignRows.Count -gt 0) {
             $campaignRows | Export-Csv -LiteralPath (Join-Path $OutFolder 'fleet_campaigns.csv') -NoTypeInformation -Encoding UTF8
             Write-Host "`n  CAMPAIGNS: $($campaignRows.Count) host cluster(s) tied by shared indicators/lateral movement -> fleet_campaigns.csv" -ForegroundColor Red
             foreach ($c in ($campaignRows | Select-Object -First 5)) {
-                Write-Host ("    {0}: {1} host(s) [{2}] - {3}" -f $c.Campaign, $c.HostCount, $c.WorstVerdict, $c.Evidence) -ForegroundColor Red
+                Write-Host ("    {0}{1}: {2} host(s) [{3}] - {4}" -f $c.Campaign, $(if ("$($c.Client)") { " [$($c.Client)]" } else { '' }), $c.HostCount, $c.WorstVerdict, $c.Evidence) -ForegroundColor Red
             }
+        }
+        if ($script:FleetCrossClientTies -and $script:FleetCrossClientTies.Count -gt 0) {
+            # v5.5 (ADR-0006): never merge across clients - surface the would-be ties instead.
+            $script:FleetCrossClientTies.ToArray() | Export-Csv -LiteralPath (Join-Path $OutFolder 'fleet_cross_client_ties.csv') -NoTypeInformation -Encoding UTF8
+            Write-Host "  CROSS-CLIENT TIES: $($script:FleetCrossClientTies.Count) evidence tie(s) span different clients - NOT merged, see fleet_cross_client_ties.csv" -ForegroundColor Yellow
         }
     }
     if ($HayabusaExe -and $evtxDirs.Count -gt 0) {
@@ -2156,7 +2192,7 @@ function Invoke-AnalyzeMode {
     $reportCsv = Join-Path $OutFolder 'fleet_report.csv'
     $findings | Sort-Object Host, Type | Export-Csv -LiteralPath $reportCsv -NoTypeInformation -Encoding UTF8
     $hostsCsv = Join-Path $OutFolder 'fleet_hosts.csv'
-    $hosts | Sort-Object Host | Select-Object Host, Verdict, VerdictRank, Confidence, Role, Preset, Signals, Caveats, Collected, Admin, Sysmon, Source, CaseID | Export-Csv -LiteralPath $hostsCsv -NoTypeInformation -Encoding UTF8
+    $hosts | Sort-Object Host | Select-Object Host, Client, Verdict, VerdictRank, Confidence, Role, Preset, Signals, Caveats, Collected, Admin, Sysmon, Source, CaseID | Export-Csv -LiteralPath $hostsCsv -NoTypeInformation -Encoding UTF8
 
     $fleetHtml = Join-Path $OutFolder 'fleet_report.html'
     $css = @'
@@ -2186,7 +2222,7 @@ a{color:#7aa2f7;text-decoration:none}a:hover{color:#9ec1f0}.foot{margin-top:40px
         if ($leg -gt 0) { $chipParts += "<span class='chip VN'>no verdict: $leg</span>" }
         $null = $fsb.AppendLine("<div class='chips'>$($chipParts -join '')</div>")
     }
-    $null = $fsb.AppendLine("<h2>Host summary (worst verdict first)</h2><table><tr><th>Host</th><th>Verdict</th><th>Conf</th><th>Role</th><th>High-priority</th><th>Proc anomalies</th><th>Brute force</th><th>Collected</th></tr>")
+    $null = $fsb.AppendLine("<h2>Host summary (worst verdict first)</h2><table><tr><th>Host</th><th>Client</th><th>Verdict</th><th>Conf</th><th>Role</th><th>High-priority</th><th>Proc anomalies</th><th>Brute force</th><th>Collected</th></tr>")
     foreach ($h in ($hosts | Sort-Object -Property @{Expression='VerdictRank';Descending=$true}, 'Host')) {
         $hf = @($findings | Where-Object Host -eq $h.Host)
         $hp = @($hf | Where-Object { @('IOC-HIT', 'AVDetection') -contains $_.Type }).Count
@@ -2195,7 +2231,7 @@ a{color:#7aa2f7;text-decoration:none}a:hover{color:#9ec1f0}.foot{margin-top:40px
         $rowClass = if ($hp -gt 0 -or $pa -gt 0) { 'HIGH' } else { '' }
         $vCell = if ($h.VerdictRank -ge 0) { "<span class='V$($h.VerdictRank)'>$(ConvertTo-HtmlEsc $h.Verdict)</span>" } else { "<span class='VN'>n/a</span>" }
         $cCell = if ($h.VerdictRank -ge 0) { "$($h.Confidence)%" } else { '' }
-        $null = $fsb.AppendLine("<tr><td class='$rowClass'>$(ConvertTo-HtmlEsc $h.Host)</td><td>$vCell</td><td>$cCell</td><td>$(ConvertTo-HtmlEsc $h.Role)</td><td>$hp</td><td>$pa</td><td>$bf</td><td>$(ConvertTo-HtmlEsc $h.Collected)</td></tr>")
+        $null = $fsb.AppendLine("<tr><td class='$rowClass'>$(ConvertTo-HtmlEsc $h.Host)</td><td>$(ConvertTo-HtmlEsc $h.Client)</td><td>$vCell</td><td>$cCell</td><td>$(ConvertTo-HtmlEsc $h.Role)</td><td>$hp</td><td>$pa</td><td>$bf</td><td>$(ConvertTo-HtmlEsc $h.Collected)</td></tr>")
     }
     $null = $fsb.AppendLine("</table><div class='meta'>Per-host verdict details: each case zip's verdict.json + report.html. Host list CSV: fleet_hosts.csv</div>")
     if ($highRisk.Count -gt 0) {
@@ -6094,7 +6130,7 @@ function ConvertTo-CaseFileLink {
                 if (Test-Path -LiteralPath $full -PathType Container) { $rel += '/' } # keep the old file:/// dir semantics (trailing slash)
             }
         }
-    } catch { }
+    } catch { $null = $_ } # relative-link math is best-effort - outside the case dir the link stays absolute
     if (-not $rel) { return (ConvertTo-HtmlEsc $txt) }
     return "<a href='$rel'>$(ConvertTo-HtmlEsc $txt)</a>"
 }
@@ -6552,6 +6588,7 @@ a[name]{scroll-margin-top:66px}html{overflow-x:clip}[data-theme=light] .nav a.ac
     $provSegs.Add("Host: $(ConvertTo-HtmlEsc $Computer)")
     $provSegs.Add("Case: $(ConvertTo-HtmlEsc $caseLbl)")
     $provSegs.Add("Analyst: $(ConvertTo-HtmlEsc $analystLbl)")
+    if ("$script:ClientName") { $provSegs.Add("Client: $(ConvertTo-HtmlEsc $script:ClientName)") }
     if ($caseMeta -and "$($caseMeta.Tool)") { $provSegs.Add("Collected by $(ConvertTo-HtmlEsc $caseMeta.Tool)") }
     $provSegs.Add("Rendered by Ophira v$ScriptVersion")
     if ($caseMeta -and "$($caseMeta.Preset)") { $provSegs.Add("Preset $(ConvertTo-HtmlEsc $caseMeta.Preset)") }
@@ -12949,6 +12986,61 @@ function Import-PlasoTimeline {
     return $n
 }
 
+function New-FindingsJson {
+    # v5.5 (ADR-0005): one normalized machine-readable findings file per case - verdict,
+    # coverage, leads and identity in a stable ADDITIVE-ONLY schema so SIEM / automation
+    # pipelines can ingest Ophira results without parsing the HTML. Never remove or rename
+    # existing keys; only add. Campaign membership is fleet-level (-Mode Analyze builds
+    # fleet_campaigns.csv); the per-case value stays null here on purpose.
+    param([string]$CaseDir)
+    $out = [ordered]@{
+        schema = 'ophira-findings/1'
+        tool = "Ophira v$ScriptVersion"
+        generated_utc = (Get-Date).ToUniversalTime().ToString('o')
+        identity = [ordered]@{
+            host = "$Computer"
+            client = "$script:ClientName"
+            case_id = "$script:CurrentCaseID"
+            analyst = "$script:CurrentAnalyst"
+            collected_utc = $null
+            preset = "$Preset"
+            role = "$script:HostRole"
+        }
+        verdict = $null
+        coverage = $null
+        leads = @()
+        campaign = $null
+    }
+    try {
+        $fjMeta = Get-Content -LiteralPath (Join-Path $CaseDir 'case.json') -Raw | ConvertFrom-Json
+        if ($fjMeta) {
+            if ("$($fjMeta.StartedUTC)") { $out.identity.collected_utc = "$($fjMeta.StartedUTC)" }
+            if ("$($fjMeta.Preset)") { $out.identity.preset = "$($fjMeta.Preset)" }
+        }
+    } catch { }
+    if ($script:Verdict) {
+        $v = $script:Verdict
+        $out.verdict = [ordered]@{
+            level = "$($v.Level)"
+            level_rank = [int]$v.LevelRank
+            confidence_percent = $v.ConfidencePercent
+            owner_line = "$($v.OwnerLine)"
+            signals = @($v.Signals)
+            caveats = @($v.Caveats)
+        }
+        $out.coverage = [ordered]@{
+            sources_collected = [int]$v.CoverageSourcesCollected
+            sources_total = [int]$v.CoverageSourcesTotal
+            percent_weighted = $v.ConfidencePercent
+            percent_unweighted = $v.CoveragePercentUnadjusted
+            missing = @($v.Coverage | Where-Object { -not $_.Collected })
+        }
+    }
+    $leads = @(Import-CaseCsv 'leads')
+    if ($leads.Count -gt 0) { $out.leads = @($leads | Select-Object -First 50) }
+    ($out | ConvertTo-Json -Depth 6) -replace '\r\n', "`n" | Set-Content -LiteralPath (Join-Path $CaseDir 'ophira_findings.json') -Encoding UTF8
+}
+
 function Invoke-RegenerateOutputs {
     # Shared by New-Package and -Mode Parse: rebuilds every derived artifact from csv\
     # (supertimeline, gaps, parse_needed, verdict.json, SIEM export, ATT&CK layer, report.html).
@@ -13143,6 +13235,10 @@ function Invoke-RegenerateOutputs {
         Get-CaseNarrative | Set-Content -LiteralPath (Join-Path $CaseDir 'case_draft.txt') -Encoding UTF8
         $rgInfo['note'] = 'case_draft.txt'
     }
+    & $rgStep 'findings json' 'New-FindingsJson' {
+        New-FindingsJson -CaseDir $CaseDir
+        $rgInfo['note'] = 'ophira_findings.json'
+    }
     & $rgStep 'siem export' 'New-SiemExport' {
         New-SiemExport
         $p = Join-Path $CaseDir 'siem_export.ndjson'
@@ -13272,6 +13368,7 @@ function New-Package {
         Tool = "Ophira v$ScriptVersion"
         CaseID = $script:CurrentCaseID
         Analyst = $script:CurrentAnalyst
+        ClientName = "$script:ClientName"
         Computer = $Computer
         Preset = $Preset
         StartedUTC = $StartTime.ToUniversalTime().ToString('o')
@@ -13688,6 +13785,7 @@ function Open-CaseSession {
     $script:Computer = "$($meta.Computer)"
     $script:CurrentCaseID = "$($meta.CaseID)"
     $script:CurrentAnalyst = "$($meta.Analyst)"
+    $script:ClientName = "$($meta.ClientName)"
     $script:LogHours = $(if ($meta.LogHours) { [int]$meta.LogHours } else { 168 })
     $script:LogStartDT = $null
     $script:LogEndDT = $null
@@ -13724,6 +13822,54 @@ function Open-CaseSession {
     $script:StartTime = $st
     $script:OpenCaseTmp = $tmp
     return $meta
+}
+
+function New-RedactedCopy {
+    # v5.5 client-safe copy (ADR-0006): tokenize hostnames, usernames, internal (RFC1918)
+    # IPs and MACs in report.html -> report_redacted.html; the token map stays analyst-side
+    # (redact_map.csv). Evidence values (public/attacker IPs, binaries, indicators) untouched.
+    param([string]$CaseDir)
+    $src = Join-Path $CaseDir 'report.html'
+    if (-not (Test-Path -LiteralPath $src)) { Write-CaseLog '    redact: no report.html to redact' 'DarkYellow'; return }
+    $html = [IO.File]::ReadAllText($src)
+    $counts = @{ 'HOST' = 0; 'USER' = 0; 'IP-INT' = 0; 'MAC' = 0 }
+    $tokens = @{}   # original string -> HOST-N / USER-N / IP-INT-N / MAC-N
+    $map = New-Object System.Collections.Generic.List[object]
+    $addTok = {
+        param($type, $val)
+        $v = ("$val").Trim()
+        if (-not $v -or $v.Length -lt 2 -or $tokens.ContainsKey($v)) { return }
+        if ($v -match '^(system|local service|network service|anonymous logon|dwm-\d+|umfd-\d+|nt authority.*)$') { return }
+        $counts[$type]++
+        $t = "$type-$($counts[$type])"
+        $tokens[$v] = $t
+        $null = $map.Add([pscustomobject]@{ Type = $type; Original = $v; Token = $t })
+    }
+    $known = @{}
+    try {
+        $rjMeta = Get-Content -LiteralPath (Join-Path $CaseDir 'case.json') -Raw | ConvertFrom-Json
+        if ($rjMeta) {
+            if ("$($rjMeta.Computer)") { $null = & $addTok 'HOST' "$($rjMeta.Computer)" }
+            if ("$($rjMeta.Analyst)") { $null = & $addTok 'USER' "$($rjMeta.Analyst)" }
+        }
+    } catch { }
+    foreach ($a in @(Import-CaseCsv 'entities_accounts')) {
+        $av = "$($a.Account)"
+        if (-not $av -or $av -match '^(NT VIRTUAL MACHINE|no account captured)') { continue }
+        $null = & $addTok 'USER' ($av -replace '^.*\\', '')
+    }
+    foreach ($m2 in [regex]::Matches($html, '(?<![.\d])(?:10\.\d{1,3}\.\d{1,3}\.\d{1,3}|172\.(?:1[6-9]|2\d|3[01])\.\d{1,3}\.\d{1,3}|192\.168\.\d{1,3}\.\d{1,3})(?![.\d])')) { $null = & $addTok 'IP-INT' $m2.Value }
+    foreach ($m2 in [regex]::Matches($html, '\b(?:[0-9A-Fa-f]{2}[:-]){5}[0-9A-Fa-f]{2}\b')) { $null = & $addTok 'MAC' $m2.Value }
+    foreach ($m2 in [regex]::Matches($html, '(?i)\b[a-z0-9][a-z0-9-]{1,31}\.(?:local|lan|internal|corp|localdomain)\b')) { $null = & $addTok 'HOST' $m2.Value }
+    if ($tokens.Count -eq 0) { Write-CaseLog '    redact: nothing to redact found (report left as-is)' 'DarkYellow'; return }
+    foreach ($orig in @($tokens.Keys | Sort-Object -Property @{Expression = { $_.Length }; Descending = $true })) {
+        # case-insensitive: evidence stores 'Aryan', 'aryan', 'ARYAN' for the same identity
+        $html = [regex]::Replace($html, [regex]::Escape($orig), $tokens[$orig], [System.Text.RegularExpressions.RegexOptions]::IgnoreCase)
+    }
+    $html = $html -replace '(?i)(<body[^>]*>)', '$1<div style="border:1px dashed #e0af68;padding:8px 12px;margin:10px 20px;font-size:12px"><b>REDACTED COPY</b> - hostnames, usernames, internal IPs and MACs are tokenized (HOST-N/USER-N/IP-INT-N/MAC-N). Public/attacker indicators are unmodified. The original-to-token map stays with the analyst (redact_map.csv).</div>'
+    [IO.File]::WriteAllText((Join-Path $CaseDir 'report_redacted.html'), $html, (New-Object System.Text.UTF8Encoding($false)))
+    $map.ToArray() | Export-Csv -LiteralPath (Join-Path $CaseDir 'redact_map.csv') -NoTypeInformation -Encoding UTF8
+    Write-CaseLog ("    redact: report_redacted.html written - {0} token(s) (hosts {1}, users {2}, internal IPs {3}, MACs {4})" -f $map.Count, $counts['HOST'], $counts['USER'], $counts['IP-INT'], $counts['MAC']) 'Gray'
 }
 
 function Invoke-ParseMode {
@@ -13899,6 +14045,7 @@ function Invoke-ParseMode {
         $meta | ConvertTo-Json -Depth 5 | Set-Content -LiteralPath $cj -Encoding UTF8
     } catch { }
 
+    if ($Redact) { New-RedactedCopy -CaseDir (Split-Path -Parent $script:CsvDir) }
     $csvAfter = @(Get-ChildItem -LiteralPath $script:CsvDir -Filter '*.csv' -File -ErrorAction SilentlyContinue).Count
     Write-Host ""
     Write-Host "Done: $csvBefore -> $csvAfter CSVs. Regenerated report.html / verdict.json / supertimeline.csv / siem_export.ndjson." -ForegroundColor Green
@@ -16173,6 +16320,7 @@ New-Item -ItemType Directory -Path $CsvDir, $RawDir -Force | Out-Null
 $script:FlashLines = New-Object System.Collections.Generic.List[string]
 $script:CurrentCaseID = $CaseID
 $script:CurrentAnalyst = $Analyst
+$script:ClientName = "$ClientName"
 
 $IsAdmin = Test-IsAdmin
 $Sysmon = Get-SysmonState
