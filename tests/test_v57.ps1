@@ -1,4 +1,4 @@
-# Test v5.7: shape-based Sigma routine-noise classifier (Test-SigmaRoutineNoise)
+# Test v5.8: shape-based Sigma routine-noise classifier (Test-SigmaRoutineNoise)
 # + report/verdict wiring pins. House style: extraction + stubs + Check().
 $ErrorActionPreference = 'Stop'
 $src = Get-Content (Join-Path $PSScriptRoot '..\Ophira.ps1') -Raw
@@ -46,5 +46,5 @@ $mod = 'Posh-SSH module body ' * 60
 & $Check 'suppress line still intact' ($src.Contains('hidden as routine noise (tools\sigma\suppress.txt'))
 
 Write-Host ""
-Write-Host ("v5.7 checks: {0}/{1} passed, {2} failed" -f $script:pass, $script:n, $script:fail)
+Write-Host ("v5.8 checks: {0}/{1} passed, {2} failed" -f $script:pass, $script:n, $script:fail)
 if ($script:fail -gt 0) { exit 1 } else { exit 0 }

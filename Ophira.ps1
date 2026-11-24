@@ -1,5 +1,5 @@
 <#
-Ophira v5.7  -  Windows Endpoint Triage Toolkit
+Ophira v5.8  -  Windows Endpoint Triage Toolkit
 READ-ONLY by design: never modifies the system, only reads and copies data
 into its own output folder. Intended to be handed to a system owner or run
 by a responder during early triage / threat hunting.
@@ -391,7 +391,7 @@ param(
     [switch]$ShareZip
 )
 
-$ScriptVersion = "5.7"
+$ScriptVersion = "5.8"
 $ErrorActionPreference = 'Continue'
 $ProgressPreference = 'SilentlyContinue'
 
@@ -12113,6 +12113,53 @@ function New-HuntFindings {
     }
     & $trace 'R56' 'upload-dominant egress' "srum_app_totals: $($r56Tot.Count) app(s) aggregated"
 
+    # ---------- R57-R59 (v5.8): lateral-movement pack ----------
+    # R57: PsExec-family service install (EID 7045 via system_new_services)
+    $r57N = 0
+    foreach ($r57 in @(Import-CaseCsv 'system_new_services')) {
+        $r57Name = "$($r57.Service)".Trim()
+        $r57Bin = "$($r57.Binary)".Trim()
+        if ($r57Name -notmatch '(?i)psexesvc|psexec|paexec|remcom|winexesvc|csrss_svc' -and $r57Bin -notmatch '(?i)psexesvc|psexec|paexec|remcom|winexesvc|csrss_svc') { continue }
+        $r57N++
+        & $find 'PsExec-family service install (EID 7045)' 'high' $r57Name "service '$r57Name' installed binary '$r57Bin' - classic remote-execution footprint" 'T1021'
+    }
+    & $trace 'R57' 'psexec-family service install' "system_new_services: $($r57N) match(es)"
+    # R58: Impacket/wmiexec execution signatures (4688 command lines + parents)
+    $r58Hi = 0; $r58Wmi = 0
+    foreach ($r58 in @(Import-CaseCsv 'security_proc_events')) {
+        $r58Cmd = "$($r58.CommandLine)".Trim()
+        $r58Parent = "$($r58.ParentProcess)".Trim()
+        if (-not $r58Cmd) { continue }
+        if ($r58Cmd -match '(?i)cmd\.exe.{0,4} /Q /c') {
+            $r58Hi++
+            & $find 'Impacket wmiexec execution signature' 'high' ("$($r58.NewProcess)") "'$r58Cmd' via parent '$r58Parent' - wmiexec-style remote shell" 'T1021.002'
+            continue
+        }
+        if ($r58Parent -match '(?i)schtasks\.exe|services\.exe' -and $r58Cmd -match '(?i)\\windows\\temp\\[0-9a-f]{8}\.(bat|exe)') {
+            $r58Hi++
+            & $find 'Impacket atexec execution signature' 'high' ("$($r58.NewProcess)") "'$r58Cmd' via parent '$r58Parent' - scheduled-task remote exec" 'T1053.003'
+            continue
+        }
+        if ($r58Parent -match '(?i)wmiprvse\.exe' -and $r58Cmd -match '(?i)^cmd\.exe|^powershell') {
+            $r58Wmi++
+            & $find 'WMI-spawned shell (wmiprvse parent)' 'medium' ("$($r58.NewProcess)") "'$r58Cmd' spawned by WMI host - remote WMI execution or admin tooling" 'T1047'
+        }
+    }
+    & $trace 'R58' 'impacket/wmiexec signatures' "security_proc_events: $r58Hi high + $r58Wmi wmi-spawned"
+    # R59: remote privileged logon (4624 type-3 + 4672 special privileges, same LogonId)
+    $r59N = 0
+    $r59Auth = @(Import-CaseCsv 'security_auth_events')
+    $r59Priv = @{}
+    foreach ($r59p in @($r59Auth | Where-Object { "$($_.EventId)" -eq '4672' })) { $r59Priv["$($r59p.LogonId)".ToLower()] = $true }
+    foreach ($r59 in @($r59Auth | Where-Object { "$($_.EventId)" -eq '4624' -and "$($_.LogonType)" -eq '3' })) {
+        $r59Lid = "$($r59.LogonId)".ToLower()
+        if (-not $r59Lid -or -not $r59Priv.ContainsKey($r59Lid)) { continue }
+        $r59N++
+        $r59Who = if ($r59.Account) { $r59.Account } else { 'unknown account' }
+        & $find 'Remote privileged logon (network + special privileges)' 'medium' $r59Who "type-3 network logon from $($r59.SourceIp) with elevated privileges (4672 same session)" 'T1078'
+    }
+    & $trace 'R59' 'remote privileged logon' "security_auth_events: $($r59Auth.Count) row(s) -> $r59N T3+4672"
+
     # v2.87 storm guard: one broken source can flood one rule with hundreds of rows and
     # drown both the report and the verdict - cap each rule+severity at 15 rows and
     # aggregate the overflow into one info row so the count is never silently lost
@@ -12596,6 +12643,13 @@ function Get-CompromiseVerdict {
     Add-Signal 'Upload-dominant egress (SRUM)' 2 $r56Cand.Count (($r56Cand | Select-Object -First 2 | ForEach-Object { try { Split-Path "$($_.Application)" -Leaf } catch { "$($_.Application)" } }) -join '; ')
     Add-Signal 'Process anomaly verdict MEDIUM' 1 $procMed "unsigned/user-path binaries worth review"
     Add-Signal 'Brute-force source(s) seen' 0 @($brute).Count "failed logon sources - check for follow-up success"
+    # v5.8 lateral-movement doors
+    $r57Detail = @()
+    if ($r57N -gt 0) { $r57Detail = @(Import-CaseCsv 'system_new_services') | Where-Object { "$($_.Service)" -match '(?i)psexec|paexec|remcom|winexesvc' } | Select-Object -First 2 | ForEach-Object { "$($_.Service) -> $($_.Binary)" } }
+    Add-Signal 'PsExec-family service install (EID 7045)' 3 $r57N $r57Detail
+    Add-Signal 'Impacket/wmiexec execution signature (4688)' 3 $r58Hi @('wmiexec /Q /c or atexec temp-bat pattern in process creation events')
+    Add-Signal 'WMI-spawned shell (wmiprvse parent)' 2 $r58Wmi @('shell spawned by WMI service host - remote execution or tooling')
+    Add-Signal 'Remote privileged logon (T3 + 4672)' 2 $r59N @('network logon with elevated privileges - lateral movement candidate')
 
     # coverage: weighted evidence sources actually collected
     $cov = New-Object System.Collections.Generic.List[object]

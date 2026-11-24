@@ -1,3 +1,15 @@
+## v5.8 - lateral-movement pack (R57-R59)
+
+New hunt rules close the biggest detection gap: remote execution landing on the triaged host.
+
+- **R57 PsExec-family service install (high)** - EID 7045 rows in `system_new_services` whose service or binary matches the remote-exec family (`psexesvc`, `psexec`, `paexec`, `remcom`, `winexesvc`, `csrss_svc`). Classic admin-tool noise stays out: benign installs never match.
+- **R58 Impacket/wmiexec signatures (high/medium)** - 4688 command lines: `cmd.exe /Q /c` (wmiexec-style remote shell), `C:\Windows\Temp\<8-hex>.bat` spawned by `schtasks.exe`/`services.exe` (atexec-style), plus WMI-spawned shells (`wmiprvse.exe` parenting cmd/powershell, medium - also fires for legit admin tooling, kept out of the high floor).
+- **R59 remote privileged logon (medium)** - 4624 type-3 network logons whose LogonId also has a 4672 special-privileges event: lateral movement with elevation, not just any SMB traffic.
+
+Verdict doors: PsExec-family service install and Impacket signatures enter at floor 3 (dedicated `Add-Signal` lines, no catch-all double-counting); WMI-spawned shell and remote privileged logon at floor 2.
+
+Test suite: `test_v58.ps1` (16 checks) - behavioral fixtures for all three rules + verdict-door wiring; rule count pins updated (47 -> 50 trace blocks).
+
 ## v5.7 - Sigma FP tuning: shape-based routine-noise classifier
 
 - **Test-SigmaRoutineNoise** (new): classifies two workstation-noise SHAPES regardless of which hayabusa rule names them - (1) EID 5379 credential-manager reads by an interactive local user (browsers/OS vault polling; 700-1500/case on real boxes), (2) EID 4104 scriptblocks that are module/class code replayed into the log by auto-loading (Posh-SSH-style .psm1 bodies - the 'Malicious PowerShell Commandlets high' storm). An attacker-marker guard (IEX/DownloadString/-enc/Start-Process/Win32_Process.Create/...) keeps hostile blocks OUT of the fold even when they carry module-ish text; SYSTEM-context 5379 stays visible.

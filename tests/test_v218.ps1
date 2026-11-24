@@ -135,7 +135,7 @@ Check "report: account + remote tables rendered" ($rendered -match 'Account acti
 # PART 3 - repo path-length guard (long-path ZIP fix)
 # ============================================================================
 $root = Split-Path -Parent $PSScriptRoot
-# v5.7: guard what actually SHIPS - git-tracked files (the ZIP is built from the repo tree,
+# v5.8: guard what actually SHIPS - git-tracked files (the ZIP is built from the repo tree,
 # not the worktree; derived local dirs like logs\ and share\ are not in it and can carry
 # arbitrary long names from evidence copy, e.g. URL-encoded browser .lnk rows)
 $tracked = @(git -C $root ls-files 2>$null)

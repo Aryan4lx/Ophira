@@ -66,14 +66,18 @@ $expectedHi = @(
     # of the huntHi catch-all regex - the mapping must stay explicit so a new high rule cannot
     # silently skip the verdict
     'Hidden scheduled task (TaskCache SD value stripped)',
-    'ntds.dit accessed (ESENT 325/326)'
+    'ntds.dit accessed (ESENT 325/326)',
+    # v5.8 lateral-movement highs with dedicated verdict doors
+    'PsExec-family service install (EID 7045)',
+    'Impacket wmiexec execution signature',
+    'Impacket atexec execution signature'
 )
 Check "hunt rules: found $totalFinds &find call sites (extraction sane)" ($totalFinds -ge 40)
 $litHiUniq = @($litHi | Sort-Object -Unique)
-$dedicatedHi = @('Hidden scheduled task (TaskCache SD value stripped)', 'ntds.dit accessed (ESENT 325/326)')
-Check "literal-high rules: 23 distinct (got $($litHiUniq.Count))" ($litHiUniq.Count -eq 23)
+$dedicatedHi = @('Hidden scheduled task (TaskCache SD value stripped)', 'ntds.dit accessed (ESENT 325/326)', 'PsExec-family service install (EID 7045)', 'Impacket wmiexec execution signature', 'Impacket atexec execution signature')
+Check "literal-high rules: 26 distinct (got $($litHiUniq.Count))" ($litHiUniq.Count -eq 26)
 $misses = @($expectedHi | Where-Object { $_ -notin $dedicatedHi -and $_ -notmatch $verdictRe })
-Check "dedicated verdict-door highs are wired as signals" ($src.Contains("Add-Signal 'Hidden scheduled task (TaskCache SD stripped)' 3") -and $src.Contains("Add-Signal 'ntds.dit accessed - non-backup pattern (ESENT 325/326)' 3"))
+Check "dedicated verdict-door highs are wired as signals" ($src.Contains("Add-Signal 'Hidden scheduled task (TaskCache SD stripped)' 3") -and $src.Contains("Add-Signal 'ntds.dit accessed - non-backup pattern (ESENT 325/326)' 3") -and $src.Contains("Add-Signal 'PsExec-family service install (EID 7045)' 3") -and $src.Contains("Add-Signal 'Impacket/wmiexec execution signature (4688)' 3"))
 Check "every literal-high rule name matches the verdict high-precision regex$(if ($misses.Count) { ' - misses: ' + ($misses -join '; ') })" ($misses.Count -eq 0)
 
 # ---- two-way drift pin: extracted names must EQUAL the hardcoded list (catches renames and
