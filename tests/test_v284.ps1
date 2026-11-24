@@ -165,7 +165,7 @@ $hfIdx = $src.IndexOf("rgStep 'hunt findings' 'New-HuntFindings'")
 Check "wire: regen step registered" ($rgIdx -gt 0)
 Check "wire: stacks step runs BEFORE hunt findings (R49 reads its csv)" ($rgIdx -gt 0 -and $hfIdx -gt $rgIdx)
 Check "wire: CsvCatMap - three new derived artifacts" ($src.Contains("'exec_stacks_byname' = 'derived'; 'exec_stacks_bypath' = 'derived'; 'exec_window_ratio' = 'derived'"))
-Check "wire: anchor switch - stacks -> hunt" ($src.Contains("'^(hunt_findings|exec_stacks|exec_window|recon_sessions|exec_tcorr)'"))
+Check "wire: anchor switch - stacks -> hunt" ($src.Contains("'^(hunt_findings|exec_stacks|exec_window|recon_sessions|exec_tcorr|consistency_flags)'"))
 Check "wire: verdict catch-all carries both new high rules" ($src.Contains('|Misplaced system binary|Known-bad name pattern'))
 Check "wire: R49 reads exec_stacks_byname" ($src.Contains("Import-CaseCsv 'exec_stacks_byname')"))
 foreach ($k in @('exec_stacks_byname', 'exec_stacks_bypath', 'exec_window_ratio')) {

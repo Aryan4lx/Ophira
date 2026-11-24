@@ -364,6 +364,7 @@ while ($true) { try { (New-Object Net.Sockets.TcpClient('1.1.1.1', 443)).Close()
 - [x] **Client-safe share bundles (v5.6)**: -Mode Share builds a hand-off bundle per case - analyst-side files stripped, redacted report auto-swapped in when present (explicit WARNING when not), SHARE-README.txt manifest (client/verdict/stripped/redaction state), optional -ShareZip for one-attachment email
 - [x] **Sigma FP tuning (v5.7)**: shape-based routine-noise classifier (Test-SigmaRoutineNoise) folds EID 5379 own-user vault reads + 4104 module-code bodies out of the report/verdict/ATT&CK (attacker-marker guard keeps IEX/download/process-spawn blocks visible); burst-context tagging collapses 100x-identical-context rules to one 'single context xN' line with distinct-context embeds.
 - [x] **Lateral-movement pack (v5.8)**: R57 PsExec-family service installs (7045 service/binary name family), R58 Impacket wmiexec `/Q /c` + atexec 8-hex-temp-bat signatures (high) + WMI-spawned shells (medium), R59 remote privileged logons (4624 T3 + 4672 same-session pairing) - three new floor-3/2 verdict doors closing the remote-execution detection gap.
+- [x] **Cross-artifact consistency engine (v5.9)**: one artifact claims execution, another disagrees - PREFETCH-GAP pivots (report-only), AMCACHE-GAP tamper signal (floor 2), STAGED-NORUN staging context; churn-honest caps and populated-source floors to keep healthy boxes quiet; new csv\consistency_flags.csv
 
 ## Coverage vs Velociraptor (built-in Windows artifacts)
 

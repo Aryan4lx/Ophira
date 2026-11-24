@@ -1,5 +1,5 @@
 <#
-Ophira v5.8  -  Windows Endpoint Triage Toolkit
+Ophira v5.9  -  Windows Endpoint Triage Toolkit
 READ-ONLY by design: never modifies the system, only reads and copies data
 into its own output folder. Intended to be handed to a system owner or run
 by a responder during early triage / threat hunting.
@@ -391,7 +391,7 @@ param(
     [switch]$ShareZip
 )
 
-$ScriptVersion = "5.8"
+$ScriptVersion = "5.9"
 $ErrorActionPreference = 'Continue'
 $ProgressPreference = 'SilentlyContinue'
 
@@ -646,6 +646,7 @@ $script:CsvCatMap = @{
     'ioc_export' = 'derived'; 'process_pivot' = 'derived'; 'leads' = 'derived'
     'exec_stacks_byname' = 'derived'; 'exec_stacks_bypath' = 'derived'; 'exec_window_ratio' = 'derived'
     'recon_sessions' = 'derived'; 'exec_tcorr' = 'derived'; 'srum_app_totals' = 'derived'
+    'consistency_flags' = 'derived'
 }
 
 function Get-LocalAdminMembers {
@@ -6099,7 +6100,7 @@ function Get-SectionAnchorForSource {
         '^(hayabusa|sigma)'                            { 'sigma'; break }
         '^yara'                                        { 'yara'; break }
         '^(beacon_candidates|dns_beacon_candidates)'   { 'beacons'; break }
-        '^(hunt_findings|exec_stacks|exec_window|recon_sessions|exec_tcorr)' { 'hunt'; break }
+        '^(hunt_findings|exec_stacks|exec_window|recon_sessions|exec_tcorr|consistency_flags)' { 'hunt'; break }
         '^(ioc_hits|flash_ioc_hits)'                   { 'ioc'; break }
         '^(flash_process_scored|processes|process_hashes|sysmon_proc_create|sysmon_proc_tamper)' { 'processes'; break }
         '^(security_auth|bruteforce|rdp_|logon)'       { 'logons'; break }
@@ -6459,6 +6460,7 @@ function New-HtmlReport {
     $runKeys = @(Import-CaseCsv 'autoruns_runkeys.csv')
     $tasksFlag = @(Import-CaseCsv 'scheduled_tasks_flagged.csv')
     # v2.83: ghost/hidden tasks + ntds access + execution-evidence extras
+    $consFlags = @(Import-CaseCsv 'consistency_flags.csv')
     $taskCacheRows = @(Import-CaseCsv 'scheduled_taskcache.csv')
     # v2.87: only true anomalies reach the table - SD-gone+unlinked rows are the normal
     # residue of deleted tasks and are summarized as a count instead
@@ -6829,7 +6831,7 @@ a[name]{scroll-margin-top:66px}html{overflow-x:clip}[data-theme=light] .nav a.ac
         beacons = $beacons.Count + $dnsBeacons.Count
         network = $pubConns.Count
         drivers = $lolHits.Count
-        hunt = $huntRows.Count + $liveScan.Count + $reconSessions.Count + $tcorrRows.Count
+        hunt = $huntRows.Count + $liveScan.Count + $reconSessions.Count + $tcorrRows.Count + $consFlags.Count
         entities = $entNav
         snapshot = $defStatus.Count + $defThreats.Count + $credSweep.Count + $savedCreds.Count + $rdpTgt.Count + $bitsJobs.Count + $memMfR.Count + $browserIocR.Count + $posture.Count + $radarRows.Count + $aswRows.Count
         timeline = $tlRows.Count
@@ -7691,6 +7693,20 @@ a[name]{scroll-margin-top:66px}html{overflow-x:clip}[data-theme=light] .nav a.ac
         $null = $sb.AppendLine("</table><div class='meta'>For every medium/high hunt-finding binary: other executions within +-30 min (weight = exp(-delta/10 min), 0.1 floor). A <b>bidirectional</b> bond means both binaries strongly imply each other - look at those pairs first. Analytics view only (no verdict impact) - t-corr ranks leads, it does not judge them. Source: csv\exec_tcorr.csv</div>")
     } else {
         $null = $sb.AppendLine("<h3>Temporal execution correlation (t-corr)</h3><div class='meta'>No correlations - t-corr needs medium/high hunt findings (seeds) plus timestamped execution evidence (amcache FileKeyLastWriteTimestamp, prefetch run history, 4688/Sysmon process creation). Neither side is populated for this case.</div>")
+    }
+
+    # ---------- cross-artifact consistency (v5.9 - evidence that contradicts itself) ----------
+    if ($consFlags.Count -gt 0) {
+        $null = $sb.AppendLine("<h3>Cross-artifact consistency - evidence that contradicts itself</h3>")
+        $null = $sb.AppendLine("<table><tr><th>Kind</th><th>Item</th><th>Detail</th></tr>")
+        Add-CapNote @($consFlags).Count 20 'consistency_flags' 'consistency flags'
+        foreach ($cf in ($consFlags | Select-Object -First 20)) {
+            $cfCls = switch ("$($cf.Severity)") { 'high' { 'crit'; break } 'medium' { 'med'; break } default { 'info' } }
+            $null = $sb.AppendLine("<tr><td class='$cfCls'>$(ConvertTo-HtmlEsc $cf.Kind)</td><td class='path'>$(ConvertTo-HtmlEsc $cf.Item)</td><td>$(ConvertTo-HtmlEsc $cf.Detail)</td></tr>")
+        }
+        $null = $sb.AppendLine("</table><div class='meta'>When one execution artifact says 'ran' and another stays silent, usually churn - sometimes manipulation (read the detail). PREFETCH-GAP is an analyst pivot view, NOT a verdict weight: healthy boxes show dozens of benign gaps (installer payloads, AV self-scans, prefetch rotation) - it earns attention only when the binary is suspicious elsewhere. AMCACHE-GAP (needs process-creation auditing) is the rare, real tamper shape and carries a floor-2 signal. STAGED-NORUN is context only. Source: csv\consistency_flags.csv</div>")
+    } else {
+        $null = $sb.AppendLine("<h3>Cross-artifact consistency</h3><div class='meta'>All execution artifacts agree (or not enough sources are populated to cross-check - the engine needs shimcache + prefetch + amcache evidence; see Coverage). Source: csv\consistency_flags.csv</div>")
     }
 
     # ---------- hour-of-day execution histogram (v2.81 T3 - the R38 data, report-side) ----------
@@ -8957,6 +8973,7 @@ a[name]{scroll-margin-top:66px}html{overflow-x:clip}[data-theme=light] .nav a.ac
     'exec_window_ratio'              = 'Time-stacking: executions inside vs outside the investigation window (-After/-Before or the focus dossier window) - window-exclusive files bubble to the top'
     'recon_sessions'                 = 'Recon-session clustering: discovery tools (net/whoami/nltest/...) grouped by execution time - a burst of distinct tools in one short session is hands-on recon'
     'exec_tcorr'                     = 'Temporal execution correlation: other executions within +-30 min of each medium/high hunt finding, decay-weighted - bidirectional pairs are the interesting ones'
+    'consistency_flags'              = 'Cross-artifact consistency: one artifact says a binary executed while another source is silent (prefetch gap = scrub candidate, amcache gap = wipe candidate) or a user-path binary with no run evidence at all (staged)'
     'wmi_activity'                   = 'WMI-Activity operational log (5857/5860/5861) - EID 5861 temporary event consumers are a persistence trick'
     'winrm_events'                   = 'WinRM operational log (91/163) - remote PowerShell / management sessions reaching this host'
     'bits_transfers'                 = 'BITS-Client transfer events (59/60) - background downloads that bypass browser history'
@@ -9199,6 +9216,7 @@ a[name]{scroll-margin-top:66px}html{overflow-x:clip}[data-theme=light] .nav a.ac
 'laps_state'                     = 'no LAPS state recorded - collect always writes this row (Kind = installed/not installed)'
     'defender_posture'               = 'no ASR rules configured (Get-MpPreference returned none) - attack-surface reduction is off or unqueryable'
     'exec_tcorr'                     = 'no t-corr seeds: medium/high hunt findings absent (t-corr correlates around them) or no timestamped execution evidence'
+    'consistency_flags'              = 'all execution artifacts consistent (or not populated enough to cross-check - the checks need shimcache + prefetch + amcache evidence present)'
         'domain_info'                     = 'Win32_ComputerSystem returned nothing - the WMI repository may be damaged on this host (itself an IR-relevant condition; check collection.log for other WMI failures)'
         'entities_accounts'               = 'joins logons/RDP/console history per account - nothing to join when those sources are empty'
         'entities_binaries'               = 'joins execution/persistence/network/verdict evidence per binary - nothing to join when the underlying sources are empty'
@@ -10394,6 +10412,77 @@ function New-ShimcacheExec {
     $yes = @($out | Where-Object { $_.Executed -eq 'yes' }).Count
     $no = @($out | Where-Object { $_.Executed -eq 'no' }).Count
     Write-CaseLog "    shimcache exec flags: $($out.Count) Win10+ entries ($yes executed-flag, $no not-executed-flag) -> csv\shimcache_exec.csv" 'DarkGray'
+}
+
+function New-ConsistencyCheck {
+    # v5.9: cross-artifact consistency engine - one artifact's execution claim vs another
+    # source's silence. Every check is FP-gated: the silent source must be POPULATED before
+    # its silence means anything, and system-binary paths are exempt (they legitimately lack
+    # amcache coverage and a single flag-1 right-click is ambiguous - v2.83 lesson).
+    $shimExec = @(Import-CaseCsv 'shimcache_exec' | Where-Object { "$($_.Executed)" -eq 'yes' -and "$($_.Path)" })
+    $pf = @(Import-CaseCsv 'prefetch_parsed')
+    $amc = @(Import-CaseCsv 'amcache')
+    $procEv = @(Import-CaseCsv 'security_proc_events')
+    $sysProc = @(Import-CaseCsv 'sysmon_proc_create')
+    if ($pf.Count -eq 0 -or $amc.Count -eq 0) {
+        # global floor: prefetch + amcache feed every check; shimcache only feeds PREFETCH-GAP
+        # (gated separately below), so an empty shimcache must not kill the staged/amcache views
+        Write-CaseLog '    consistency flags: execution evidence incomplete (prefetch + amcache needed) - skipped' 'DarkGray'
+        return
+    }
+    $leaf = { param($p) try { (Split-Path "$p" -Leaf).ToLower() } catch { "$p".ToLower() } }
+    $pfNames = @{}
+    foreach ($r in $pf) { $k = & $leaf "$($r.ExecutableName)"; if ($k) { $pfNames[$k] = $true } }
+    $amcLeaves = @{}
+    foreach ($r in $amc) { foreach ($f in @('FullPath', 'Name', 'ApplicationName')) { $k = & $leaf "$($r.$f)"; if ($k) { $amcLeaves[$k] = $true } } }
+    $procRuns = New-Object System.Collections.Generic.List[string]
+    foreach ($r in $procEv) { if ("$($r.NewProcess)") { [void]$procRuns.Add("$($r.NewProcess)") } }
+    foreach ($r in $sysProc) { if ("$($r.Image)") { [void]$procRuns.Add("$($r.Image)") } }
+    $out = New-Object System.Collections.Generic.List[object]
+    # PREFETCH-GAP: shimcache executed-flag=1 on a non-Windows path, prefetch (>=50 entries =
+    # demonstrably populated) has never seen the name. E2E truth (v5.9 on a healthy box):
+    # 59 benign gaps - installer payloads, AV self-scans and prefetch churn all produce this
+    # shape - so this is an ANALYST PIVOT VIEW (low), never a verdict door. Honesty over
+    # signal volume: the gap only matters when the binary is ALSO suspicious elsewhere.
+    if ($pf.Count -ge 50 -and $shimExec.Count -gt 0) {
+        foreach ($r in $shimExec) {
+            if ("$($r.Path)" -match '(?i)^[a-z]:\\windows\\') { continue }
+            $k = & $leaf "$($r.Path)"
+            if (-not $k -or $pfNames.ContainsKey($k)) { continue }
+            [void]$out.Add([pscustomobject]@{ Kind = 'PREFETCH-GAP'; Item = "$($r.Path)"; Detail = "shimcache executed-flag=1 but no prefetch entry (prefetch has $($pf.Count) entries) - usually installer payload/AV scan/churn; scrub only if the binary is suspect elsewhere"; Severity = 'low' })
+        }
+    }
+    # AMCACHE-GAP: process auditing saw the run from a user-writable path, amcache silent
+    if ($procRuns.Count -gt 0) {
+        foreach ($p in $procRuns) {
+            if (-not (Test-IsUserWritablePath $p)) { continue }
+            $k = & $leaf $p
+            if ($amcLeaves.ContainsKey($k)) { continue }
+            [void]$out.Add([pscustomobject]@{ Kind = 'AMCACHE-GAP'; Item = $p; Detail = "process creation recorded this run but amcache ($($amc.Count) entries) has no record - amcache wiped/disabled after the fact, or a pre-existing system binary launched from a copy"; Severity = 'high' })
+        }
+    }
+    # STAGED-NORUN: amcache lists a user-writable .exe that nothing says ever ran
+    # (no prefetch run, no proc event, shimcache not-executed) - staging context, no door.
+    # exe-only + cap 15: amcache also indexes never-loaded libraries, which would storm this.
+    $staged = 0
+    foreach ($r in $amc) {
+        if ($staged -ge 15) { break }
+        $p = "$($r.FullPath)"; if (-not $p) { $p = "$($r.ApplicationName)" }
+        if (-not $p -or $p -notmatch '\.(exe|scr|pif)$') { continue }
+        if (-not (Test-IsUserWritablePath $p)) { continue }
+        $k = & $leaf $p
+        if ($pfNames.ContainsKey($k)) { continue }
+        $ran = $false
+        foreach ($pp in $procRuns) { if ((& $leaf $pp) -eq $k) { $ran = $true; break } }
+        if ($ran) { continue }
+        [void]$out.Add([pscustomobject]@{ Kind = 'STAGED-NORUN'; Item = $p; Detail = 'in amcache but no prefetch run, process-creation event or executed shimcache record - staged or abandoned (context only)'; Severity = 'info' })
+        $staged++
+    }
+    Save-Rows -Name 'consistency_flags' -Rows $out.ToArray()
+    $pg = @($out | Where-Object { $_.Kind -eq 'PREFETCH-GAP' }).Count
+    $ag = @($out | Where-Object { $_.Kind -eq 'AMCACHE-GAP' }).Count
+    $st = @($out | Where-Object { $_.Kind -eq 'STAGED-NORUN' }).Count
+    Write-CaseLog "    consistency flags: $pg prefetch-gap(s), $ag amcache-gap(s), $st staged-no-run(s) -> csv\consistency_flags.csv" 'DarkGray'
 }
 
 function Get-KnownBadRegexes {
@@ -12650,6 +12739,12 @@ function Get-CompromiseVerdict {
     Add-Signal 'Impacket/wmiexec execution signature (4688)' 3 $r58Hi @('wmiexec /Q /c or atexec temp-bat pattern in process creation events')
     Add-Signal 'WMI-spawned shell (wmiprvse parent)' 2 $r58Wmi @('shell spawned by WMI service host - remote execution or tooling')
     Add-Signal 'Remote privileged logon (T3 + 4672)' 2 $r59N @('network logon with elevated privileges - lateral movement candidate')
+    # v5.9 cross-artifact consistency door - AMCACHE-GAP only. The PREFETCH-GAP view is
+    # report-only (59 benign gaps on a healthy box: installer payloads/AV scans/churn - see
+    # New-ConsistencyCheck); amcache silence after an audited run is the rare, real shape.
+    $consFlags = @(Import-CaseCsv 'consistency_flags')
+    $consAg = @($consFlags | Where-Object { "$($_.Kind)" -eq 'AMCACHE-GAP' })
+    Add-Signal 'Execution-evidence inconsistency (amcache gap)' 2 $consAg.Count (($consAg | Select-Object -First 2 | ForEach-Object { try { Split-Path $_.Item -Leaf } catch { $_.Item } }) -join '; ')
 
     # coverage: weighted evidence sources actually collected
     $cov = New-Object System.Collections.Generic.List[object]
@@ -13255,6 +13350,7 @@ function Invoke-RegenerateOutputs {
     & $rgStep 'process lineage' 'New-ProcessChains' { New-ProcessChains }
     & $rgStep 'connection attribution' 'New-ConnectionDns' { New-ConnectionDns }
     & $rgStep 'shimcache exec flags' 'New-ShimcacheExec' { New-ShimcacheExec }
+    & $rgStep 'consistency flags' 'New-ConsistencyCheck' { New-ConsistencyCheck }
     & $rgStep 'logging gaps' 'New-LoggingGaps' { New-LoggingGaps }
     & $rgStep 'parse-needed' 'Get-ParseNeeds' { Get-ParseNeeds }
     # v2.58: evidence-based 4688 check - the Security log is readable but zero 4688 rows were

@@ -1,3 +1,14 @@
+## v5.9 - cross-artifact consistency engine
+
+One artifact's execution claim vs another source's silence - the tamper-hunting view between prefetch, shimcache, amcache and process auditing.
+
+- **PREFETCH-GAP (analyst pivot view, no verdict weight)** - shimcache executed-flag=1 on a non-Windows path, prefetch demonstrably populated (>=50 entries) yet silent on the name. E2E truth: a healthy box shows dozens of benign gaps (installer payloads, AV self-scans, prefetch rotation), so this deliberately carries no signal - it earns attention only when the binary is suspicious elsewhere. Emitted at low severity with a churn-honest detail line.
+- **AMCACHE-GAP (floor-2 signal)** - process-creation auditing (4688/Sysmon EID 1) recorded a run from a user-writable path, amcache has no record: the rare, real tamper shape (hive wiped/disabled, or a system binary relaunched from a copy).
+- **STAGED-NORUN (context only)** - amcache lists a user-writable .exe that prefetch, process events and shimcache all say never ran (capped at 15 rows; exe-only to avoid never-loaded-library noise).
+- Report: new "Cross-artifact consistency" block in the Hunt section with per-kind severity classing and an honesty meta explaining which shapes matter and why. New derived artifact `csv\consistency_flags.csv` (25 regen steps now).
+
+Test suite: `test_v59.ps1` (22 checks) - all three checks' FP gates (populated-source floors, Windows-path exemption, exe-only staging cap), the amcache-gap door, the deliberate ABSENCE of a prefetch-gap door, and full wiring pins.
+
 ## v5.8 - lateral-movement pack (R57-R59)
 
 New hunt rules close the biggest detection gap: remote execution landing on the triaged host.
