@@ -1,5 +1,5 @@
 <#
-Ophira v5.6  -  Windows Endpoint Triage Toolkit
+Ophira v5.7  -  Windows Endpoint Triage Toolkit
 READ-ONLY by design: never modifies the system, only reads and copies data
 into its own output folder. Intended to be handed to a system owner or run
 by a responder during early triage / threat hunting.
@@ -391,7 +391,7 @@ param(
     [switch]$ShareZip
 )
 
-$ScriptVersion = "5.6"
+$ScriptVersion = "5.7"
 $ErrorActionPreference = 'Continue'
 $ProgressPreference = 'SilentlyContinue'
 
@@ -2944,7 +2944,7 @@ $script:SharedFunctions = @(
     'Get-UserProfileList', 'Get-UserAssistRows', 'ConvertTo-Rot13', 'Get-FilteredEvents', 'Export-Evtx',
     'Import-CaseCsv', 'Invoke-BrowserIocXref', 'Get-EventDataRows', 'Get-IisW3cRows', 'Get-StartupInfoRows', 'Get-WerReportRows', 'Test-SigmaSelfNoise', 'Remove-SigmaDuplicateEvents', 'Get-IpCloudClass', 'Get-LocalAdminMembers',
     'Find-AdsOnPe', 'Test-WebshellContent', 'Test-IsAdmin', 'Out-Flash', 'Get-DotNetRelease', 'Get-LevenshteinDistance',
-    'Get-RegKeyLastWrite', 'Get-RadarRows', 'Get-AppSwitchedRows', 'Get-EsentNtdsRows', 'Get-TaskDeletionRows'
+    'Get-RegKeyLastWrite', 'Get-RadarRows', 'Get-AppSwitchedRows', 'Get-EsentNtdsRows', 'Get-TaskDeletionRows', 'Test-SigmaRoutineNoise'
 )
 
 $script:ModuleWorkerText = @'
@@ -6232,6 +6232,41 @@ function Test-SigmaSelfNoise {
     return $false
 }
 
+function Test-SigmaRoutineNoise {
+    # v5.7: shape-based routine classification - NOT rule-title based (suppress.txt handles
+    # static titles). Two shapes are workstation noise no matter which hayabusa rule names
+    # them: (1) EID 5379 credential-manager reads by an interactive local user (browsers/OS
+    # vault polling; attacker CredAccess dumps LSASS, it does not read the vault 1500x/day);
+    # (2) EID 4104 scriptblocks that are module/class code replayed into the log by module
+    # auto-loading (Posh-SSH-style .psm1 bodies), not interactive attacker commands. An
+    # attacker-marker guard keeps IEX/download/process-spawn blocks OUT of the fold even when
+    # they carry module-style text. SYSTEM-context 5379 stays visible (rare, worth seeing).
+    param($row)
+    if ($null -eq $row) { return $false }
+    $eid = "$($row.EventID)".Trim()
+    if ($eid -eq '5379') {
+        $d7 = "$($row.Details)"
+        if ($d7 -match 'SrcUser:\s*SYSTEM') { return $false }
+        if ($d7 -match 'SrcSID:\s*S-1-5-21-' -or $d7 -match 'SrcUser:\s*[A-Za-z]') { return $true }
+        return $false
+    }
+    if ($eid -eq '4104') {
+        $b7 = "$($row.Details)"
+        if ($b7.Length -gt 4000) { $b7 = $b7.Substring(0, 4000) }
+        # guard scans only the COMMAND HEAD (first 600 chars) - attacker scriptblocks lead with
+        # the action; module bodies bury WebClient/DllImport mentions deep in function code
+        $head7 = $b7.Substring(0, [Math]::Min(600, $b7.Length))
+        if ($head7 -match '(?i)(\bIEX\b|\bInvoke-Expression\b|\bDownloadString\b|\bDownloadFile\b|\bInvoke-WebRequest\b|\bNet\.WebClient\b|\bWin32_Process\.Create\b|\bNew-Service\b|\bStart-Process\b|\bschtasks\s|\breg add\s|\bAdd-Type\b.*DllImport|-enc\b|\bSet-MpPreference\b)') { return $false }
+        $hits = 0
+        foreach ($pat in @('PSScriptRoot', 'ValueFromPipeline', '[Parameter(', 'PSCmdlet.', '#Requires', '.psm1', 'Module manifest', 'external help')) {
+            if ($b7.IndexOf($pat, [StringComparison]::OrdinalIgnoreCase) -ge 0) { $hits++ }
+        }
+        if ($hits -ge 2) { return $true }
+        if ($hits -eq 1 -and $b7.Length -gt 600) { return $true }
+    }
+    return $false
+}
+
 function Remove-SigmaDuplicateEvents {
     # v2.55: two Sigma rules can fire on the SAME event (e.g. both 4648-explicit-logon rules
     # match every EID 4648). Dedupe by RecordID so one event counts once across all rules.
@@ -6290,6 +6325,7 @@ function Get-CleanCheckSummary {
             $hay = @(Remove-SigmaDuplicateEvents $hay | Where-Object { -not (Test-SigmaSelfNoise $_) })
         }
         $flags = @($hay | Where-Object { "$($_.Level)" -match '^(crit|high)$' })
+        if (Get-Command Test-SigmaRoutineNoise -ErrorAction SilentlyContinue) { $flags = @($flags | Where-Object { -not (Test-SigmaRoutineNoise $_) }) }
         if ($flags.Count -eq 0) { & $add 'Sigma rule scan' "$($hay.Count) events scanned, 0 critical/high detections" }
     }
     # YARA
@@ -6382,6 +6418,23 @@ function New-HtmlReport {
                 $hayRows = @($hayRows | Where-Object { $rn7 = "$($_.$supCol)"; -not ($rn7 -and $supSet.ContainsKey($rn7.ToLower())) })
             }
         }
+    }
+    # v5.7: shape-based routine fold (AFTER suppress.txt so the two layers never double-count
+    # one row) - EID 5379 own-user vault reads + 4104 module-code bodies. Counted per rule and
+    # shown as one line in the sigma section; ATT&CK + leads inherit the cleaned $hayRows.
+    $routineFolds = @{}
+    if (Get-Command Test-SigmaRoutineNoise -ErrorAction SilentlyContinue -and $hayRows.Count -gt 0) {
+        $kept = New-Object System.Collections.Generic.List[object]
+        foreach ($h7 in $hayRows) {
+            if (Test-SigmaRoutineNoise $h7) {
+                $rt7 = '(unknown rule)'
+                foreach ($cand7 in @('RuleTitle', 'Alert', 'Rule')) {
+                    if ($h7.PSObject.Properties[$cand7]) { $rt7 = "$($h7.$cand7)"; break }
+                }
+                $routineFolds[$rt7] = 1 + [int]$routineFolds[$rt7]
+            } else { $kept.Add($h7) }
+        }
+        $hayRows = $kept.ToArray()
     }
     $brute = @(Import-CaseCsv 'security_bruteforce_candidates.csv')
     $pubConns = @(Import-CaseCsv 'flash_public_connections.csv')
@@ -7490,6 +7543,10 @@ a[name]{scroll-margin-top:66px}html{overflow-x:clip}[data-theme=light] .nav a.ac
         if ($sigmaSuppressed.Count -gt 0) {
             $null = $sb.AppendLine("<div class='meta' style='margin-top:8px'>hidden as routine noise (tools\sigma\suppress.txt - delete a line to show the rule): " + ((@($sigmaSuppressed.GetEnumerator() | Sort-Object Value -Descending | ForEach-Object { "$($_.Key) - $($_.Value) event(s)" }) -join '; ')) + '. Full data: csv\logs\hayabusa_timeline.csv.</div>')
         }
+        # v5.7: shape-fold transparency - same honesty contract as suppress.txt above
+        if ($routineFolds.Count -gt 0) {
+            $null = $sb.AppendLine("<div class='meta' style='margin-top:8px'>folded as routine shapes (v5.7 classifier - EID 5379 own-user vault reads, 4104 module-code bodies; delete nothing, tune in Ophira.ps1 Test-SigmaRoutineNoise): " + ((@($routineFolds.GetEnumerator() | Sort-Object Value -Descending | ForEach-Object { "$($_.Key) - $($_.Value) event(s)" }) -join '; ')) + '. Full data: csv\logs\hayabusa_timeline.csv.</div>')
+        }
         # per-rule drill-down: matched events per rule (shared 5000-row embed budget),
         # client-side search + pager + click-to-copy - rendered by the shared script at the end
         $ruleJs = New-Object System.Collections.Generic.List[string]
@@ -7502,8 +7559,13 @@ a[name]{scroll-margin-top:66px}html{overflow-x:clip}[data-theme=light] .nav a.ac
                 $safe = Resolve-SafeRuleKey $safeRuleMap $g.Name
                 $csvLink = "csv\sigma_rules\$safe.csv"
                 $csvFull = Join-Path $CsvDir "sigma_rules\$safe.csv"
+                # v5.7: burst detection - one context repeating (e.g. the same explicit-logon
+                # tuple 125x) is a pattern, not N distinct events; tag it and embed only the
+                # distinct contexts instead of N timestamp-sorted copies of the same row
+                $ctx7 = @(@($g.Group | ForEach-Object { ("$($_.Details)") -replace '\s+', ' ' } | Sort-Object -Unique))
+                $isBurst = ($g.Count -ge 20 -and $ctx7.Count -le 2)
+                if ($isBurst) { $take = [Math]::Min([int]$drillTake[$safe], [Math]::Max(2, $ctx7.Count * 3)) } else { $take = [int]$drillTake[$safe] }
                 # v2.66 (B10): this rule's share of the embed budget (precomputed with drillSafeNames)
-                $take = [int]$drillTake[$safe]
                 $parts = New-Object System.Collections.Generic.List[string]
                 foreach ($r in (@($g.Group | Sort-Object Timestamp) | Select-Object -First $take)) {
                     $d = ("$($r.Details)") -replace '\s+', ' '
@@ -7516,7 +7578,8 @@ a[name]{scroll-margin-top:66px}html{overflow-x:clip}[data-theme=light] .nav a.ac
                 # v2.66 (B10): the summary tells the truth - the drill-down holds the embedded
                 # share, the rule's total match count lives in the (always linked) per-rule CSV
                 $trunc6 = if ($take -lt $g.Count) { ", showing $take of $($g.Count) embedded" } else { '' }
-                $null = $sb.AppendLine("<details><summary><span class='$lvlClass'><b>$(ConvertTo-HtmlEsc $g.Name)</b></span> - $($g.Count) hit(s)$trunc6, max <span class='$lvlClass'>$(ConvertTo-HtmlEsc $lvl)</span> &nbsp;<span class='meta'>$(ConvertTo-CaseFileLink $csvFull $csvLink)</span></summary>") # v2.66: pointer was a bare span - same case-file link as the neighbors
+                $burstTag = if ($isBurst) { " <span class='meta'>single context x$($g.Count) - repeated pattern, not $($g.Count) distinct events</span>" } else { '' }
+                $null = $sb.AppendLine("<details><summary><span class='$lvlClass'><b>$(ConvertTo-HtmlEsc $g.Name)</b></span> - $($g.Count) hit(s)$burstTag$trunc6, max <span class='$lvlClass'>$(ConvertTo-HtmlEsc $lvl)</span> &nbsp;<span class='meta'>$(ConvertTo-CaseFileLink $csvFull $csvLink)</span></summary>") # v2.66: pointer was a bare span - same case-file link as the neighbors
                 if ($take -le 0) {
                     # v2.66 (B10): budget exhausted before this rule - filter/pager controls over
                     # an empty table would lie; summary + per-rule CSV pointer stay
@@ -12275,6 +12338,11 @@ function Get-CompromiseVerdict {
     # v2.55: same dedupe + self-noise filter as the report so verdict and report agree
     if (Get-Command Remove-SigmaDuplicateEvents -ErrorAction SilentlyContinue) {
         $hay = @(Remove-SigmaDuplicateEvents $hay | Where-Object { -not (Test-SigmaSelfNoise $_) })
+        # v5.7: shape-based routine fold - same filter the report applies, so verdict and
+        # report agree (module-code 4104 storms and own-user vault reads carry no signal)
+        if (Get-Command Test-SigmaRoutineNoise -ErrorAction SilentlyContinue) {
+            $hay = @($hay | Where-Object { -not (Test-SigmaRoutineNoise $_) })
+        }
     }
     $proc = Import-CaseCsv 'flash_process_scored'
     $def = Import-CaseCsv 'defender_threats'

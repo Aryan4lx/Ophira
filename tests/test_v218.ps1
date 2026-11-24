@@ -135,7 +135,15 @@ Check "report: account + remote tables rendered" ($rendered -match 'Account acti
 # PART 3 - repo path-length guard (long-path ZIP fix)
 # ============================================================================
 $root = Split-Path -Parent $PSScriptRoot
-$tooLong = @(Get-ChildItem -LiteralPath $root -Recurse -File -ErrorAction SilentlyContinue | Where-Object { $_.FullName.Length -gt 250 } | Select-Object -First 3)
+# v5.7: guard what actually SHIPS - git-tracked files (the ZIP is built from the repo tree,
+# not the worktree; derived local dirs like logs\ and share\ are not in it and can carry
+# arbitrary long names from evidence copy, e.g. URL-encoded browser .lnk rows)
+$tracked = @(git -C $root ls-files 2>$null)
+if ($tracked.Count -gt 0) {
+    $tooLong = @($tracked | Where-Object { (Join-Path $root $_).Length -gt 250 } | Select-Object -First 3)
+} else {
+    $tooLong = @(Get-ChildItem -LiteralPath $root -Recurse -File -ErrorAction SilentlyContinue | Where-Object { $_.FullName.Length -gt 250 } | Select-Object -First 3)
+}
 Check "repo: no file path exceeds 250 chars (GitHub ZIP MAX_PATH guard)" ($tooLong.Count -eq 0)
 if ($tooLong.Count -gt 0) { $tooLong | ForEach-Object { Write-Host "      $($_.FullName.Length): $_" -ForegroundColor DarkYellow } }
 
