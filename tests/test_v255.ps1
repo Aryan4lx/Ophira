@@ -1,4 +1,4 @@
-﻿# test_v255.ps1 - v2.55 report-truthfulness fixes
+# test_v255.ps1 - v2.55 report-truthfulness fixes
 # Static assertions on Ophira.ps1 source (Contains / regex, no fixture parse)
 $ErrorActionPreference = 'Stop'
 $repo = Split-Path -Parent $PSScriptRoot

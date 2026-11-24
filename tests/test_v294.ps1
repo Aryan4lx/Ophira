@@ -52,9 +52,9 @@ if ($m81.Success) {
     $bw.Write([Text.Encoding]::Unicode.GetBytes($name))
     $bw.Flush(); [IO.File]::WriteAllBytes($iFile, $ms.ToArray()); $bw.Close()
 
-    # stubs for the module body
-    function Save-Rows { param($Name, $Rows) $script:saved831 = @($Rows) }
-    function Write-CaseLog { param($m, [object]$c) }
+    # stubs for the module body - unused params mirror the real signatures (interface shims)
+    function Save-Rows { param($Name, $Rows) $script:saved831 = @($Rows); $null = $Name }
+    function Write-CaseLog { param($m, [object]$c) $null = $m; $null = $c }
     function Get-LogStart { return $null }
     function Get-UserProfileList { return @() }
     function Get-LocalProfiles { return @() }
@@ -63,7 +63,7 @@ if ($m81.Success) {
     $fakeDrv = [pscustomobject]@{ Name = 'Q'; Root = "$rbRoot\"; Free = 1 }
     # drive-stub + real filesystem for the rest
     $global:GetPSDrive_Orig = Get-Content function:Get-PSDrive -ErrorAction SilentlyContinue
-    function Get-PSDrive { param($PSProvider) return @($fakeDrv) }
+    function Get-PSDrive { param($PSProvider) $null = $PSProvider; return @($fakeDrv) }
     $runBody = [scriptblock]::Create($m81.Groups[1].Value)
     try { & $runBody } catch { Check 'D7a: module body ran' $false; Write-Host "      err: $($_.Exception.Message)" -ForegroundColor Red }
     $rows = $script:saved831
@@ -81,7 +81,7 @@ if ($m81.Success) {
 # ---- P4: Get-FilteredEvents invariant stamp (D8c)
 $sb4 = [scriptblock]::Create((Get-Extracted 'Get-FilteredEvents'))
 . $sb4
-function Get-WinEvent { param($FilterHashtable, $ErrorAction)
+function Get-WinEvent { param($FilterHashtable, $ErrorAction) $null = $FilterHashtable; $null = $ErrorAction
     return @([pscustomobject]@{ TimeCreated = [datetime]'2026-11-01 13:45:00'; Id = 4624; ProviderName = 'Microsoft-Windows-Security-Auditing'; LevelDisplayName = 'Information'; Message = 'log on  x' })
 }
 $fe = Get-FilteredEvents -LogName Security -Ids 4624
@@ -94,7 +94,7 @@ $sb5 = [scriptblock]::Create((Get-Extracted 'Test-IsPublicIp'))
 $sb5b = [scriptblock]::Create((Get-Extracted 'Get-ConnectionTable'))
 . $sb5b
 function Get-Process { return @() }
-function Get-NetTCPConnection { param($ErrorAction)
+function Get-NetTCPConnection { param($ErrorAction) $null = $ErrorAction
     return @([pscustomobject]@{ LocalAddress = '::ffff:127.0.0.1'; LocalPort = 1234; RemoteAddress = '::ffff:4.213.25.242'; RemotePort = 443; State = 'Established'; OwningProcess = 6440 })
 }
 $ct = Get-ConnectionTable
@@ -121,8 +121,8 @@ Check 'D8c: Get-FilteredEvents invariant' ($src.Contains("TimeCreated = `$e.Time
 Check 'D7f: mapped-prefix strip count' (([regex]::Matches($src, [regex]::Escape('(?i)^::ffff:'))).Count -ge 3)
 
 # ---- P7: version
-Check 'version: header bumped' ($src.Contains('Ophira v5.'))
-Check 'version: ScriptVersion 3.x' ($src.Contains('$ScriptVersion = "5.'))
+Check 'version: header bumped' ($src.Contains('Ophira v6.'))
+Check 'version: ScriptVersion 3.x' ($src.Contains('$ScriptVersion = "6.0"'))
 
 Write-Host ''
 Write-Host "v294: $script:pass passed, $script:fail failed" -ForegroundColor $(if ($script:fail -eq 0) { 'Green' } else { 'Red' })

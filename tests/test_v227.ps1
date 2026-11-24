@@ -1,4 +1,4 @@
-﻿$repoScript = Join-Path (Split-Path -Parent $PSScriptRoot) "Ophira.ps1"
+$repoScript = Join-Path (Split-Path -Parent $PSScriptRoot) "Ophira.ps1"
 # v2.27 - real-host pilot fixes: worker kit-root seed, deploy empty-CaseID, VSS copy retry helper,
 # structured Sysmon EID1 + R1b renamed-LOLBin-at-rest rule + timeline weave
 $ErrorActionPreference = 'Stop'

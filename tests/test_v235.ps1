@@ -1,4 +1,4 @@
-﻿$repoScript = Join-Path (Split-Path -Parent $PSScriptRoot) "Ophira.ps1"
+$repoScript = Join-Path (Split-Path -Parent $PSScriptRoot) "Ophira.ps1"
 # v2.35 - flexible analysis window (-LogWindow 168/30d/3m/dates, -LogStart/-LogEnd with end-cap),
 # deploy wizard back-navigation, timeline preview 10k embed + 120k supertimeline cap.
 $ErrorActionPreference = 'Stop'

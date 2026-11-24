@@ -219,7 +219,7 @@ Check "wire: CsvCatMap - scheduled_taskcache persistence" ($src.Contains("'sched
 Check "wire: CsvCatMap - shimcache_exec timeline" ($src.Contains("'shimcache_exec' = 'timeline'"))
 Check "wire: CsvCatMap - radar/appswitched artifacts" ($src.Contains("'radar_exec' = 'artifacts'; 'appswitched' = 'artifacts'"))
 Check "wire: anchor switch - task_deletions/esent -> persistence" ($src.Contains("'^(autoruns|asep|services|scheduled_task|task_deletions|task_updates|esent_ntds)'"))
-Check "wire: anchor switch - radar/appswitched -> snapshot" ($src.Contains("'^(radar_exec|appswitched)'"))
+Check "wire: anchor switch - radar/appswitched -> snapshot" ($src.Contains("'^(radar_exec|appswitched|user_mru)'"))
 foreach ($k in @('scheduled_taskcache', 'task_deletions', 'esent_ntds', 'shimcache_exec', 'radar_exec', 'appswitched')) {
     Check "wire: desc + emptyWhy maps carry $k (2 spots)" (([regex]::Matches($src, "(?m)^\s+'$k'\s*=\s*'")).Count -ge 2)
 }
@@ -230,7 +230,7 @@ Check "wire: report radar h3 present" ($src.Contains('RADAR diagnosed applicatio
 Check "wire: report appswitched h3 present" ($src.Contains('App focus switches (taskbar FeatureUsage)'))
 Check "wire: report shimcache exec h3 present" ($src.Contains('Shimcache executed-flag (Win10+ records'))
 Check "wire: report imports for the six artifacts" ($src.Contains("Import-CaseCsv 'scheduled_taskcache.csv'") -and $src.Contains("Import-CaseCsv 'task_deletions.csv'") -and $src.Contains("Import-CaseCsv 'esent_ntds.csv'") -and $src.Contains("Import-CaseCsv 'shimcache_exec.csv'") -and $src.Contains("Import-CaseCsv 'radar_exec.csv'") -and $src.Contains("Import-CaseCsv 'appswitched.csv'"))
-Check "wire: version bumped to 5.0" ($src.Contains('$ScriptVersion = "5.'))
+Check "wire: version bumped to 5.0" ($src.Contains('$ScriptVersion = "6.0"'))
 
 # ============================================================================
 Write-Host ""

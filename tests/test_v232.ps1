@@ -1,4 +1,4 @@
-﻿$repoScript = Join-Path (Split-Path -Parent $PSScriptRoot) "Ophira.ps1"
+$repoScript = Join-Path (Split-Path -Parent $PSScriptRoot) "Ophira.ps1"
 # v2.32 - cross-host canary: -CanaryTarget lateral leg (remote audits incl. Detailed File Share,
 # SMB touch as canary_test, labeled write to admin share, B-side scorecard, remote restore).
 # Also: 4624/4625 parse now takes the New Logon section (last match) - Account/LogonId fix.

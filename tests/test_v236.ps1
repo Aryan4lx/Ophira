@@ -1,4 +1,4 @@
-﻿$repoScript = Join-Path (Split-Path -Parent $PSScriptRoot) "Ophira.ps1"
+$repoScript = Join-Path (Split-Path -Parent $PSScriptRoot) "Ophira.ps1"
 # v2.36 - svchost masquerade detection: module 1.7 audits live -k groups vs the Svchost
 # registry key + ServiceDll paths + unregistered loaded DLLs; hunt rule R27 consumes the audit.
 $ErrorActionPreference = 'Stop'

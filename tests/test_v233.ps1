@@ -1,4 +1,4 @@
-﻿$repoScript = Join-Path (Split-Path -Parent $PSScriptRoot) "Ophira.ps1"
+$repoScript = Join-Path (Split-Path -Parent $PSScriptRoot) "Ophira.ps1"
 # v2.33 - tunnel & remote-access hunt pack: module 8.16 remote_access.csv builder,
 # hunt rules R23-R26, verdict wiring, canary battery (tunnel plant + service + SSH keys).
 $ErrorActionPreference = 'Stop'

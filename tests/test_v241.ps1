@@ -1,4 +1,4 @@
-﻿$repoScript = Join-Path (Split-Path -Parent $PSScriptRoot) "Ophira.ps1"
+$repoScript = Join-Path (Split-Path -Parent $PSScriptRoot) "Ophira.ps1"
 # v2.41 - clean-host FP fixes: (1) Defender-channel sigma rows excluded from the sigma signals
 # (they double-counted with the dedicated Defender signal - one old Defender alert used to
 # declare LIKELY COMPROMISED), (2) crit sigma needs >=3 events from >=2 distinct rules for

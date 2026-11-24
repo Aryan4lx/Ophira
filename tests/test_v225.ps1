@@ -1,4 +1,4 @@
-﻿$repoScript = Join-Path (Split-Path -Parent $PSScriptRoot) "Ophira.ps1"
+$repoScript = Join-Path (Split-Path -Parent $PSScriptRoot) "Ophira.ps1"
 # v2.25 - analyst deep-dive pack: RECmd batch registry enrichment, EvtxECmd full evtx->CSV,
 # -Mode Timeline pivot (window filter + summary)
 $ErrorActionPreference = 'Stop'

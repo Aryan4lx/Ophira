@@ -1,4 +1,4 @@
-﻿# test_v256.ps1 - v2.56 report-weaves-the-story: entity cross-links, file links, conn dedupe, focus embed
+# test_v256.ps1 - v2.56 report-weaves-the-story: entity cross-links, file links, conn dedupe, focus embed
 $ErrorActionPreference = 'Stop'
 $repo = Split-Path -Parent $PSScriptRoot
 $src = Get-Content -LiteralPath (Join-Path $repo 'Ophira.ps1') -Raw

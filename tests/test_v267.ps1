@@ -172,7 +172,7 @@ Check "Floor: nested Add-Signal extractable" $mAS.Success
 if ($mAS.Success) {
     Check "Floor: Add-Signal stamps the floor as the Weight property" ($mAS.Value.Contains('Weight = $floor'))
     $signals = New-Object System.Collections.Generic.List[object]
-    $logQ = { param([string]$Msg) } # v2.79: Add-Signal's trace collaborator (no-op here)
+    $logQ = { param([string]$Msg) $null = $Msg } # v2.79: Add-Signal's trace collaborator (no-op here)
     Invoke-Expression $mAS.Value
     Add-Signal 'Unit test signal' 3 2 'evidence detail'
     $vj = [pscustomobject]@{ Level = 'LIKELY COMPROMISED'; LevelRank = 3; Signals = $signals.ToArray() } | ConvertTo-Json -Depth 5
@@ -239,7 +239,7 @@ if ($lines4.Count -ge 6100) {
     # -> 6610..7255 (v2.86 activity-picture block added ~105 lines before the entities region -
     #    markers now (v4.6): Steps 7792, rcCol 7940; same report region)
     #    v5.4: Analyze-mode campaign builder pushed rcCol to 8188 - window end 8100 -> 8300
-    $region4 = ($lines4[6650..8340] -join "`n")
+    $region4 = ($lines4[6650..8400] -join "`n")
     Check "B5: no bare [int]quoted casts left in the report region" (-not $region4.Contains('[int]"$('))
     Check "B5: no bare [double]quoted casts left in the report region" (-not $region4.Contains('[double]"$('))
     Check "B5: no bare [long]quoted casts left in the report region" (-not $region4.Contains('[long]"$('))

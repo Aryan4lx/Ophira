@@ -1,5 +1,5 @@
 <#
-Ophira v5.9  -  Windows Endpoint Triage Toolkit
+Ophira v6.0  -  Windows Endpoint Triage Toolkit
 READ-ONLY by design: never modifies the system, only reads and copies data
 into its own output folder. Intended to be handed to a system owner or run
 by a responder during early triage / threat hunting.
@@ -391,7 +391,7 @@ param(
     [switch]$ShareZip
 )
 
-$ScriptVersion = "5.9"
+$ScriptVersion = "6.0"
 $ErrorActionPreference = 'Continue'
 $ProgressPreference = 'SilentlyContinue'
 
@@ -608,6 +608,7 @@ $script:CsvCatMap = @{
     'beacon_candidates' = 'logs'; 'dns_beacon_candidates' = 'logs'; 'application_events' = 'logs'
     # ARTIFACTS
     'prefetch_index' = 'artifacts'; 'prefetch_parsed' = 'artifacts'; 'userassist' = 'artifacts'
+    'user_mru' = 'artifacts'
     'srum_usage' = 'artifacts'; 'execution_timeline' = 'artifacts'; 'mft_recent' = 'artifacts'
     'ads_findings' = 'artifacts'
     'amcache' = 'artifacts'; 'lnk_parsed' = 'artifacts'; 'jumplist_parsed' = 'artifacts'
@@ -2646,6 +2647,50 @@ function Get-UserAssistRows {
     return $rows
 }
 
+function Get-UserMruRows {
+    # v6.0: hands-on-keyboard artifacts - MUICache (shell-launched binaries, no
+    # timestamps), RunMRU (Win+R typed commands) and TypedPaths (Explorer address
+    # bar). Cheap registry reads that survive when amcache/prefetch do not.
+    $rows = @()
+    try {
+        $sids = Get-ChildItem 'Registry::HKEY_USERS' -ErrorAction SilentlyContinue | Where-Object { $_.PSChildName -match '^S-1-5-21-' }
+        foreach ($sid in $sids) {
+            $user = $sid.PSChildName
+            $muiK = "Registry::HKEY_USERS\$user\Software\Classes\Local Settings\Software\Microsoft\Windows\Shell\MuiCache"
+            if (Test-Path $muiK) {
+                $prop = Get-ItemProperty -Path $muiK -ErrorAction SilentlyContinue
+                foreach ($p in ($prop.PSObject.Properties | Where-Object { $_.Name -notmatch '^PS' })) {
+                    $n = "$($p.Name)"
+                    $path = if ($n -match '\.(FriendlyAppName|ApplicationCompany)$') { $n -replace '\.(FriendlyAppName|ApplicationCompany)$', '' } else { $n }
+                    # live MuiCache also carries bare keys (e.g. LangID) - keep path-like entries only
+                    if ($path -notmatch '(?i)(^[a-z]:\\|^\\\\)') { continue }
+                    $rows += [pscustomobject]@{ User = $user; Kind = 'muicache'; Entry = $path; Detail = "$($p.Value)" }
+                }
+            }
+            $runK = "Registry::HKEY_USERS\$user\Software\Microsoft\Windows\CurrentVersion\Explorer\RunMRU"
+            if (Test-Path $runK) {
+                $prop = Get-ItemProperty -Path $runK -ErrorAction SilentlyContinue
+                foreach ($p in ($prop.PSObject.Properties | Where-Object { $_.Name -notmatch '^PS' -and $_.Name -ne 'MRUList' })) {
+                    # live RunMRU values end with the LITERAL text \1 (older writers use byte 0x01)
+                    $cmd = ("$($p.Value)" -replace '(\\1|\x01)\s*$', '').Trim()
+                    if (-not $cmd) { continue }
+                    $rows += [pscustomobject]@{ User = $user; Kind = 'runmru'; Entry = $cmd; Detail = '' }
+                }
+            }
+            $tpK = "Registry::HKEY_USERS\$user\Software\Microsoft\Windows\CurrentVersion\Explorer\TypedPaths"
+            if (Test-Path $tpK) {
+                $prop = Get-ItemProperty -Path $tpK -ErrorAction SilentlyContinue
+                foreach ($p in ($prop.PSObject.Properties | Where-Object { $_.Name -match '^url\d+$' })) {
+                    $v = "$($p.Value)"
+                    if (-not $v) { continue }
+                    $rows += [pscustomobject]@{ User = $user; Kind = 'typedpath'; Entry = $v; Detail = '' }
+                }
+            }
+        }
+    } catch { }
+    return $rows
+}
+
 function Get-RegKeyLastWrite {
     # v2.83 (R47): PS 5.1's registry provider does not expose LastWriteTime (that arrived in
     # PS7) - P/Invoke RegQueryInfoKey instead. Returns $null on any failure so callers
@@ -2942,7 +2987,7 @@ $script:SharedFunctions = @(
     'Get-CaseCsvPath', 'Test-CaseCsv', 'Get-CaseCsvFullPath', 'Convert-LocalNaiveToUtc',
     'Save-Rows', 'Out-RawText', 'Invoke-ExeCapture', 'Invoke-NativeTool', 'Get-WmiOrCim', 'Convert-WmiDate', 'Get-InvariantDate',
     'Test-IsPublicIp', 'Test-IsUserWritablePath', 'Get-SignatureInfo', 'Get-SysmonState',
-    'Get-UserProfileList', 'Get-UserAssistRows', 'ConvertTo-Rot13', 'Get-FilteredEvents', 'Export-Evtx',
+    'Get-UserProfileList', 'Get-UserAssistRows', 'Get-UserMruRows', 'ConvertTo-Rot13', 'Get-FilteredEvents', 'Export-Evtx',
     'Import-CaseCsv', 'Invoke-BrowserIocXref', 'Get-EventDataRows', 'Get-IisW3cRows', 'Get-StartupInfoRows', 'Get-WerReportRows', 'Test-SigmaSelfNoise', 'Remove-SigmaDuplicateEvents', 'Get-IpCloudClass', 'Get-LocalAdminMembers',
     'Find-AdsOnPe', 'Test-WebshellContent', 'Test-IsAdmin', 'Out-Flash', 'Get-DotNetRelease', 'Get-LevenshteinDistance',
     'Get-RegKeyLastWrite', 'Get-RadarRows', 'Get-AppSwitchedRows', 'Get-EsentNtdsRows', 'Get-TaskDeletionRows', 'Test-SigmaRoutineNoise'
@@ -4336,6 +4381,8 @@ $script:Modules = @(
             # v2.83 (R47/R48): RADAR heap-leak execution evidence + AppSwitched counters
             Save-Rows -Name 'radar_exec' -Rows (Get-RadarRows)
             Save-Rows -Name 'appswitched' -Rows (Get-AppSwitchedRows)
+            # v6.0: RunMRU / TypedPaths / MUICache - hands-on-keyboard artifacts
+            Save-Rows -Name 'user_mru' -Rows (Get-UserMruRows)
         } }
     [pscustomobject]@{ Id = '5.3'; Cat = 'ARTIFACTS'; Name = 'SRUM database (larger, uses VSS copy)'; Default = $true; Quick = $true;
         Run = {
@@ -6105,7 +6152,7 @@ function Get-SectionAnchorForSource {
         '^(flash_process_scored|processes|process_hashes|sysmon_proc_create|sysmon_proc_tamper)' { 'processes'; break }
         '^(security_auth|bruteforce|rdp_|logon)'       { 'logons'; break }
         '^(autoruns|asep|services|scheduled_task|task_deletions|task_updates|esent_ntds)' { 'persistence'; break }
-        '^(radar_exec|appswitched)'                    { 'snapshot'; break }
+        '^(radar_exec|appswitched|user_mru)'                    { 'snapshot'; break }
         '^(mft_recent|usn_write_bursts|prefetch|shellbags|sysmon_file)' { 'filesystem'; break }
         '^(flash_public_connections|connections|sysmon_network|srum_|net_)' { 'network'; break }
         '^(sysmon_dns|dns_)'                           { 'beacons'; break }
@@ -6477,6 +6524,7 @@ function New-HtmlReport {
     $tcorrRows = @(Import-CaseCsv 'exec_tcorr.csv')
     $radarRows = @(Import-CaseCsv 'radar_exec.csv')
     $aswRows = @(Import-CaseCsv 'appswitched.csv')
+$mruRows = @(Import-CaseCsv 'user_mru.csv')
     $svcFlag = @(Import-CaseCsv 'services_flagged.csv')
     $wmiBind = @(Import-CaseCsv 'wmi_bindings.csv')
     $deltaRows = @(Import-CaseCsv 'delta_new.csv')
@@ -6833,7 +6881,7 @@ a[name]{scroll-margin-top:66px}html{overflow-x:clip}[data-theme=light] .nav a.ac
         drivers = $lolHits.Count
         hunt = $huntRows.Count + $liveScan.Count + $reconSessions.Count + $tcorrRows.Count + $consFlags.Count
         entities = $entNav
-        snapshot = $defStatus.Count + $defThreats.Count + $credSweep.Count + $savedCreds.Count + $rdpTgt.Count + $bitsJobs.Count + $memMfR.Count + $browserIocR.Count + $posture.Count + $radarRows.Count + $aswRows.Count
+        snapshot = $defStatus.Count + $defThreats.Count + $credSweep.Count + $savedCreds.Count + $rdpTgt.Count + $bitsJobs.Count + $memMfR.Count + $browserIocR.Count + $posture.Count + $radarRows.Count + $aswRows.Count + $mruRows.Count
         timeline = $tlRows.Count
         posture = $postureNav
         focus = if ($ft) { ConvertTo-SafeInt "$($ft.HitCount)" } else { 0 }
@@ -8520,6 +8568,18 @@ a[name]{scroll-margin-top:66px}html{overflow-x:clip}[data-theme=light] .nav a.ac
         }
         $null = $sb.AppendLine("</table><div class='meta'>Counters only (no timestamps) - what the interactive user actually switched to. An interactive attacker session shows here too. Source: csv\appswitched.csv</div>")
     }
+    if ($mruRows.Count -gt 0) {
+        $snapAny = $true
+        $null = $sb.AppendLine("<h3>User MRU artifacts (typed commands, typed paths, MUICache)</h3><table><tr><th>User</th><th>Kind</th><th>Entry</th><th>Detail</th></tr>")
+        Add-CapNote @($mruRows).Count 20 'user_mru' 'User MRU rows'
+        foreach ($m3 in ($mruRows | Select-Object -First 20)) {
+            $u4 = Get-SidName "$($m3.User)"
+            $u4d = if ($u4 -and $u4 -ne "$($m3.User)") { "$(ConvertTo-HtmlEsc $u4) <span class='meta'>($(ConvertTo-HtmlEsc $m3.User))</span>" } else { ConvertTo-HtmlEsc "$($m3.User)" }
+            $k4cls = if ("$($m3.Kind)" -ne 'muicache') { " class='med'" } else { '' }
+            $null = $sb.AppendLine("<tr><td>$u4d</td><td$($k4cls)>$(ConvertTo-HtmlEsc $m3.Kind)</td><td class='path'>$(ConvertTo-HtmlEsc $m3.Entry)</td><td class='ev'>$(ConvertTo-HtmlEsc $m3.Detail)</td></tr>")
+        }
+        $null = $sb.AppendLine("</table><div class='meta'>RunMRU = what was typed into Win+R, TypedPaths = the Explorer address bar, MUICache = shell-launched binaries (friendly names, no timestamps). A typed user-writable path is direct hands-on-keyboard evidence. Source: csv\user_mru.csv</div>")
+    }
     if ($memMfR.Count -gt 0) {
         $snapAny = $true
         $null = $sb.AppendLine("<h3>Memory analysis: malfind (possible code injection)</h3><table><tr><th>Process</th><th>PID</th><th>Protection</th></tr>")
@@ -8968,6 +9028,7 @@ a[name]{scroll-margin-top:66px}html{overflow-x:clip}[data-theme=light] .nav a.ac
     'shimcache_exec'                  = 'Shimcache entries with the Win10+ executed-flag decoded (last 4 record bytes) - flag=0 is context, never proof of non-execution'
     'radar_exec'                      = 'RADAR heap-leak DiagnosedApplications - key LastWriteTime = executed on or before that time (server-friendly execution evidence)'
     'appswitched'                     = 'Explorer FeatureUsage AppSwitched counters - taskbar focus-switch counts per app (no timestamps; user-behavior context)'
+    'user_mru'                        = 'RunMRU (Win+R), TypedPaths (Explorer address bar) and MUICache - what the interactive user typed and launched; typed user-writable paths are hands-on-keyboard evidence'
     'exec_stacks_byname'              = 'Execution stacking: every executed name -> the distinct paths it ran from (a critical name running from two places is the classic recycle-bin svchost)'
     'exec_stacks_bypath'              = 'Execution stacking per folder: distinct names run from each directory (mass-staging view - temp dirs full of one-shot exes stand out)'
     'exec_window_ratio'              = 'Time-stacking: executions inside vs outside the investigation window (-After/-Before or the focus dossier window) - window-exclusive files bubble to the top'
@@ -9201,6 +9262,7 @@ a[name]{scroll-margin-top:66px}html{overflow-x:clip}[data-theme=light] .nav a.ac
     'shimcache_exec'                  = 'shimcache parse pending (module 5.4 / chainsaw) or no Win10+ entries to decode - see parse_needed.csv'
     'radar_exec'                      = 'RADAR has no diagnosed apps - common on workstations (memory diagnostics mostly fire on servers)'
     'appswitched'                     = 'no AppSwitched counters - FeatureUsage absent for the profiles or no interactive GUI session history'
+    'user_mru'                        = 'no MRU rows - no typed-command history or shell-launched caches for the captured profiles'
     'exec_stacks_byname'              = 'no execution evidence to stack (no amcache/shimcache/prefetch parsed yet - run the parse modules or 5.4)'
     'exec_stacks_bypath'              = 'no execution evidence to stack (no amcache/shimcache/prefetch parsed yet - run the parse modules or 5.4)'
     'exec_window_ratio'              = 'no investigation window set - pass -After/-Before on a parse/regen run or set the focus dossier window, then regenerate'
@@ -12248,6 +12310,30 @@ function New-HuntFindings {
         & $find 'Remote privileged logon (network + special privileges)' 'medium' $r59Who "type-3 network logon from $($r59.SourceIp) with elevated privileges (4672 same session)" 'T1078'
     }
     & $trace 'R59' 'remote privileged logon' "security_auth_events: $($r59Auth.Count) row(s) -> $r59N T3+4672"
+    # ---------- R60 (v6.0): hands-on-keyboard typed execution ----------
+    $r60Hi = 0; $r60Low = 0; $r60Info = 0
+    foreach ($r60 in @(Import-CaseCsv 'user_mru')) {
+        $r60Kind = "$($r60.Kind)"; $r60E = "$($r60.Entry)".Trim()
+        if (-not $r60E) { continue }
+        if ($r60Kind -eq 'muicache') {
+            if ($r60E -match '(?i)\.(exe|dll)$' -and (Test-IsUserWritablePath $r60E)) {
+                $r60Low++
+                & $find 'MUICache: user-writable binary launched via shell' 'low' (Split-Path $r60E -Leaf) "'$r60E' carries a friendly-name cache entry - launched from Explorer at least once (installer churn is common here)" 'T1204'
+            }
+            continue
+        }
+        # runmru / typedpath: what the human typed
+        $emb60 = [regex]::Match($r60E, '(?i)[a-z]:\\[^\s"]+\.(exe|bat|cmd|ps1|vbs|js|jar|scr)').Value
+        $probe60 = if ($emb60) { $emb60 } else { $r60E }
+        if ($probe60 -match '(?i)^[a-z]:\\' -and (Test-IsUserWritablePath $probe60)) {
+            $r60Hi++
+            & $find 'Typed execution of user-writable binary (RunMRU/TypedPaths)' 'high' (Split-Path $probe60 -Leaf) "typed '$r60E' ($r60Kind) - direct hands-on-keyboard staging" 'T1204'
+        } else {
+            $r60Info++
+            & $find 'Typed command (hands-on-keyboard context)' 'info' $r60Kind "'$r60E'" ''
+        }
+    }
+    & $trace 'R60' 'hands-on-keyboard typed execution' "user_mru: $r60Hi writable-exe typed + $r60Low muicache writable + $r60Info context"
 
     # v2.87 storm guard: one broken source can flood one rule with hundreds of rows and
     # drown both the report and the verdict - cap each rule+severity at 15 rows and
@@ -12739,6 +12825,17 @@ function Get-CompromiseVerdict {
     Add-Signal 'Impacket/wmiexec execution signature (4688)' 3 $r58Hi @('wmiexec /Q /c or atexec temp-bat pattern in process creation events')
     Add-Signal 'WMI-spawned shell (wmiprvse parent)' 2 $r58Wmi @('shell spawned by WMI service host - remote execution or tooling')
     Add-Signal 'Remote privileged logon (T3 + 4672)' 2 $r59N @('network logon with elevated privileges - lateral movement candidate')
+    # v6.0 hands-on-keyboard door - typed paths are rare and deliberate; only
+    # typed EXE/SCRIPT paths inside user-writable directories earn the signal
+    $r60Typed = @()
+    foreach ($r60t in @(Import-CaseCsv 'user_mru')) {
+        $r60K = "$($r60t.Kind)"; $r60E = "$($r60t.Entry)".Trim()
+        if ($r60K -ne 'runmru' -and $r60K -ne 'typedpath') { continue }
+        $emb60 = [regex]::Match($r60E, '(?i)[a-z]:\\[^\s"]+\.(exe|bat|cmd|ps1|vbs|js|jar|scr)').Value
+        if (-not $emb60) { continue }
+        if (Test-IsUserWritablePath $emb60) { $r60Typed += $r60t }
+    }
+    Add-Signal 'Hands-on-keyboard typed execution (RunMRU/TypedPaths)' 2 $r60Typed.Count (($r60Typed | Select-Object -First 2 | ForEach-Object { "$($_.Entry)" }) -join '; ')
     # v5.9 cross-artifact consistency door - AMCACHE-GAP only. The PREFETCH-GAP view is
     # report-only (59 benign gaps on a healthy box: installer payloads/AV scans/churn - see
     # New-ConsistencyCheck); amcache silence after an audited run is the rare, real shape.

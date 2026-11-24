@@ -123,7 +123,7 @@ Check 'weave: wdac_events line' ($src.Contains("& `$weave 'wdac_events' 500"))
 Check 'coverage: secondary logs Add-Cov' ($src.Contains("Add-Cov 'Secondary security logs"))
 Check 'module 4.2 reads 4103' ($src.Contains("-Ids @(4103, 4104, 400, 600)"))
 Check 'module 4.1 reads 4702' ($src.Contains("-Id @(4698, 4702)"))
-Check 'version 3.0' ($src.Contains('$ScriptVersion = "5.'))
+Check 'version 3.0' ($src.Contains('$ScriptVersion = "6.'))
 Check 'defender posture: ASR loop present' ($src.Contains('AttackSurfaceReductionRules_Ids'))
 Check 'defender status: TamperProtection captured' ($src.Contains('TamperProtection = $s.IsTamperProtected'))
 

@@ -1,4 +1,4 @@
-﻿$repoScript = Join-Path (Split-Path -Parent $PSScriptRoot) "Ophira.ps1"
+$repoScript = Join-Path (Split-Path -Parent $PSScriptRoot) "Ophira.ps1"
 # v2.38 - role-gate wording ([1] IR team / [2] User), NTDS.dit never touched, Setup
 # creates the gitignored tools\iocs feed folder with a README.
 $ErrorActionPreference = 'Stop'

@@ -1,3 +1,14 @@
+## v6.0 - user MRU artifacts (hands-on-keyboard execution evidence)
+
+What the interactive human typed and launched - RunMRU, TypedPaths and MUICache, three cheap registry artifacts that survive even when amcache/prefetch do not.
+
+- **New collector (module 5.2)**: `csv\artifacts\user_mru.csv` - per-profile MUICache friendly-name entries (suffix stripped), Win+R RunMRU commands (sentinel byte trimmed, MRUList dropped) and Explorer TypedPaths values.
+- **R60 hunt rule**: a typed (`RunMRU`/`TypedPaths`) path resolving to an executable inside a user-writable directory is HIGH `T1204` - direct hands-on-keyboard staging - with a dedicated floor-2 verdict door. Non-path typed entries render as info context; MUICache user-writable binaries are LOW (installer churn is common there - no verdict weight).
+- **Report**: new "User MRU artifacts" block in the Host state section (kind-classed, SID-resolved users, cap note) + evidence-index description.
+- Coverage: collector joins the worker-shared function set; live-tested on a fresh case (RunMRU/TypedPaths/MUICache all captured).
+
+Test suite: `test_v60.ps1` (15 checks) - registry-stub parsing for all three kinds (suffix strip, sentinel trim, MRUList/url-noise drops), R60 severity gates (writable-exe high / non-path info / MUICache low with system-dir skip), verdict-door wiring and full plumbing pins.
+
 ## v5.9 - cross-artifact consistency engine
 
 One artifact's execution claim vs another source's silence - the tamper-hunting view between prefetch, shimcache, amcache and process auditing.
