@@ -1,5 +1,5 @@
 <#
-Ophira v6.0  -  Windows Endpoint Triage Toolkit
+Ophira v6.1  -  Windows Endpoint Triage Toolkit
 READ-ONLY by design: never modifies the system, only reads and copies data
 into its own output folder. Intended to be handed to a system owner or run
 by a responder during early triage / threat hunting.
@@ -391,7 +391,7 @@ param(
     [switch]$ShareZip
 )
 
-$ScriptVersion = "6.0"
+$ScriptVersion = "6.1"
 $ErrorActionPreference = 'Continue'
 $ProgressPreference = 'SilentlyContinue'
 
@@ -648,6 +648,7 @@ $script:CsvCatMap = @{
     'exec_stacks_byname' = 'derived'; 'exec_stacks_bypath' = 'derived'; 'exec_window_ratio' = 'derived'
     'recon_sessions' = 'derived'; 'exec_tcorr' = 'derived'; 'srum_app_totals' = 'derived'
     'consistency_flags' = 'derived'
+    'sigma_baseline_diff' = 'derived'
 }
 
 function Get-LocalAdminMembers {
@@ -2256,6 +2257,14 @@ a{color:#7aa2f7;text-decoration:none}a:hover{color:#9ec1f0}.foot{margin-top:40px
             $null = $fsb.AppendLine("<tr><td><b>$($c.Campaign)</b></td><td><b>$($c.HostCount)</b></td><td class='path'>$(ConvertTo-HtmlEsc $c.Hosts)</td><td><span class='$cc'>$(ConvertTo-HtmlEsc $c.WorstVerdict)</span></td><td class='path'>$(ConvertTo-HtmlEsc $c.Evidence)</td></tr>")
         }
         $null = $fsb.AppendLine("</table><div class='meta'>Union-find over every cross-host tie this report found (lateral chains, shared binary hashes, shared indicators, deployment waves): hosts linked by ANY of those land in the same campaign row. A cluster is one investigation, not N separate hosts. Full list: fleet_campaigns.csv.</div>")
+        # v6.1: campaign narrative - the top cluster reads as one story, not a table row
+        $topC = @($campaignRows | Sort-Object { [int]"$($_.HostCount)" } -Descending | Select-Object -First 1)
+        if ($topC.Count -gt 0) {
+            $tc = $topC[0]
+            $firstEv = (("$($tc.Evidence)" -split '; ')[0])
+            $lead6 = ("$($tc.Hosts)" -split ', ')[0]
+            $null = $fsb.AppendLine("<div class='card' style='margin-top:12px'><b>Campaign story (largest cluster)</b><div class='meta' style='margin-top:6px'>Campaign <b>$(ConvertTo-HtmlEsc $tc.Campaign)</b>$(if ("$($tc.Client)") { " (client $(ConvertTo-HtmlEsc $tc.Client))" }) spans <b>$($tc.HostCount)</b> host(s) - $(ConvertTo-HtmlEsc $tc.Hosts) - tied by $(ConvertTo-HtmlEsc $tc.Evidence). Worst verdict in the cluster: <b>$(ConvertTo-HtmlEsc $tc.WorstVerdict)</b>. Suggested first step: open the report for $(ConvertTo-HtmlEsc $lead6) and pivot on the first shared evidence item ($(ConvertTo-HtmlEsc $firstEv)); the same pivot applies to every other host in the cluster. Treat the cluster as ONE investigation.</div></div>")
+        }
     }
     if ($lateral.Count -gt 0) {
         $null = $fsb.AppendLine("<h2>Lateral movement chains (share access between collected hosts)</h2><table><tr><th>From</th><th>To</th><th>Account</th><th>Share</th><th>Target</th><th>Time</th><th>Source IP</th></tr>")
@@ -6428,6 +6437,12 @@ function New-HtmlReport {
     $scored = @(Import-CaseCsv 'flash_process_scored.csv')
     $iocHits = @(Import-CaseCsv 'flash_ioc_hits.csv')
     $hayRows = @(Import-CaseCsv 'hayabusa_timeline.csv')
+    # v6.1: per-host baseline diff (written by the regen step; absent on first Parse of a host)
+    $sbDiff = @(Import-CaseCsv 'sigma_baseline_diff.csv')
+    $sbByRule = @{}
+    foreach ($d6 in $sbDiff) { $sbByRule["$($d6.Rule)"] = $d6 }
+    $sbPrior = 0
+    foreach ($d6 in $sbDiff) { $p6 = [int]"$($d6.PrevSeen)"; if ($p6 -gt $sbPrior) { $sbPrior = $p6 } }
     # v2.93 (C5): hayabusa stamps carry ' +00:00' (and the case is always UTC-normalized by
     # the v2.91 timeline fix) - the suffix is noise in table cells; trim it once here so the
     # sigma table, drill-down JSON and CSV export all render the same clean stamp.
@@ -7597,8 +7612,12 @@ a[name]{scroll-margin-top:66px}html{overflow-x:clip}[data-theme=light] .nav a.ac
         if ($routineFolds.Count -gt 0) {
             $null = $sb.AppendLine("<div class='meta' style='margin-top:8px'>folded as routine shapes (v5.7 classifier - EID 5379 own-user vault reads, 4104 module-code bodies; delete nothing, tune in Ophira.ps1 Test-SigmaRoutineNoise): " + ((@($routineFolds.GetEnumerator() | Sort-Object Value -Descending | ForEach-Object { "$($_.Key) - $($_.Value) event(s)" }) -join '; ')) + '. Full data: csv\logs\hayabusa_timeline.csv.</div>')
         }
-        # per-rule drill-down: matched events per rule (shared 5000-row embed budget),
-        # client-side search + pager + click-to-copy - rendered by the shared script at the end
+        if ($sbPrior -gt 0) {
+            $sbNew = @($sbDiff | Where-Object { "$($_.Class)" -eq 'new' }).Count
+            $sbSpike = @($sbDiff | Where-Object { "$($_.Class)" -eq 'spike' }).Count
+            $sbChron = @($sbDiff | Where-Object { "$($_.Class)" -eq 'chronic' }).Count
+            $null = $sb.AppendLine("<div class='meta' style='margin-top:8px'>compared against $sbPrior prior collection(s) of this host (baselines\sigma_*.csv next to Ophira.ps1, analyst-side): $sbNew new, $sbSpike spiked, $sbChron chronic. Chronic low/medium rules are annotated below - they are this host's normal background, not fresh signal; verdict levels are untouched and critical/high rules never fold. Full diff: csv\derived\sigma_baseline_diff.csv.</div>")
+        }
         $ruleJs = New-Object System.Collections.Generic.List[string]
         if ($hayRows.Count -gt 0) {
             $drill = @($hayRows | Group-Object $alertCol | Sort-Object @{e = { ($_.Group | ForEach-Object { Get-LvlRank "$($_.Level)" } | Measure-Object -Maximum).Maximum }; Descending = $true }, @{e = 'Count'; Descending = $true } | Select-Object -First 12)
@@ -7629,7 +7648,11 @@ a[name]{scroll-margin-top:66px}html{overflow-x:clip}[data-theme=light] .nav a.ac
                 # share, the rule's total match count lives in the (always linked) per-rule CSV
                 $trunc6 = if ($take -lt $g.Count) { ", showing $take of $($g.Count) embedded" } else { '' }
                 $burstTag = if ($isBurst) { " <span class='meta'>single context x$($g.Count) - repeated pattern, not $($g.Count) distinct events</span>" } else { '' }
-                $null = $sb.AppendLine("<details><summary><span class='$lvlClass'><b>$(ConvertTo-HtmlEsc $g.Name)</b></span> - $($g.Count) hit(s)$burstTag$trunc6, max <span class='$lvlClass'>$(ConvertTo-HtmlEsc $lvl)</span> &nbsp;<span class='meta'>$(ConvertTo-CaseFileLink $csvFull $csvLink)</span></summary>") # v2.66: pointer was a bare span - same case-file link as the neighbors
+                # v6.1: baseline annotation - chronic low/med rules are host-normal background
+                $baseTag = ''
+                $d6 = $sbByRule["$($g.Name)"]
+                if ($d6 -and "$($d6.Class)" -eq 'chronic' -and "$($lvl)" -notmatch '^(critical|high)$') { $baseTag = " <span class='meta'>chronic x$($d6.Hits) vs baseline (avg $($d6.PrevAvg)) - host-normal background</span>" }
+                $null = $sb.AppendLine("<details><summary><span class='$lvlClass'><b>$(ConvertTo-HtmlEsc $g.Name)</b></span> - $($g.Count) hit(s)$burstTag$baseTag$trunc6, max <span class='$lvlClass'>$(ConvertTo-HtmlEsc $lvl)</span> &nbsp;<span class='meta'>$(ConvertTo-CaseFileLink $csvFull $csvLink)</span></summary>") # v2.66: pointer was a bare span - same case-file link as the neighbors
                 if ($take -le 0) {
                     # v2.66 (B10): budget exhausted before this rule - filter/pager controls over
                     # an empty table would lie; summary + per-rule CSV pointer stay
@@ -9279,6 +9302,7 @@ a[name]{scroll-margin-top:66px}html{overflow-x:clip}[data-theme=light] .nav a.ac
     'defender_posture'               = 'no ASR rules configured (Get-MpPreference returned none) - attack-surface reduction is off or unqueryable'
     'exec_tcorr'                     = 'no t-corr seeds: medium/high hunt findings absent (t-corr correlates around them) or no timestamped execution evidence'
     'consistency_flags'              = 'all execution artifacts consistent (or not populated enough to cross-check - the checks need shimcache + prefetch + amcache evidence present)'
+    'sigma_baseline_diff'            = 'no baseline yet - the first Parse of a host writes baselines\sigma_<host>.csv next to Ophira.ps1; the per-rule diff appears from the second collection onward'
         'domain_info'                     = 'Win32_ComputerSystem returned nothing - the WMI repository may be damaged on this host (itself an IR-relevant condition; check collection.log for other WMI failures)'
         'entities_accounts'               = 'joins logons/RDP/console history per account - nothing to join when those sources are empty'
         'entities_binaries'               = 'joins execution/persistence/network/verdict evidence per binary - nothing to join when the underlying sources are empty'
@@ -13361,6 +13385,69 @@ function New-FindingsJson {
     ($out | ConvertTo-Json -Depth 6) -replace '\r\n', "`n" | Set-Content -LiteralPath (Join-Path $CaseDir 'ophira_findings.json') -Encoding UTF8
 }
 
+function New-SigmaBaseline {
+    # v6.1: per-host sigma baseline diff (analyst-side state). First Parse of a host writes
+    # baselines\sigma_<host>.csv next to Ophira.ps1; later Parses classify each rule
+    # new / spike / chronic against that history. Display-level honesty only - verdict
+    # levels are untouched, and the report never folds critical/high rules as background.
+    $rows = @(Import-CaseCsv 'hayabusa_timeline.csv')
+    if ($rows.Count -eq 0) { return }
+    $alertCol = if ($rows[0].PSObject.Properties['Rule']) { 'Rule' } elseif ($rows[0].PSObject.Properties['Alert']) { 'Alert' } else { return }
+    $lvlCol = if ($rows[0].PSObject.Properties['Level']) { 'Level' } else { '' }
+    $hn = "$($script:Computer)".Trim()
+    if (-not $hn) { $hn = 'unknown-host' }
+    $safeHost = $hn -replace '[^A-Za-z0-9_.-]', '_'
+    # script-scope override lets fixtures point the store at a temp dir (IEX-extracted bodies have no $PSScriptRoot)
+    $bRoot = if ($script:SigmaBaselineRoot) { $script:SigmaBaselineRoot } else { $PSScriptRoot }
+    $baseDir = Join-Path $bRoot 'baselines'
+    try { if (-not (Test-Path -LiteralPath $baseDir)) { New-Item -ItemType Directory -Path $baseDir | Out-Null } } catch { return }
+    $baseFile = Join-Path $baseDir ("sigma_$safeHost.csv")
+    $now = (Get-Date).ToUniversalTime().ToString('yyyy-MM-dd HH:mm:ss')
+    $counts = @{}
+    foreach ($r in $rows) {
+        $rn = "$($r.$alertCol)"
+        if (-not $rn) { continue }
+        if (-not $counts.ContainsKey($rn)) { $counts[$rn] = @{ Hits = 0; Level = '' } }
+        $counts[$rn].Hits++
+        if ($lvlCol) { $lv = "$($r.$lvlCol)"; if ($lv -and ((Get-LvlRank $lv) -gt (Get-LvlRank $counts[$rn].Level))) { $counts[$rn].Level = $lv } }
+    }
+    $old = @{}
+    if (Test-Path -LiteralPath $baseFile) {
+        try { foreach ($b in (Import-Csv -LiteralPath $baseFile)) { $old["$($b.Rule)"] = $b } } catch { }
+    }
+    $diff = New-Object System.Collections.Generic.List[object]
+    foreach ($k in $counts.Keys) {
+        $c = $counts[$k]
+        $o = $old[$k]
+        if (-not $o) {
+            $diff.Add([pscustomobject]@{ Rule = $k; Hits = $c.Hits; PrevSeen = 0; PrevAvg = 0; Class = 'new'; Level = $c.Level })
+            continue
+        }
+        $prevSeen = 0; try { $prevSeen = [int]"$($o.SeenCount)" } catch { }
+        $prevSum = 0.0; try { $prevSum = [double]"$($o.HitsSum)" } catch { }
+        $prevAvg = if ($prevSeen -gt 0) { [math]::Round($prevSum / $prevSeen, 1) } else { 0 }
+        # spike = clearly above this host's own normal (2x avg + 5 headroom) - never a single-hit flake
+        $cls = if ($c.Hits -ge (2 * [math]::Max(1.0, $prevAvg) + 5)) { 'spike' } else { 'chronic' }
+        $diff.Add([pscustomobject]@{ Rule = $k; Hits = $c.Hits; PrevSeen = $prevSeen; PrevAvg = $prevAvg; Class = $cls; Level = $c.Level })
+    }
+    Save-Rows -Name 'sigma_baseline_diff' -Rows $diff.ToArray()
+    $merged = New-Object System.Collections.Generic.List[object]
+    foreach ($k in $counts.Keys) {
+        $c = $counts[$k]
+        $o = $old[$k]
+        $n = 1; $s = [double]$c.Hits
+        if ($o) { try { $n += [int]"$($o.SeenCount)" } catch { }; try { $s += [double]"$($o.HitsSum)" } catch { } }
+        $merged.Add([pscustomobject]@{ Rule = $k; SeenCount = $n; HitsSum = $s; MaxLevel = $c.Level; LastUTC = $now })
+    }
+    try { $merged.ToArray() | Export-Csv -LiteralPath $baseFile -NoTypeInformation -Encoding UTF8 } catch { }
+    $priorN = 0
+    foreach ($v in $old.Values) { $n2 = 0; try { $n2 = [int]"$($v.SeenCount)" } catch { }; if ($n2 -gt $priorN) { $priorN = $n2 } }
+    $newN = @($diff.ToArray() | Where-Object { "$($_.Class)" -eq 'new' }).Count
+    $spikeN = @($diff.ToArray() | Where-Object { "$($_.Class)" -eq 'spike' }).Count
+    $chronN = @($diff.ToArray() | Where-Object { "$($_.Class)" -eq 'chronic' }).Count
+    Write-CaseLog ("sigma baseline: {0} rule(s) diffed vs {1} prior collection(s) ({2} new, {3} spiked, {4} chronic) -> csv\derived\sigma_baseline_diff.csv" -f $diff.Count, $priorN, $newN, $spikeN, $chronN)
+}
+
 function Invoke-RegenerateOutputs {
     # Shared by New-Package and -Mode Parse: rebuilds every derived artifact from csv\
     # (supertimeline, gaps, parse_needed, verdict.json, SIEM export, ATT&CK layer, report.html).
@@ -13435,6 +13522,7 @@ function Invoke-RegenerateOutputs {
         if ($plasoN -ge 0) { $rgInfo['note'] = "$plasoN row(s) merged"; Write-CaseLog "    plaso import: $plasoN row(s) merged into the master timeline (Source 'plaso')" 'Cyan' }
     }
     & $rgStep 'sigma rule logs' 'New-SigmaRuleLogs' { New-SigmaRuleLogs }
+    & $rgStep 'sigma baseline diff' 'New-SigmaBaseline' { New-SigmaBaseline }
     & $rgStep 'execution stacks' 'New-ExecStacks' { New-ExecStacks }
     & $rgStep 'recon sessions' 'New-ReconSessions' { New-ReconSessions }
     & $rgStep 'srum egress totals' 'New-SrumAppTotals' { New-SrumAppTotals }

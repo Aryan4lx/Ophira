@@ -1,3 +1,11 @@
+## v6.1 - sigma baseline-diff + fleet campaign narrative
+
+Tuning becomes systematic: each host's own history decides what is background, and fleet clusters read as one story.
+
+- **Sigma baseline-diff (analyst-side)**: the first `-Mode Parse` of a host writes `baselines\sigma_<host>.csv` next to Ophira.ps1 (per-rule SeenCount/HitsSum/MaxLevel). Every later Parse classifies each rule **new / spike / chronic** against that history (spike = >= 2x this host's own average + 5 headroom, so a single-hit flake never spikes) into `csv\derived\sigma_baseline_diff.csv` (regen step 26). The sigma section then states the comparison honestly - "compared against N prior collection(s) of this host" - and annotates chronic low/medium rules as host-normal background. Verdict levels are untouched and critical/high rules NEVER fold, no matter how chronic.
+- **Fleet campaign narrative**: the largest union-find cluster now renders as a story card in fleet_report.html - hosts, shared evidence, worst verdict, and a suggested first pivot - instead of a bare table row.
+
+Test suite: `test_v61.ps1` (18 checks) - classification math (new/chronic/spike), baseline merge accumulation, unsafe-host-name sanitization, log line, report/fleet wiring pins.
 ## v6.0 - user MRU artifacts (hands-on-keyboard execution evidence)
 
 What the interactive human typed and launched - RunMRU, TypedPaths and MUICache, three cheap registry artifacts that survive even when amcache/prefetch do not.
