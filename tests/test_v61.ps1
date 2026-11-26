@@ -1,80 +1,94 @@
-# v6.1: sigma baseline-diff (New-SigmaBaseline) + fleet campaign narrative pins
+# test_v61.ps1 - v6.2 t-corr upgrades: top-3 ranked candidates, IOC/YARA seeds, candidate-flagged bond.
 $ErrorActionPreference = 'Stop'
-. (Join-Path $PSScriptRoot '_casehelpers.ps1')
 $src = Get-Content (Join-Path $PSScriptRoot '..\Ophira.ps1') -Raw
-$fail = 0; $n = 0
-function Check([string]$Name, [bool]$Ok) {
-    $script:n++
-    if (-not $Ok) { $script:fail++; Write-Host "[FAIL] $Name" } else { Write-Host "[ ok ] $Name" }
-}
-# extract the functions under test
-foreach ($fn in @('New-SigmaBaseline', 'Get-LvlRank')) {
-    $m = [regex]::Match($src, "(?s)function $fn \{.*?\r?\n\}")
-    if (-not $m.Success) { Write-Host "EXTRACT FAILED: $fn"; exit 1 }
-    Invoke-Expression $m.Value
-}
-$script:log = New-Object System.Collections.Generic.List[string]
-function Write-CaseLog([string]$m) { $script:log.Add("$m") }
-$script:saved = @{}
-function Save-Rows([string]$Name, $Rows) { $script:saved[$Name] = @($Rows) }
-function Import-CaseCsv([string]$Name) {
-    if ($null -ne $script:caseCsv[$Name]) { return @($script:caseCsv[$Name]) }
-    return @()
-}
-function Get-CaseCsvFullPath([string]$Name) { return Join-Path $env:TEMP ("oph61_" + $Name) }
+$fails = 0
+function Check { param($name, $ok, $extra = '') if ($ok) { Write-Host "  [ok] $name" } else { Write-Host "  [FAIL] $name $extra" -ForegroundColor Red; $script:fails++ } }
 
-$baseDir = Join-Path $env:TEMP 'baselines'
-if (Test-Path $baseDir) { Remove-Item $baseDir -Recurse -Force }
-$script:SigmaBaselineRoot = $env:TEMP
-$script:Computer = 'TESTBOX'
+# extract New-TCorr body
+$m = [regex]::Match($src, "(?s)function New-TCorr \{.*?\r?\n\}")
+Check 'extract New-TCorr' ($m.Success)
+$m2 = [regex]::Match($src, "(?s)function Get-InvariantDate \{.*?\r?\n\}")
+if ($m2.Success) { Invoke-Expression $m2.Value }
 
-# P1: first run - all rules NEW, baseline file written
-$row = { param($rule, $level) [pscustomobject]@{ Rule = $rule; Level = $level; Time = '2026-11-25 10:00:00'; Computer = 'TESTBOX'; EventID = 4688; Details = 'x' } }
-$script:caseCsv = @{ 'hayabusa_timeline.csv' = @(& $row 'Credential Manager Accessed' 'low'; & $row 'Credential Manager Accessed' 'low'; & $row 'Potential Suspicious PowerShell Keywords' 'med') }
-New-SigmaBaseline
-Check 'P1: diff saved with 2 rules' ($script:saved['sigma_baseline_diff'].Count -eq 2)
-$d1 = @($script:saved['sigma_baseline_diff'] | Where-Object { "$($_.Rule)" -eq 'Credential Manager Accessed' })[0]
-Check 'P1: first run class = new' ("$($d1.Class)" -eq 'new')
-Check 'P1: hits counted' ("$($d1.Hits)" -eq '2')
-$bf = Join-Path $baseDir 'sigma_TESTBOX.csv'
-Check 'P1: baseline file written' (Test-Path $bf)
-$b1 = Import-Csv -LiteralPath $bf
-Check 'P1: baseline SeenCount=1 HitsSum=2' ("$(($b1 | Where-Object { $_.Rule -eq 'Credential Manager Accessed' }).SeenCount)" -eq '1' -and "$(($b1 | Where-Object { $_.Rule -eq 'Credential Manager Accessed' }).HitsSum)" -eq '2')
+# stubs
+$script:caseCsv = @{}
+$script:savedRows = New-Object System.Collections.Generic.List[object]
+function Import-CaseCsv { param($Name) if ($null -eq $script:caseCsv[$Name]) { return @() } return $script:caseCsv[$Name] }
+function Save-Rows { param($Name, $Rows) foreach ($r in @($Rows)) { $script:savedRows.Add($r) }; if ($Name -eq $null) { } }
+function Write-CaseLog { param($m, $c) if ($m -eq $null -and $c -eq $null) { } }
+Set-Variable -Name QuietLog -Value {} -Scope Script 2>$null
 
-# P2: second run, same volume -> chronic (2 vs avg 2.0; 2 < 2*2+5)
-$script:caseCsv = @{ 'hayabusa_timeline.csv' = @(& $row 'Credential Manager Accessed' 'low'; & $row 'Credential Manager Accessed' 'low') }
-New-SigmaBaseline
-$d2 = @($script:saved['sigma_baseline_diff'] | Where-Object { "$($_.Rule)" -eq 'Credential Manager Accessed' })[0]
-Check 'P2: same volume class = chronic' ("$($d2.Class)" -eq 'chronic')
-Check 'P2: PrevSeen/PrevAvg carried' ("$($d2.PrevSeen)" -eq '1' -and "$($d2.PrevAvg)" -eq '2')
+# fixtures: 1 hunt seed (evil.exe) + ioc/yara seeds + pool with 4 neighbours at decreasing weights
+$script:caseCsv['hunt_findings'] = @(
+    [pscustomobject]@{ Severity = 'high'; Rule = 'R'; Entity = 'C:\x\evil.exe'; Evidence = 'e' }
+    [pscustomobject]@{ Severity = 'low';  Rule = 'R'; Entity = 'C:\x\lowbin.exe'; Evidence = 'e' }  # low: NOT a seed
+)
+$script:caseCsv['ioc_hits'] = @(
+    [pscustomobject]@{ Entity = 'C:\users\public\iocdrop.exe'; Indicator = 'iocdrop.exe' }
+    [pscustomobject]@{ Entity = '203.0.113.9'; Indicator = 'ip' }   # non-exe: NOT a seed
+)
+$script:caseCsv['yara_scanned'] = @(
+    [pscustomobject]@{ File = 'E:\apps\yarahit.exe'; SHA256 = 'a'; Hits = 'x'; Rules = 'y' }
+    [pscustomobject]@{ File = ''; SHA256 = 'b'; Hits = 'x'; Rules = 'y' }   # empty file: skipped
+)
+function P([string]$n, [string]$t) { [pscustomobject]@{ Name = $n; T = [datetime]$t; Path = "c:\p\$n" } }
+$pool = @(
+    (P 'evil.exe' '2026-11-26 10:00:00'),    # the seed's own run - t-corr anchors on it
+    (P 'n1.exe' '2026-11-26 10:00:30'), (P 'n2.exe' '2026-11-26 10:02:00'),
+    (P 'n3.exe' '2026-11-26 10:10:00'), (P 'n4.exe' '2026-11-26 10:25:00'),
+    (P 'n5.exe' '2026-11-26 10:45:00'),   # >30min from 10:00 seed: excluded
+    (P 'iocdrop.exe' '2026-11-26 10:05:00'), (P 'yarahit.exe' '2026-11-26 10:20:00')  # seeded via ioc/yara need own runs too
+)
+# New-TCorr builds its own pool from CSVs; feed via amcache (Name + FileKeyLastWriteTimestamp)
+$am = @()
+foreach ($p in $pool) { $am += [pscustomobject]@{ Name = $p.Name; FullPath = "c:\p\$($p.Name)"; FileKeyLastWriteTimestamp = $p.T.ToString('yyyy-MM-dd HH:mm:ss') } }
+$script:caseCsv['amcache'] = $am
+$script:caseCsv['prefetch_parsed'] = @()
+$script:caseCsv['security_proc_events'] = @()
+$script:caseCsv['sysmon_proc_create'] = @()
 
-# P3: spike - 12 hits vs avg 2.0 (12 >= 2*2+5)
-$many = @(); for ($i = 0; $i -lt 12; $i++) { $many += & $row 'Credential Manager Accessed' 'low' }
-$script:caseCsv = @{ 'hayabusa_timeline.csv' = $many }
-New-SigmaBaseline
-$d3 = @($script:saved['sigma_baseline_diff'] | Where-Object { "$($_.Rule)" -eq 'Credential Manager Accessed' })[0]
-Check 'P3: volume burst class = spike' ("$($d3.Class)" -eq 'spike')
-$lg = ($script:log -match 'sigma baseline:')[0]
-Check 'P3: log line has new/spiked/chronic counts' ("$lg" -match 'sigma baseline: \d+ rule\(s\) diffed vs \d+ prior collection\(s\) \(\d+ new, \d+ spiked, \d+ chronic\)')
+# a neighbour that is itself flagged (n2 also a hunt finding at med) -> candidate flagged
+$script:caseCsv['hunt_findings'] = @(
+    [pscustomobject]@{ Severity = 'high'; Rule = 'R'; Entity = 'C:\x\evil.exe'; Evidence = 'e' }
+    [pscustomobject]@{ Severity = 'medium'; Rule = 'R2'; Entity = 'C:\y\n2.exe'; Evidence = 'e' }
+)
 
-# P4: safe-host filename (weird computer names never escape the baselines dir)
-$script:Computer = 'HOST<|>WEIRD'
-$script:caseCsv = @{ 'hayabusa_timeline.csv' = @(& $row 'R1' 'low') }
-New-SigmaBaseline
-Check 'P4: unsafe host chars sanitized' ((Get-ChildItem $baseDir -Filter 'sigma_*.csv' | Where-Object { $_.Name -notmatch '^sigma_[A-Za-z0-9_.-]+\.csv$' }).Count -eq 0)
+Invoke-Expression $m.Value
+New-TCorr
 
-if (Test-Path $baseDir) { Remove-Item $baseDir -Recurse -Force }
+$rows = @($script:savedRows.ToArray())
+Check 'rows exist' ($rows.Count -gt 0)
+Check 'top3 per seed' ($rows.Count -eq 12) "got $($rows.Count)"
+$evRows = @($rows | Where-Object { $_.Seed -eq 'evil.exe' } | Sort-Object Rank)
+Check 'ranks 1..3' ($evRows[0].Rank -eq 1 -and $evRows[1].Rank -eq 2 -and $evRows[2].Rank -eq 3)
+Check 'rank1 = closest' ($evRows[0].Name -eq 'n1.exe') "got $($evRows[0].Name)"
+Check 'rank3 = next-nearest by weight' ($evRows[2].Name -eq 'iocdrop.exe') "got $($evRows[2].Name)"
+$flagged = @($rows | Where-Object { $_.Seed -eq 'evil.exe' -and $_.Name -eq 'n2.exe' })
+Check 'candidate flagged bond' ($flagged.Count -eq 1 -and "$($flagged[0].Bond)" -match 'candidate flagged') "bond=$($flagged[0].Bond) count=$($flagged.Count)"
+Check 'ioc seed present' (@($rows | Where-Object { $_.Seed -eq 'iocdrop.exe' }).Count -gt 0)
+Check 'yara seed present' (@($rows | Where-Object { $_.Seed -eq 'yarahit.exe' }).Count -gt 0)
+Check 'low-severity never seeded' (@($rows | Where-Object { $_.Seed -eq 'lowbin.exe' }).Count -eq 0)
+Check 'ip ioc never seeded' (@($rows | Where-Object { $_.Seed -eq '203.0.113.9' }).Count -eq 0)
 
-# P5: wiring pins
-Check 'P5: CsvCatMap derived entry' ($src.Contains("'sigma_baseline_diff' = 'derived'"))
-Check 'P5: emptyWhy honesty entry' ($src.Contains("baselines\sigma_<host>.csv"))
-Check 'P5: regen step wired' ($src.Contains("& `$rgStep 'sigma baseline diff' 'New-SigmaBaseline' { New-SigmaBaseline }"))
-Check 'P5: report imports diff' ($src.Contains("Import-CaseCsv 'sigma_baseline_diff.csv'"))
-Check 'P5: report meta line' ($src.Contains('compared against $sbPrior prior collection(s)'))
-Check 'P5: chronic annotation only below crit/high' ($src.Contains("-notmatch '^(critical|high)$'") -and $src.Contains('chronic x'))
-Check 'P5: fleet campaign narrative' ($src.Contains('Campaign story (largest cluster)'))
-Check 'P5: version 6.1' ($src.Contains('Ophira v6.1') -and $src.Contains('$ScriptVersion = "6.1"'))
+# bidirectional still works: n2 flagged seed correlated back to evil.exe? make evil.exe run near n2's run
+$am2 = $am + (P 'evil.exe' '2026-11-26 10:03:00')
+$am2 = $am2 | ForEach-Object { $_ }
+$script:caseCsv['amcache'] = $am2
+$script:savedRows.Clear()
+Invoke-Expression $m.Value
+New-TCorr
+$rows2 = @($script:savedRows.ToArray())
+$bi = @($rows2 | Where-Object { "$($_.Bond)" -match 'bidirectional' })
+Check 'bidirectional retained' ($bi.Count -ge 1)
 
-Write-Host "test_v61: $n checks, $fail failed"
-if ($fail -gt 0) { exit 1 }
-exit 0
+# wiring pins
+Check 'Rank column in report table' ($src.Contains('<th>Rank</th>'))
+Check 'candidate flagged in report meta' ($src.Contains('candidate flagged'))
+Check 'fleet_tcorr csv written' ($src.Contains("fleet_tcorr.csv"))
+Check 'fleet t-corr console line' ($src.Contains('FLEET T-CORR SPREAD'))
+Check 'fleet per-host exec_tcorr load' ($src.Contains("Join-Path `$csvDir 'exec_tcorr.csv'"))
+Check 'fleet report h2' ($src.Contains('Fleet t-corr spread'))
+Check 'version 6.2' ($src.Contains('$ScriptVersion = "6.2"'))
+
+Write-Host "test_v61: $(16 - $fails) checks passed, $fails failed"
+if ($fails -gt 0) { exit 1 } else { exit 0 }

@@ -1,5 +1,5 @@
 <#
-Ophira v6.1  -  Windows Endpoint Triage Toolkit
+Ophira v6.2  -  Windows Endpoint Triage Toolkit
 READ-ONLY by design: never modifies the system, only reads and copies data
 into its own output folder. Intended to be handed to a system owner or run
 by a responder during early triage / threat hunting.
@@ -391,7 +391,7 @@ param(
     [switch]$ShareZip
 )
 
-$ScriptVersion = "6.1"
+$ScriptVersion = "6.2"
 $ErrorActionPreference = 'Continue'
 $ProgressPreference = 'SilentlyContinue'
 
@@ -1898,8 +1898,9 @@ function Invoke-AnalyzeMode {
     $findings = @()
     $hosts = @()
     $evtxDirs = @()
-    $signerRows = @()
-    $leafStamps = New-Object 'System.Collections.Generic.List[object]'
+$signerRows = @()
+$leafStamps = New-Object 'System.Collections.Generic.List[object]'
+$fleetTc = New-Object System.Collections.Generic.List[object]   # v6.2: per-host t-corr pairs for cross-host spread
     $extractWorker = {
         param($zipPath, $tmp)
         Add-Type -AssemblyName System.IO.Compression.FileSystem
@@ -2055,6 +2056,17 @@ function Invoke-AnalyzeMode {
                     }
                 } catch { }
             }
+            # v6.2 fleet t-corr: collect each host's derived correlation pairs for cross-host spread
+            $tc = Join-Path $csvDir 'exec_tcorr.csv'
+            if (-not (Test-Path $tc)) { $tc = Join-Path $csvDir (Get-CaseCsvPath 'exec_tcorr.csv') }
+            if ((Test-Path $tc) -and $fleetTc.Count -lt 20000) {
+                try {
+                    foreach ($r in (Import-Csv $tc)) {
+                        if (-not "$($r.Seed)" -or -not "$($r.Name)") { continue }
+                        $null = $fleetTc.Add([pscustomobject]@{ Host = $host_; Seed = "$($r.Seed)"; Name = "$($r.Name)"; Weight = "$($r.Weight)"; Bond = "$($r.Bond)" })
+                    }
+                } catch { }
+            }
         }
         $e = Join-Path $dir 'raw\evtx'
         if (Test-Path $e) { $evtxDirs += $e }
@@ -2175,6 +2187,27 @@ function Invoke-AnalyzeMode {
             Write-Host "  CROSS-CLIENT TIES: $($script:FleetCrossClientTies.Count) evidence tie(s) span different clients - NOT merged, see fleet_cross_client_ties.csv" -ForegroundColor Yellow
         }
     }
+    # v6.2 fleet t-corr: a seed/candidate correlation pair recurring on multiple hosts is
+    # campaign-grade evidence (same attacker toolkit behaviour, not one host's noise).
+    if ($hosts.Count -ge 2 -and $fleetTc.Count -ge 2) {
+        $ftcGroups = @($fleetTc | Group-Object Seed, Name | Where-Object { ($_.Group | ForEach-Object { $_.Host } | Sort-Object -Unique).Count -ge 2 })
+        if ($ftcGroups.Count -gt 0) {
+            $ftcRows = @()
+            foreach ($g in $ftcGroups) {
+                $fhosts = @($g.Group | ForEach-Object { $_.Host } | Sort-Object -Unique)
+                $bw = 0.0
+                foreach ($g2 in $g.Group) { $w2 = 0.0; try { $w2 = [double]"$($g2.Weight)" } catch { }; if ($w2 -gt $bw) { $bw = $w2 } }
+                $fbond = @($g.Group | ForEach-Object { $_.Bond } | Where-Object { $_ } | Sort-Object -Unique) -join '; '
+                $ftcRows += [pscustomobject]@{ Seed = $g.Group[0].Seed; Name = $g.Group[0].Name; HostCount = $fhosts.Count; Hosts = ($fhosts -join ', '); MaxWeight = [Math]::Round($bw, 3); Bonds = $fbond }
+            }
+            $ftcRows = @($ftcRows | Sort-Object HostCount, MaxWeight -Descending)
+            $ftcRows | Export-Csv -LiteralPath (Join-Path $OutFolder 'fleet_tcorr.csv') -NoTypeInformation -Encoding UTF8
+            Write-Host "`n  FLEET T-CORR SPREAD: $($ftcRows.Count) correlation pair(s) recurring on multiple hosts -> fleet_tcorr.csv" -ForegroundColor Magenta
+            foreach ($t in ($ftcRows | Select-Object -First 5)) {
+                Write-Host ("    {0} <-> {1} on {2} host(s) (max weight {3}): {4}" -f $t.Seed, $t.Name, $t.HostCount, $t.MaxWeight, $t.Hosts) -ForegroundColor Magenta
+            }
+        }
+    }
     if ($HayabusaExe -and $evtxDirs.Count -gt 0) {
         Write-Host "`n  Running hayabusa fleet timeline over $($evtxDirs.Count) hosts' evtx..." -ForegroundColor Cyan
         $merged = Join-Path ([IO.Path]::GetTempPath()) 'fleet_merged_evtx'
@@ -2280,6 +2313,20 @@ a{color:#7aa2f7;text-decoration:none}a:hover{color:#9ec1f0}.foot{margin-top:40px
             $null = $fsb.AppendLine("<tr><td class='path'>$(ConvertTo-HtmlEsc $w.Name)</td><td><span class='$wc'>$(ConvertTo-HtmlEsc $w.Class)</span></td><td>$($w.SpreadMinutes) min</td><td><b>$($w.HostCount)</b></td><td class='path'>$(ConvertTo-HtmlEsc $w.Hosts)</td><td>$(ConvertTo-HtmlEsc $w.FirstSeen)</td></tr>")
         }
         $null = $fsb.AppendLine("</table><div class='meta'>A binary first appearing on several hosts within the same window is either a pushed deployment (GPO/SCCM/attacker) or mass infection - both deserve a look. Install-time proxy from amcache registry last-writes; clock skew between hosts is real, treat minutes as approximate. Full list: fleet_waves.csv.</div>")
+    }
+    if ($fleetTc.Count -ge 2) {
+        $ftcRows2 = @($fleetTc | Group-Object Seed, Name | Where-Object { ($_.Group | ForEach-Object { $_.Host } | Sort-Object -Unique).Count -ge 2 })
+        if ($ftcRows2.Count -gt 0) {
+        $null = $fsb.AppendLine("<h2>Fleet t-corr spread (correlation pairs recurring across hosts)</h2><table><tr><th>Seed</th><th>Correlated</th><th>Hosts</th><th>Host list</th><th>Max weight</th><th>Bonds</th></tr>")
+        foreach ($g in ($ftcRows2 | Sort-Object { ($_.Group | ForEach-Object { $_.Host } | Sort-Object -Unique).Count } -Descending | Select-Object -First 25)) {
+            $fhosts = @($g.Group | ForEach-Object { $_.Host } | Sort-Object -Unique)
+            $bw = 0.0
+            foreach ($g2 in $g.Group) { $w2 = 0.0; try { $w2 = [double]"$($g2.Weight)" } catch { }; if ($w2 -gt $bw) { $bw = $w2 } }
+            $fbond = @($g.Group | ForEach-Object { $_.Bond } | Where-Object { $_ } | Sort-Object -Unique) -join '; '
+            $null = $fsb.AppendLine("<tr><td class='path'>$(ConvertTo-HtmlEsc $g.Group[0].Seed)</td><td class='path'>$(ConvertTo-HtmlEsc $g.Group[0].Name)</td><td><b>$($fhosts.Count)</b></td><td class='path'>$(ConvertTo-HtmlEsc ($fhosts -join ', '))</td><td>$([Math]::Round($bw, 3))</td><td>$(ConvertTo-HtmlEsc $fbond)</td></tr>")
+        }
+        $null = $fsb.AppendLine("</table><div class='meta'>The same execution correlation (seed binary + its temporal neighbour) observed on multiple hosts means shared behaviour, not local noise - the classic sign of one toolkit deployed broadly. Built from each host's derived csv\exec_tcorr.csv; per-host t-corr quality depends on that host's evidence density. Full list: fleet_tcorr.csv.</div>")
+        }
     }
     if ($hayOut -and (Test-Path $hayOut)) {
         $ftech = @{}
@@ -7752,18 +7799,18 @@ a[name]{scroll-margin-top:66px}html{overflow-x:clip}[data-theme=light] .nav a.ac
         $null = $sb.AppendLine("<h3>Recon sessions</h3><div class='meta'>No discovery-tool bursts found (or the process-creation evidence 4688 command auditing / Sysmon EID 1 is absent - recon clustering runs blind without it, see the Coverage section).</div>")
     }
 
-    # ---------- temporal execution correlation (v2.85 - the SANS-2017 t-corr view) ----------
+    # ---------- temporal execution correlation (v2.85, v6.2 - the SANS-2017 t-corr view) ----------
     if ($tcorrRows.Count -gt 0) {
         $null = $sb.AppendLine("<h3>Temporal execution correlation (t-corr)</h3>")
-        $null = $sb.AppendLine("<table><tr><th>Seed (hunt finding)</th><th>Seed time</th><th>Executed nearby</th><th>Delta (min)</th><th>Weight</th><th>Bond</th><th>Path</th></tr>")
+        $null = $sb.AppendLine("<table><tr><th>Seed (flagged binary)</th><th>Seed time</th><th>Executed nearby</th><th>Rank</th><th>Delta (min)</th><th>Weight</th><th>Bond</th><th>Path</th></tr>")
         Add-CapNote @($tcorrRows).Count 15 'exec_tcorr' 't-corr pairs'
         foreach ($tcR in ($tcorrRows | Select-Object -First 15)) {
-            $tcCls = if ("$($tcR.Bond)") { 'crit' } elseif ((ConvertTo-SafeDbl $tcR.Weight) -ge 0.5) { 'med' } else { 'info' }
-            $null = $sb.AppendLine("<tr><td class='path'>$(ConvertTo-HtmlEsc $tcR.Seed)</td><td>$(ConvertTo-HtmlEsc $tcR.SeedTime)</td><td>$(ConvertTo-HtmlEsc $tcR.Name)</td><td>$(ConvertTo-HtmlEsc $tcR.DeltaMinutes)</td><td class='$tcCls'>$(ConvertTo-HtmlEsc $tcR.Weight)</td><td>$(ConvertTo-HtmlEsc $tcR.Bond)</td><td class='path'>$(ConvertTo-HtmlEsc $tcR.Path)</td></tr>")
+            $tcCls = if ("$($tcR.Bond)" -match 'bidirectional') { 'crit' } elseif ((ConvertTo-SafeDbl $tcR.Weight) -ge 0.5) { 'med' } else { 'info' }
+            $null = $sb.AppendLine("<tr><td class='path'>$(ConvertTo-HtmlEsc $tcR.Seed)</td><td>$(ConvertTo-HtmlEsc $tcR.SeedTime)</td><td>$(ConvertTo-HtmlEsc $tcR.Name)</td><td>$(ConvertTo-HtmlEsc $tcR.Rank)</td><td>$(ConvertTo-HtmlEsc $tcR.DeltaMinutes)</td><td class='$tcCls'>$(ConvertTo-HtmlEsc $tcR.Weight)</td><td>$(ConvertTo-HtmlEsc $tcR.Bond)</td><td class='path'>$(ConvertTo-HtmlEsc $tcR.Path)</td></tr>")
         }
-        $null = $sb.AppendLine("</table><div class='meta'>For every medium/high hunt-finding binary: other executions within +-30 min (weight = exp(-delta/10 min), 0.1 floor). A <b>bidirectional</b> bond means both binaries strongly imply each other - look at those pairs first. Analytics view only (no verdict impact) - t-corr ranks leads, it does not judge them. Source: csv\exec_tcorr.csv</div>")
+        $null = $sb.AppendLine("</table><div class='meta'>For every flagged binary (hunt findings, IOC hits, YARA hits): the top 3 other executions within +-30 min (weight = exp(-delta/10 min), 0.1 floor). A <b>bidirectional</b> bond means both binaries strongly imply each other; <b>candidate flagged</b> means the neighbour is itself a flagged binary - look at those pairs first. Analytics view only (no verdict impact) - t-corr ranks leads, it does not judge them. Source: csv\exec_tcorr.csv</div>")
     } else {
-        $null = $sb.AppendLine("<h3>Temporal execution correlation (t-corr)</h3><div class='meta'>No correlations - t-corr needs medium/high hunt findings (seeds) plus timestamped execution evidence (amcache FileKeyLastWriteTimestamp, prefetch run history, 4688/Sysmon process creation). Neither side is populated for this case.</div>")
+        $null = $sb.AppendLine("<h3>Temporal execution correlation (t-corr)</h3><div class='meta'>No correlations - t-corr needs flagged binaries (hunt findings / IOC hits / YARA hits) plus timestamped execution evidence (amcache FileKeyLastWriteTimestamp, prefetch run history, 4688/Sysmon process creation). Neither side is populated for this case.</div>")
     }
 
     # ---------- cross-artifact consistency (v5.9 - evidence that contradicts itself) ----------
@@ -10790,9 +10837,10 @@ function New-ReconSessions {
 }
 
 function New-TCorr {
-    # v2.85: temporal execution correlation (the SANS-2017 't-corr' adapted to one host) -
-    # for every medium/high hunt-finding binary, rank other executions within +-30 min
-    # (weight = exp(-dt/10 min)); pairs implying each other get flagged bidirectional.
+    # v2.85, v6.2: temporal execution correlation (the SANS-2017 't-corr' adapted to one host) -
+    # for every flagged binary (med/high hunt findings + IOC-hit + YARA-hit names), rank the top 3
+    # other executions within +-30 min (weight = exp(-dt/10 min)); pairs implying each other get
+    # 'bidirectional'; a candidate that is itself flagged gets 'candidate flagged'.
     $seeds = @()
     foreach ($hf in @(Import-CaseCsv 'hunt_findings')) {
         if ("$($hf.Severity)" -ne 'high' -and "$($hf.Severity)" -ne 'medium') { continue }
@@ -10801,11 +10849,22 @@ function New-TCorr {
         if ($leaf -notmatch '\.') { $leaf = "$leaf.exe" }
         $seeds += $leaf
     }
+    # v6.2: IOC-hit and YARA-hit names also seed correlations (same leaf rule as hunt findings).
+    foreach ($io in @(Import-CaseCsv 'ioc_hits')) {
+        $leaf = ("$($io.Entity)" -split '[\\/]')[-1].ToLower()
+        if ($leaf -and $leaf -match '\.exe$') { $seeds += $leaf }
+    }
+    foreach ($y2 in @(Import-CaseCsv 'yara_scanned')) {
+        $leaf = "$(try { Split-Path "$($y2.File)" -Leaf } catch { "$($y2.File)" })".ToLower()
+        if ($leaf -and $leaf -match '\.exe$') { $seeds += $leaf }
+    }
     $seeds = @($seeds | Sort-Object -Unique)
     if ($seeds.Count -eq 0) {
-        Write-CaseLog '    t-corr: no medium/high hunt findings to seed from - skipped' 'DarkGray'
+        Write-CaseLog '    t-corr: no flagged binaries (hunt/ioc/yara) to seed from - skipped' 'DarkGray'
         return
     }
+    $seedSet = @{}
+    foreach ($s2 in $seeds) { $seedSet[$s2] = $true }
     $pool = New-Object System.Collections.Generic.List[object]
     $addP = {
         param([datetime]$t, [string]$name, [string]$path)
@@ -10843,7 +10902,7 @@ function New-TCorr {
     foreach ($sd in $seeds) {
         $sTimes = @(($pool | Where-Object { $_.Name -eq $sd } | ForEach-Object { $_.T } | Sort-Object -Unique))
         if ($sTimes.Count -eq 0) { continue }
-        $best = @{}
+        $cand = @{}
         foreach ($st in $sTimes) {
             foreach ($p in $pool) {
                 if ($p.Name -eq $sd) { continue }
@@ -10851,18 +10910,22 @@ function New-TCorr {
                 if ($dt -gt 1800) { continue }
                 $w = [Math]::Exp(-$dt / 600.0)
                 if ($w -lt 0.1) { continue }
-                if (-not $best.ContainsKey($p.Name) -or $w -gt $best[$p.Name].W) {
-                    $best[$p.Name] = @{ W = $w; Dt = [int]$dt; Path = $p.Path; SeedT = $st }
+                if (-not $cand.ContainsKey($p.Name) -or $w -gt $cand[$p.Name].W) {
+                    $cand[$p.Name] = @{ W = $w; Dt = [int]$dt; Path = $p.Path; SeedT = $st }
                 }
             }
         }
-        foreach ($bk in @($best.Keys)) {
-            $e = $best[$bk]
+        # v6.2: keep the top 3 candidates per seed (was best-only) so the analyst sees the
+        # neighbourhood, not just the single loudest neighbour.
+        $rank = 0
+        foreach ($ce in @($cand.GetEnumerator() | Sort-Object { $_.Value.W } -Descending | Select-Object -First 3)) {
+            $rank++
+            $e = $ce.Value
             $null = $out.Add([pscustomobject]@{
-                Seed = $sd; SeedTime = $e.SeedT.ToString('yyyy-MM-dd HH:mm'); Name = $bk; Path = $e.Path
-                DeltaMinutes = [Math]::Round($e.Dt / 60.0, 1); Weight = [Math]::Round($e.W, 3); Bond = ''
+                Seed = $sd; SeedTime = $e.SeedT.ToString('yyyy-MM-dd HH:mm'); Name = $ce.Key; Path = $e.Path
+                DeltaMinutes = [Math]::Round($e.Dt / 60.0, 1); Weight = [Math]::Round($e.W, 3); Rank = $rank; Bond = ''
             })
-            $pk = "$sd|$bk"
+            $pk = "$sd|$($ce.Key)"
             if (-not $pairW.ContainsKey($pk) -or $pairW[$pk] -lt $e.W) { $pairW[$pk] = $e.W }
         }
     }
@@ -10870,6 +10933,7 @@ function New-TCorr {
     foreach ($r in $out) {
         $rk = "$($r.Name)|$($r.Seed)"
         if ($pairW.ContainsKey($rk) -and $pairW[$rk] -ge 0.5 -and $r.Weight -ge 0.5) { $r.Bond = 'bidirectional'; $bondN++ }
+        if ($seedSet.ContainsKey($r.Name)) { $r.Bond = ("$($r.Bond) candidate flagged").Trim() }
     }
     $out2 = @($out | Sort-Object @{e = 'Weight'; Descending = $true} | Select-Object -First 2000)
     Save-Rows -Name 'exec_tcorr' -Rows $out2

@@ -89,7 +89,7 @@ Check "tcorr: correlations produced" (@($tc).Count -ge 3)
 $pairA = @($tc | Where-Object { $_.Seed -eq 'svchost.exe' -and $_.Name -eq 'tool.exe' })[0]
 $pairB = @($tc | Where-Object { $_.Seed -eq 'tool.exe' -and $_.Name -eq 'svchost.exe' })[0]
 Check "tcorr: svchost->tool within window" ($null -ne $pairA -and [double]$pairA.Weight -ge 0.5)
-Check "tcorr: bond is bidirectional both ways" ("$($pairA.Bond)" -eq 'bidirectional' -and "$($pairB.Bond)" -eq 'bidirectional')
+Check "tcorr: bond is bidirectional both ways" ("$($pairA.Bond)" -match 'bidirectional' -and "$($pairB.Bond)" -match 'bidirectional')
 $np = @($tc | Where-Object { $_.Seed -eq 'svchost.exe' -and $_.Name -eq 'notepad.exe' })[0]
 Check "tcorr: near prefetch run correlates with high weight" ($null -ne $np -and [double]$np.Weight -ge 0.8)
 Check "tcorr: far executions (>30 min) excluded" (@($tc | Where-Object { $_.Name -eq 'rpcx.exe' }).Count -eq 0)
@@ -146,7 +146,7 @@ Check "wire: report recon h3 present" ($src.Contains('Recon sessions - clustered
 Check "wire: report t-corr h3 present" ($src.Contains('Temporal execution correlation (t-corr)'))
 Check "wire: report imports for the two artifacts" ($src.Contains("Import-CaseCsv 'recon_sessions.csv'") -and $src.Contains("Import-CaseCsv 'exec_tcorr.csv'"))
 Check "wire: nav hunt count includes both" ($src.Contains('hunt = $huntRows.Count + $liveScan.Count + $reconSessions.Count + $tcorrRows.Count'))
-Check "wire: version bumped to 6.1" ($src.Contains('$ScriptVersion = "6.1"'))
+Check "wire: version bumped to 6.2" ($src.Contains('$ScriptVersion = "6.2"'))
 
 # ============================================================================
 Write-Host ""

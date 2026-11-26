@@ -6,6 +6,13 @@ Tuning becomes systematic: each host's own history decides what is background, a
 - **Fleet campaign narrative**: the largest union-find cluster now renders as a story card in fleet_report.html - hosts, shared evidence, worst verdict, and a suggested first pivot - instead of a bare table row.
 
 Test suite: `test_v61.ps1` (18 checks) - classification math (new/chronic/spike), baseline merge accumulation, unsafe-host-name sanitization, log line, report/fleet wiring pins.
+## v6.2 - t-corr upgrades + fleet t-corr spread
+- New-TCorr (per-host temporal execution correlation) now keeps the **top 3 candidates per seed** (was best-only) with a Rank column, so the analyst sees the neighbourhood of a flagged binary, not just its loudest neighbour.
+- Seeds broadened: medium/high hunt findings plus **IOC-hit** and **YARA-hit** binary names (same .exe-leaf rule). A candidate that is itself flagged gets a 'candidate flagged' bond marker; 'bidirectional' bonds unchanged.
+- Report t-corr table: Rank column + updated honesty meta (seed sources, both bond meanings).
+- Fleet (-Mode Analyze): each host's derived exec_tcorr.csv is collected; correlation pairs recurring on **2+ hosts** are surfaced as FLEET T-CORR SPREAD (console + fleet_tcorr.csv + fleet report h2) - shared toolkit behaviour across hosts, campaign-grade evidence.
+- tests: test_v61.ps1 (16 checks: top-3 ranking, IOC/YARA seeding, flagged-candidate bond, fleet wiring); version-pin sweep across 20 suites; region window re-pinned.
+
 ## v6.0 - user MRU artifacts (hands-on-keyboard execution evidence)
 
 What the interactive human typed and launched - RunMRU, TypedPaths and MUICache, three cheap registry artifacts that survive even when amcache/prefetch do not.

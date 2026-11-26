@@ -95,7 +95,7 @@ Check "P4: no evidence -> '-' and counter incremented" ("$rt3" -eq '-' -and $noR
 Check "P5: CsvCatMap profile_list" ($src -match "'profile_list' = 'volatile'")
 Check "P5: emptyWhy profile_list" ($src -match "'profile_list'\s+= 'no interactive-user profiles")
 Check "P5: desc map profile_list" ($src -match "'profile_list'\s+= 'SID to profile map")
-Check "P5: version 6.1" ($src.Contains('Ophira v6.1') -and $src.Contains('$ScriptVersion = "6.1"'))
+Check "P5: version 6.2" ($src.Contains('Ophira v6.2') -and $src.Contains('$ScriptVersion = "6.2"'))
 Check "P5: ranTxt BAM merge present" ($src -match 'bamByLeaf\.ContainsKey\(\$lnE\)')
 
 Write-Host ''
