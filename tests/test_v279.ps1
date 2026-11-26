@@ -57,7 +57,7 @@ Invoke-Expression $m.Value
 $null = New-HuntFindings
 
 $huntLogText = Get-Content -LiteralPath $huntLog -Raw
-Check "T12: exactly one trace line per rule (51 rule blocks)" (@([regex]::Matches($huntLogText, '(?m)^\[[\d:]+\] R\d')).Count -eq 51)
+Check "T12: exactly one trace line per rule (53 rule blocks)" (@([regex]::Matches($huntLogText, '(?m)^\[[\d:]+\] R\d')).Count -eq 53)
 Check "T12: R13 trace carries input counts AND findings-out counts (the brief's polarity example)" ($huntLogText -match [regex]::Escape('R13 discovery command storm: 2 accounts x 22 cmds (security_proc_events: 22 rows) -> 2 findings (2 low)'))
 Check "T12: R14 rule with a finding logs 1 in / 1 high out" ($huntLogText -match [regex]::Escape('R14 Defender tamper (5001/5007): defender_config_events: 1 rows -> 1 finding (1 high)'))
 Check "T12: clean rule logs its empty-input gate (R34)" ($huntLogText -match [regex]::Escape('R34 ADS on executables: ads_findings: 0 rows -> 0 findings'))

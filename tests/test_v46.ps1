@@ -1,4 +1,4 @@
-# test_v46.ps1 - v4.6 Sysmon deploy support (-Mode Setup sysmon* + Deploy -InstallSysmon)
+﻿# test_v46.ps1 - v4.6 Sysmon deploy support (-Mode Setup sysmon* + Deploy -InstallSysmon)
 $ErrorActionPreference = 'Stop'
 $scriptPath = $PSScriptRoot -replace 'tests$', ''
 $script:Checks = 0; $script:Fails = New-Object System.Collections.Generic.List[string]
@@ -66,7 +66,7 @@ Check 'wizard step 5 sysmon question' ($src -match "Install/refresh Sysmon telem
 Check 'wizard confirm line' ($src -match 'Sysmon    : \$\(if \(\$insSysmon\) \{ ''install/refresh before collect'' \}') ''
 Check 'wizard run passes -InstallSysmon' ($src -match 'Invoke-DeployMode -Targets \$targets -DeployPreset \$preset -Cred \$cred -DeployCaseID \$CaseID -DeploySharePath \$shareIn -Threads \$threads -PushBin \$push -DeployLogHours \$advLogHours -DeployLogWindow \$advLogWindow -InstallSysmon:\$insSysmon') ''
 Check 'direct dispatch passes -InstallSysmon' ($src -match '-InstallSysmon:\$InstallSysmon') ''
-Check 'version bumped' ($src -match 'Ophira v6\.2' -and $src -match '\$ScriptVersion = "6\.2"') ''
+Check 'version bumped' ($src -match 'Ophira v6\.3' -and $src -match '\$ScriptVersion = "6\.3"') ''
 
 Write-Host ''
 if ($script:Fails.Count -gt 0) {

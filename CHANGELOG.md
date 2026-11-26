@@ -6,6 +6,16 @@ Tuning becomes systematic: each host's own history decides what is background, a
 - **Fleet campaign narrative**: the largest union-find cluster now renders as a story card in fleet_report.html - hosts, shared evidence, worst verdict, and a suggested first pivot - instead of a bare table row.
 
 Test suite: `test_v61.ps1` (18 checks) - classification math (new/chronic/spike), baseline merge accumulation, unsafe-host-name sanitization, log line, report/fleet wiring pins.
+## v6.3 - Audit-CVE + process genealogy hunt rules
+
+Two new hunt rules ported from the shipped Sigma set (both credit 13Cubed), plus t-corr depth-2 chains.
+
+- **t-corr depth-2 chains**: pivots = each seed's rank-1 neighbour plus any candidate-flagged neighbour; from each pivot the top-2 neighbours within +/-30 min of the PIVOT's run time (Seed - Via - Name reads as one execution path, `Via` column, Bond 'chain hop', cap 100 chain rows). Fleet spread collector skips Via rows (they are not seed<->neighbour pairs); report table gains the Via column + honest path meta. Analytics-only - no verdict impact.
+- **R61 Audit-CVE exploitation events** (high, T1203, floor-3 verdict door): module 4.10 now pulls Application log events from the `Microsoft-Windows-Audit-CVE` provider (`Get-FilteredEvents -Provider`) into `csv\logs\audit_cve.csv` - CveEventWrite is the OS itself reporting a known-vulnerability exploitation attempt (Sigma f1c99d55 critical; in practice CVE-2020-0601-class). One high finding per row; report desc/emptyWhy rows + supertimeline weave + coverage row added.
+- **R62 System process wrong parent** (medium, T1036.005): process genealogy over `security_proc_events` (4688 ParentProcessName) + `sysmon_proc_create` (EID 1 ParentImage) - a core system binary (svchost/taskhost/lsm/lsass/services/lsaiso/csrss/wininit/winlogon) whose parent sits outside System32/SysWOW64 and is not a known product filter (SavService/ngen/MsMpEng leaves, null/empty parents skipped) is a masquerade or injection-spawn shape; deduped per child|parent pair across both sources (Sigma cf1c2cd4, 13Cubed Process Genealogy v2).
+- **Research backlog**: docs\research\2026-11-26-hunting-backlog.md - prioritized next candidates (USB-then-exec windows, LSASS dump file names, reg-save/hive-SMB command scans, Defender/PPL registry disables, DNS C2 scoring) with source rule IDs.
+- tests: test_v64.ps1 (23 checks: R61 finding shape, R62 violations/filters/dedup, trace lines, wiring pins); version-pin sweep 14 suites; test_v264 coverage 33->34 sources, test_v279 trace blocks 51->53, test_v280a literal-high 27->28.
+
 ## v6.2 - t-corr upgrades + fleet t-corr spread
 - New-TCorr (per-host temporal execution correlation) now keeps the **top 3 candidates per seed** (was best-only) with a Rank column, so the analyst sees the neighbourhood of a flagged binary, not just its loudest neighbour.
 - Seeds broadened: medium/high hunt findings plus **IOC-hit** and **YARA-hit** binary names (same .exe-leaf rule). A candidate that is itself flagged gets a 'candidate flagged' bond marker; 'bidirectional' bonds unchanged.

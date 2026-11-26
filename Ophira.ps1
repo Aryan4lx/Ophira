@@ -1,5 +1,5 @@
-<#
-Ophira v6.2  -  Windows Endpoint Triage Toolkit
+﻿<#
+Ophira v6.3  -  Windows Endpoint Triage Toolkit
 READ-ONLY by design: never modifies the system, only reads and copies data
 into its own output folder. Intended to be handed to a system owner or run
 by a responder during early triage / threat hunting.
@@ -391,7 +391,7 @@ param(
     [switch]$ShareZip
 )
 
-$ScriptVersion = "6.2"
+$ScriptVersion = "6.3"
 $ErrorActionPreference = 'Continue'
 $ProgressPreference = 'SilentlyContinue'
 
@@ -596,7 +596,7 @@ $script:CsvCatMap = @{
     'security_share_access' = 'logs'; 'security_kerberos' = 'logs'; 'security_ds_access' = 'logs'
     'powershell_events' = 'logs'; 'sysmon_events' = 'logs'; 'sysmon_network' = 'logs'; 'sysmon_dns' = 'logs'
     'sysmon_image_load' = 'logs'; 'sysmon_process_access' = 'logs'; 'sysmon_registry' = 'logs'
-    'sysmon_file_time' = 'logs'; 'sysmon_proc_create' = 'logs'
+    'sysmon_file_time' = 'logs'; 'sysmon_proc_create' = 'logs'; 'audit_cve' = 'logs'
     'sysmon_file_create' = 'logs'; 'sysmon_file_delete' = 'logs'
     'sysmon_remote_thread' = 'logs'; 'sysmon_pipes' = 'logs'
     'sysmon_proc_tamper' = 'logs'; 'sysmon_raw_access' = 'logs'; 'sysmon_wmi' = 'logs'
@@ -2063,6 +2063,7 @@ $fleetTc = New-Object System.Collections.Generic.List[object]   # v6.2: per-host
                 try {
                     foreach ($r in (Import-Csv $tc)) {
                         if (-not "$($r.Seed)" -or -not "$($r.Name)") { continue }
+                        if ("$($r.Via)") { continue }   # v6.3: chain hops are not seed<->neighbour pairs
                         $null = $fleetTc.Add([pscustomobject]@{ Host = $host_; Seed = "$($r.Seed)"; Name = "$($r.Name)"; Weight = "$($r.Weight)"; Bond = "$($r.Bond)" })
                     }
                 } catch { }
@@ -4336,6 +4337,13 @@ $script:Modules = @(
             if ($ev.Count -gt 0) {
                 Write-CaseLog "    application events: $($ev.Count) (crashes/installs - crashed attacker tools show up here) -> csv\application_events.csv" 'Gray'
             }
+            # v6.3 (R61): Audit-CVE (CveEventWrite) - the OS reporting a known-vulnerability
+            # exploitation attempt (13Cubed "CVEs in Windows Event Logs"; Sigma f1c99d55, critical).
+            # Provider filter is exact-match; short-form provider name on some builds.
+            $acve = @(Get-FilteredEvents -LogName 'Application' -Ids @() -Start $start -Provider 'Microsoft-Windows-Audit-CVE')
+            if ($acve.Count -eq 0) { $acve = @(Get-FilteredEvents -LogName 'Application' -Ids @() -Start $start -Provider 'Audit-CVE') }
+            Save-Rows -Name 'audit_cve' -Rows $acve
+            if ($acve.Count -gt 0) { Write-CaseLog "    AUDIT-CVE: $($acve.Count) exploitation event(s) - the OS logged a known-vulnerability exploit attempt (see R61)" 'Red' }
             # v2.83 (R46): ESENT 325/326 mentioning ntds.dit - the AD database was opened
             Save-Rows -Name 'esent_ntds' -Rows (Get-EsentNtdsRows $start)
             Export-Evtx -LogName 'Application' -FileName 'Application.evtx'
@@ -5801,10 +5809,13 @@ public class OphiraDump {
 )
 
 function Get-FilteredEvents {
-    param([string]$LogName, [int[]]$Ids, $Start, [int]$MaxMsg = 500)
+    # v6.3: optional -Provider narrows by provider name (FilterHashtable ProviderName) -
+    # used for the Audit-CVE (CveEventWrite) pull where the EID alone would over-match.
+    param([string]$LogName, [int[]]$Ids, $Start, [int]$MaxMsg = 500, [string]$Provider = '')
     try {
         $filter = @{ LogName = $LogName }
         if ($Ids) { $filter.Id = $Ids }
+        if ("$Provider") { $filter.ProviderName = $Provider }
         if ($Start) { $filter.StartTime = $Start }
         if ($script:LogEndDT) { $filter.EndTime = $script:LogEndDT }
         $events = Get-WinEvent -FilterHashtable $filter -ErrorAction SilentlyContinue
@@ -7802,13 +7813,13 @@ a[name]{scroll-margin-top:66px}html{overflow-x:clip}[data-theme=light] .nav a.ac
     # ---------- temporal execution correlation (v2.85, v6.2 - the SANS-2017 t-corr view) ----------
     if ($tcorrRows.Count -gt 0) {
         $null = $sb.AppendLine("<h3>Temporal execution correlation (t-corr)</h3>")
-        $null = $sb.AppendLine("<table><tr><th>Seed (flagged binary)</th><th>Seed time</th><th>Executed nearby</th><th>Rank</th><th>Delta (min)</th><th>Weight</th><th>Bond</th><th>Path</th></tr>")
+        $null = $sb.AppendLine("<table><tr><th>Seed (flagged binary)</th><th>Seed time</th><th>Executed nearby</th><th>Rank</th><th>Delta (min)</th><th>Weight</th><th>Bond</th><th>Via</th><th>Path</th></tr>")
         Add-CapNote @($tcorrRows).Count 15 'exec_tcorr' 't-corr pairs'
         foreach ($tcR in ($tcorrRows | Select-Object -First 15)) {
             $tcCls = if ("$($tcR.Bond)" -match 'bidirectional') { 'crit' } elseif ((ConvertTo-SafeDbl $tcR.Weight) -ge 0.5) { 'med' } else { 'info' }
-            $null = $sb.AppendLine("<tr><td class='path'>$(ConvertTo-HtmlEsc $tcR.Seed)</td><td>$(ConvertTo-HtmlEsc $tcR.SeedTime)</td><td>$(ConvertTo-HtmlEsc $tcR.Name)</td><td>$(ConvertTo-HtmlEsc $tcR.Rank)</td><td>$(ConvertTo-HtmlEsc $tcR.DeltaMinutes)</td><td class='$tcCls'>$(ConvertTo-HtmlEsc $tcR.Weight)</td><td>$(ConvertTo-HtmlEsc $tcR.Bond)</td><td class='path'>$(ConvertTo-HtmlEsc $tcR.Path)</td></tr>")
+            $null = $sb.AppendLine("<tr><td class='path'>$(ConvertTo-HtmlEsc $tcR.Seed)</td><td>$(ConvertTo-HtmlEsc $tcR.SeedTime)</td><td>$(ConvertTo-HtmlEsc $tcR.Name)</td><td>$(ConvertTo-HtmlEsc $tcR.Rank)</td><td>$(ConvertTo-HtmlEsc $tcR.DeltaMinutes)</td><td class='$tcCls'>$(ConvertTo-HtmlEsc $tcR.Weight)</td><td>$(ConvertTo-HtmlEsc $tcR.Bond)</td><td>$(ConvertTo-HtmlEsc $tcR.Via)</td><td class='path'>$(ConvertTo-HtmlEsc $tcR.Path)</td></tr>")
         }
-        $null = $sb.AppendLine("</table><div class='meta'>For every flagged binary (hunt findings, IOC hits, YARA hits): the top 3 other executions within +-30 min (weight = exp(-delta/10 min), 0.1 floor). A <b>bidirectional</b> bond means both binaries strongly imply each other; <b>candidate flagged</b> means the neighbour is itself a flagged binary - look at those pairs first. Analytics view only (no verdict impact) - t-corr ranks leads, it does not judge them. Source: csv\exec_tcorr.csv</div>")
+        $null = $sb.AppendLine("</table><div class='meta'>For every flagged binary (hunt findings, IOC hits, YARA hits): the top 3 other executions within +-30 min (weight = exp(-delta/10 min), 0.1 floor). A <b>bidirectional</b> bond means both binaries strongly imply each other; <b>candidate flagged</b> means the neighbour is itself a flagged binary - look at those pairs first. Rows with a <b>Via</b> entry are depth-2 chain hops: the seed ran near Via (its rank-1 or candidate-flagged neighbour) and Via ran near Name - Delta/Weight measure the Via-to-Name hop, so Seed - Via - Name reads as one execution path. Analytics view only (no verdict impact) - t-corr ranks leads, it does not judge them. Source: csv\exec_tcorr.csv</div>")
     } else {
         $null = $sb.AppendLine("<h3>Temporal execution correlation (t-corr)</h3><div class='meta'>No correlations - t-corr needs flagged binaries (hunt findings / IOC hits / YARA hits) plus timestamped execution evidence (amcache FileKeyLastWriteTimestamp, prefetch run history, 4688/Sysmon process creation). Neither side is populated for this case.</div>")
     }
@@ -9103,7 +9114,7 @@ a[name]{scroll-margin-top:66px}html{overflow-x:clip}[data-theme=light] .nav a.ac
     'exec_stacks_bypath'              = 'Execution stacking per folder: distinct names run from each directory (mass-staging view - temp dirs full of one-shot exes stand out)'
     'exec_window_ratio'              = 'Time-stacking: executions inside vs outside the investigation window (-After/-Before or the focus dossier window) - window-exclusive files bubble to the top'
     'recon_sessions'                 = 'Recon-session clustering: discovery tools (net/whoami/nltest/...) grouped by execution time - a burst of distinct tools in one short session is hands-on recon'
-    'exec_tcorr'                     = 'Temporal execution correlation: other executions within +-30 min of each medium/high hunt finding, decay-weighted - bidirectional pairs are the interesting ones'
+    'exec_tcorr'                     = 'Temporal execution correlation: other executions within +-30 min of each medium/high hunt finding, decay-weighted - bidirectional pairs are the interesting ones; depth-2 chain hops (Via column) follow the path past the strongest neighbours'
     'consistency_flags'              = 'Cross-artifact consistency: one artifact says a binary executed while another source is silent (prefetch gap = scrub candidate, amcache gap = wipe candidate) or a user-path binary with no run evidence at all (staged)'
     'wmi_activity'                   = 'WMI-Activity operational log (5857/5860/5861) - EID 5861 temporary event consumers are a persistence trick'
     'winrm_events'                   = 'WinRM operational log (91/163) - remote PowerShell / management sessions reaching this host'
@@ -9181,6 +9192,7 @@ a[name]{scroll-margin-top:66px}html{overflow-x:clip}[data-theme=light] .nav a.ac
         'userassist'                      = 'UserAssist GUI programs executed per user'
         'mft_recent'                      = 'MFT: recently created / user-path executables (both birth attributes: $Si Created + FILE_NAME CreatedFN - R22 timestamp-forgery checks)'
         'application_events'              = 'Application log: app crashes (1000/1001/1002) + MSI installs (1033/11707/11724) - crashed attacker tools'
+        'audit_cve'                       = 'Audit-CVE events (CveEventWrite) - the OS reporting a known-vulnerability exploitation attempt; any row is significant'
         'startup_info'                    = 'StartupInfo per-session app launches (WDI XMLs) - execution evidence that survives Prefetch deletion'
         'wer_reports'                     = 'Windows Error Reporting crash reports (faulting app/module) - evidence of failed attacker tooling'
         'server_logs'                     = 'Inventory of copied server-role logs (DNS/DHCP audit, SYSVOL policies). NTDS.dit is never collected by policy'
@@ -9283,6 +9295,7 @@ a[name]{scroll-margin-top:66px}html{overflow-x:clip}[data-theme=light] .nav a.ac
         # log sources (window/auditing), Sysmon classes (endpoint config enables specific EIDs),
         # Defender (service owned by third-party AV), tool-dependent parses, derived joins
         'application_events'              = 'no application crashes (1000/1001/1002) or MSI installs (1033/11707/11724) in the window - mostly good, though crashed attacker tooling would also have shown here'
+        'audit_cve'                       = 'no Audit-CVE events - nothing triggered CveEventWrite (empty is good; the channel only fires on known-vuln exploitation attempts like CVE-2020-0601)'
         'powershell_events'               = 'no PowerShell operational events (4104 script blocks / 400 engine) in the window - script-block logging may be off (see posture), or PowerShell was simply not used'
         'security_events'                 = 'no Security-log events in the window - auditing may be minimal, or the log was cleared (a cleared Security log is itself a finding - see logging_gaps)'
         'security_auth_events'            = 'no logon events (4624/4625/4634/4647/4648) in the window - logon auditing may be disabled, or no sessions occurred'
@@ -9695,7 +9708,7 @@ function New-SuperTimeline {
     $leaf = { param($p) try { if ("$p") { (Split-Path "$p" -Leaf) } else { '' } } catch { "$p" } }
 
     # generic event-log CSVs (Get-FilteredEvents shape: TimeCreated/Id/Message)
-    foreach ($name in @('security_events', 'powershell_events', 'sysmon_events', 'system_events', 'defender_events', 'rdp_localsession', 'rdp_connections', 'application_events')) {
+    foreach ($name in @('security_events', 'powershell_events', 'sysmon_events', 'system_events', 'defender_events', 'rdp_localsession', 'rdp_connections', 'application_events', 'audit_cve')) {
         $buf = New-Object System.Collections.Generic.List[object]
         foreach ($r in (Import-CaseCsv $name)) {
             if (-not $r.PSObject.Properties['TimeCreated']) { continue }
@@ -10923,19 +10936,66 @@ function New-TCorr {
             $e = $ce.Value
             $null = $out.Add([pscustomobject]@{
                 Seed = $sd; SeedTime = $e.SeedT.ToString('yyyy-MM-dd HH:mm'); Name = $ce.Key; Path = $e.Path
-                DeltaMinutes = [Math]::Round($e.Dt / 60.0, 1); Weight = [Math]::Round($e.W, 3); Rank = $rank; Bond = ''
+                DeltaMinutes = [Math]::Round($e.Dt / 60.0, 1); Weight = [Math]::Round($e.W, 3); Rank = $rank; Bond = ''; Via = ''
             })
             $pk = "$sd|$($ce.Key)"
             if (-not $pairW.ContainsKey($pk) -or $pairW[$pk] -lt $e.W) { $pairW[$pk] = $e.W }
         }
     }
-    $bondN = 0
+    # v6.3: depth-2 chains - follow each seed's pivots (its rank-1 neighbour plus any
+    # candidate-flagged neighbour) one hop further, so staged execution (dropper -> payload ->
+    # tooling) reads as a path instead of isolated pairs. Chain rows carry Via = the intermediate
+    # hop; DeltaMinutes/Weight measure hop 2 against the pivot's own run time.
+    $emitted = @{}
+    foreach ($r in $out) { $emitted["$($r.Seed)|$($r.Name)"] = $true }
+    $pivots = @{}
     foreach ($r in $out) {
-        $rk = "$($r.Name)|$($r.Seed)"
-        if ($pairW.ContainsKey($rk) -and $pairW[$rk] -ge 0.5 -and $r.Weight -ge 0.5) { $r.Bond = 'bidirectional'; $bondN++ }
+        if ($r.Rank -eq 1 -or $seedSet.ContainsKey($r.Name)) { $pivots["$($r.Seed)|$($r.Name)"] = $true }
+    }
+    $chains = New-Object System.Collections.Generic.List[object]
+    foreach ($pv in $pivots.Keys) {
+        $sep = $pv.IndexOf('|')
+        $sd2 = $pv.Substring(0, $sep); $pn = $pv.Substring($sep + 1)
+        $pTimes = @(($pool | Where-Object { $_.Name -eq $pn } | ForEach-Object { $_.T } | Sort-Object -Unique))
+        if ($pTimes.Count -eq 0) { continue }
+        $pc = @{}
+        foreach ($pt in $pTimes) {
+            foreach ($p in $pool) {
+                if ($p.Name -eq $pn -or $p.Name -eq $sd2) { continue }
+                if ($emitted.ContainsKey("$sd2|$($p.Name)")) { continue }
+                $dt = [Math]::Abs(($p.T - $pt).TotalSeconds)
+                if ($dt -gt 1800) { continue }
+                $w = [Math]::Exp(-$dt / 600.0)
+                if ($w -lt 0.1) { continue }
+                if (-not $pc.ContainsKey($p.Name) -or $w -gt $pc[$p.Name].W) {
+                    $pc[$p.Name] = @{ W = $w; Dt = [int]$dt; Path = $p.Path; PT = $pt }
+                }
+            }
+        }
+        $rank2 = 0
+        foreach ($ce in @($pc.GetEnumerator() | Sort-Object { $_.Value.W } -Descending | Select-Object -First 2)) {
+            $rank2++
+            $e = $ce.Value
+            $null = $chains.Add([pscustomobject]@{
+                Seed = $sd2; SeedTime = $e.PT.ToString('yyyy-MM-dd HH:mm'); Name = $ce.Key; Path = $e.Path
+                DeltaMinutes = [Math]::Round($e.Dt / 60.0, 1); Weight = [Math]::Round($e.W, 3); Rank = $rank2; Bond = 'chain hop'; Via = $pn
+            })
+        }
+    }
+    # chain rows capped at 100 (by weight) so one busy seed cannot flood the csv.
+    $chainsTop = @($chains.ToArray() | Sort-Object @{e = 'Weight'; Descending = $true} | Select-Object -First 100)
+    $allT = New-Object System.Collections.Generic.List[object]
+    foreach ($r in $out) { $null = $allT.Add($r) }
+    foreach ($r in $chainsTop) { $null = $allT.Add($r) }
+    $bondN = 0
+    foreach ($r in $allT) {
+        if (-not "$($r.Via)") {
+            $rk = "$($r.Name)|$($r.Seed)"
+            if ($pairW.ContainsKey($rk) -and $pairW[$rk] -ge 0.5 -and $r.Weight -ge 0.5) { $r.Bond = 'bidirectional'; $bondN++ }
+        }
         if ($seedSet.ContainsKey($r.Name)) { $r.Bond = ("$($r.Bond) candidate flagged").Trim() }
     }
-    $out2 = @($out | Sort-Object @{e = 'Weight'; Descending = $true} | Select-Object -First 2000)
+    $out2 = @($allT.ToArray() | Sort-Object @{e = 'Weight'; Descending = $true} | Select-Object -First 2000)
     Save-Rows -Name 'exec_tcorr' -Rows $out2
     Write-CaseLog "    t-corr: $($seeds.Count) seed(s) over $($pool.Count) execution event(s) -> $($out2.Count) correlation pair(s) ($bondN bidirectional) -> csv\exec_tcorr.csv" 'Gray'
 }
@@ -12422,6 +12482,42 @@ function New-HuntFindings {
         }
     }
     & $trace 'R60' 'hands-on-keyboard typed execution' "user_mru: $r60Hi writable-exe typed + $r60Low muicache writable + $r60Info context"
+    # ---------- R61 (v6.3): Audit-CVE exploitation events ----------
+    # CveEventWrite: the OS logs when a KNOWN vulnerability is exploited (in practice only
+    # CVE-2020-0601-class writes; any row is significant - 13Cubed "CVEs in Windows Event Logs",
+    # Sigma f1c99d55 level=critical)
+    $r61N = 0
+    foreach ($r61 in @(Import-CaseCsv 'audit_cve')) {
+        $r61N++
+        & $find 'Audit-CVE exploitation event (CveEventWrite)' 'high' ("$($r61.Provider)") "$($r61.TimeCreated) EID $($r61.Id): $($r61.Message)" 'T1203'
+    }
+    & $trace 'R61' 'Audit-CVE exploitation events' "audit_cve: $($r61N) row(s)"
+    # ---------- R62 (v6.3): system process wrong parent (process genealogy) ----------
+    # A core system binary whose parent sits outside System32/SysWOW64 (and is not a known
+    # product filter) is a masquerade or injection-spawn shape - 13Cubed Windows Process
+    # Genealogy PDF / Sigma cf1c2cd4. Sources: 4688 ParentProcessName + Sysmon EID1 ParentImage.
+    $r62Sys = @('\svchost.exe', '\taskhost.exe', '\taskhostw.exe', '\taskhostex.exe', '\lsm.exe', '\lsass.exe', '\services.exe', '\lsaiso.exe', '\csrss.exe', '\wininit.exe', '\winlogon.exe')
+    $r62Seen = @{}
+    foreach ($r62src in @('security_proc_events', 'sysmon_proc_create')) {
+        foreach ($r62 in @(Import-CaseCsv $r62src)) {
+            $child = ''; $parent = ''
+            if ($r62src -eq 'security_proc_events') { $child = "$($r62.NewProcess)"; $parent = "$($r62.ParentProcess)" }
+            else { $child = "$($r62.Image)"; $parent = "$($r62.ParentImage)" }
+            $childLeaf = ''
+            try { $childLeaf = (Split-Path $child -Leaf).ToLower() } catch { }
+            if (-not $childLeaf -or -not ($r62Sys -contains ('\' + $childLeaf))) { continue }
+            if (-not $parent -or $parent -eq '-') { continue }   # sigma filter_null: unknown parent carries no evidence
+            $parentLeaf = ''
+            try { $parentLeaf = (Split-Path $parent -Leaf).ToLower() } catch { }
+            if (@('savservice.exe', 'ngen.exe', 'msmpeng.exe') -contains $parentLeaf) { continue }   # filter_sys / filter_msmpeng
+            if ($parent -match '(?i)\\system32\\|\\syswow64\\|\\windows defender\\|\\microsoft security client\\') { continue }
+            $r62Key = "$childLeaf|$parentLeaf"
+            if ($r62Seen.ContainsKey($r62Key)) { continue }
+            $r62Seen[$r62Key] = $true
+            & $find 'System process with wrong parent (genealogy violation)' 'medium' $childLeaf "'$childLeaf' spawned by '$parent' - parent outside System32 and not a known product filter (masquerade or injection-spawn)" 'T1036.005'
+        }
+    }
+    & $trace 'R62' 'system process wrong parent' "security_proc_events + sysmon_proc_create scanned -> $($r62Seen.Count) distinct violation(s)"
 
     # v2.87 storm guard: one broken source can flood one rule with hundreds of rows and
     # drown both the report and the verdict - cap each rule+severity at 15 rows and
@@ -12924,6 +13020,11 @@ function Get-CompromiseVerdict {
         if (Test-IsUserWritablePath $emb60) { $r60Typed += $r60t }
     }
     Add-Signal 'Hands-on-keyboard typed execution (RunMRU/TypedPaths)' 2 $r60Typed.Count (($r60Typed | Select-Object -First 2 | ForEach-Object { "$($_.Entry)" }) -join '; ')
+    # v6.3 (R61) Audit-CVE door - CveEventWrite fired = the OS itself logged a known-vuln
+    # exploitation attempt; same evidence class as a critical Sigma hit (floor 3)
+    $r61Rows = @(Import-CaseCsv 'audit_cve')
+    Add-Signal 'Audit-CVE exploitation event (CveEventWrite)' 3 $r61Rows.Count (($r61Rows | Select-Object -First 2 | ForEach-Object { "$($_.TimeCreated)" }) -join '; ')
+    # v6.3 (R62) has no dedicated door - medium hunt findings ride the 'Hunt techniques' catch-all
     # v5.9 cross-artifact consistency door - AMCACHE-GAP only. The PREFETCH-GAP view is
     # report-only (59 benign gaps on a healthy box: installer payloads/AV scans/churn - see
     # New-ConsistencyCheck); amcache silence after an audited run is the rare, real shape.
@@ -12956,6 +13057,7 @@ function Get-CompromiseVerdict {
     Add-Cov 'DNS query telemetry (Sysmon EID 22)' (Test-CaseCsv 'sysmon_dns') 4
     Add-Cov 'Entity correlation' (Test-CaseCsv 'entities_binaries') 3
     Add-Cov 'Hunt rules' (Test-CaseCsv 'hunt_findings') 3
+    Add-Cov 'Audit-CVE telemetry (CveEventWrite)' (Test-CaseCsv 'audit_cve') 1
     Add-Cov 'Svchost masquerade audit' (Test-CaseCsv 'svchost_audit') 2
     Add-Cov 'Remote access sweep (tunnels/RA tools/SSH keys)' (Test-CaseCsv 'remote_access') 2
     Add-Cov 'Structured telemetry (4688 / Sysmon 2-13)' ((Test-CaseCsv 'security_proc_events') -or (Test-CaseCsv 'sysmon_process_access') -or (Test-CaseCsv 'sysmon_file_create')) 3

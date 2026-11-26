@@ -1,4 +1,4 @@
-# tests/test_v400.ps1 - v4.0 truth batch fixtures
+﻿# tests/test_v400.ps1 - v4.0 truth batch fixtures
 #   P1 BAM decoder (module 8.11): value NAME = executable, value bytes = last-exec FILETIME
 #   P2 new-service parse (module 4.5): bounded captures survive whitespace-collapsed messages
 #   P3 R37 scrub survivor honors shimcache Executed=no (no finding for never-executed paths)
@@ -181,7 +181,7 @@ Check "P8: R37 trace mentions no-flag gate" ($src -match 'shimcache_exec\(no-fla
 Check "P8: brute filter excludes '-'/'::1'/127.0.0.1" ($src.Contains(" `$_.Name -ne '-' -and `$_.Name -ne '::1' -and `$_.Name -ne '127.0.0.1'"))
 Check "P8: anyT matches deleted columns" ($src.Contains('(?i)time|date|deleted'))
 Check "P8: recyclebin RBCmd weave present" ($src.Contains("& `$weave 'recyclebin' 1000"))
-Check "P8: version 6.2" ($src -match '\$ScriptVersion = "6\.2"')
+Check "P8: version 6.3" ($src -match '\$ScriptVersion = "6\.3"')
 
 Write-Host ''
 if ($fail -gt 0) { Write-Host "PASSED: $pass FAILED: $fail" -ForegroundColor Red; exit 1 }

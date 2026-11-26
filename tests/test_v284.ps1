@@ -1,4 +1,4 @@
-# test_v284.ps1 - v2.84: execution stacking (byName/byPath) + known-bad regex pack + time-window ratio
+﻿# test_v284.ps1 - v2.84: execution stacking (byName/byPath) + known-bad regex pack + time-window ratio
 # Part 1: Get-KnownBadRegexes pack sanity (parses, severity, why).
 # Part 2: New-ExecStacks - byName multi-path stacking, byPath staging view, prefetch
 #         no-extension normalization, '(unknown path)' bucketing, window ratio + skip path.
@@ -175,7 +175,7 @@ Check "wire: report stacking h3 present" ($src.Contains('Execution stacks - one 
 Check "wire: report window h3 present" ($src.Contains('Investigation-window time-stacking (what ran ONLY inside the window)'))
 Check "wire: report no-window note stays honest" ($src.Contains('a made-up window would fabricate signal'))
 Check "wire: report imports for the three artifacts" ($src.Contains("Import-CaseCsv 'exec_stacks_byname.csv'") -and $src.Contains("Import-CaseCsv 'exec_stacks_bypath.csv'") -and $src.Contains("Import-CaseCsv 'exec_window_ratio.csv'"))
-Check "wire: version bumped to 6.2" ($src.Contains('$ScriptVersion = "6.2"'))
+Check "wire: version bumped to 6.3" ($src.Contains('$ScriptVersion = "6.3"'))
 
 # ============================================================================
 Write-Host ""

@@ -1,4 +1,4 @@
-# test_v48.ps1 - SRUM analyst-side completion honesty (v5.0)
+﻿# test_v48.ps1 - SRUM analyst-side completion honesty (v5.0)
 # The verdict must SAY when SRUM egress analysis is pending (raw DB copied,
 # deep-parse analyst-side) instead of silently diverging from the post-Parse verdict.
 $ErrorActionPreference = 'Stop'
@@ -20,8 +20,8 @@ Check 'caveat sits inside the verdict engine'  (($iVd -lt $iCav) -and ($iCav -lt
 Check 'why-note explains the divergence design' ($src -match "net9, never shipped")
 
 # P2: version
-Check 'header bumped to v5.9' ($src -match 'Ophira v6\.2  -  Windows Endpoint Triage Toolkit')
-Check 'ScriptVersion 5.3'     ($src -match '\$ScriptVersion = "6\.2"')
+Check 'header bumped to v5.9' ($src -match 'Ophira v6\.3  -  Windows Endpoint Triage Toolkit')
+Check 'ScriptVersion 5.3'     ($src -match '\$ScriptVersion = "6\.3"')
 
 # P3: functional - the caveat condition is a pure expression; evaluate its logic shape
 # by simulating the two branches with a sandboxed Test-Path/Test-CaseCsv pair.

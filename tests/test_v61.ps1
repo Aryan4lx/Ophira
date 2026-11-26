@@ -1,4 +1,4 @@
-# test_v61.ps1 - v6.2 t-corr upgrades: top-3 ranked candidates, IOC/YARA seeds, candidate-flagged bond.
+﻿# test_v61.ps1 - v6.2 t-corr upgrades: top-3 ranked candidates, IOC/YARA seeds, candidate-flagged bond.
 $ErrorActionPreference = 'Stop'
 $src = Get-Content (Join-Path $PSScriptRoot '..\Ophira.ps1') -Raw
 $fails = 0
@@ -58,8 +58,11 @@ New-TCorr
 
 $rows = @($script:savedRows.ToArray())
 Check 'rows exist' ($rows.Count -gt 0)
-Check 'top3 per seed' ($rows.Count -eq 12) "got $($rows.Count)"
-$evRows = @($rows | Where-Object { $_.Seed -eq 'evil.exe' } | Sort-Object Rank)
+# v6.3: pin single-hop rows only (chain rows carry Via and grow the set legitimately)
+$singleHop = @($rows | Where-Object { -not "$($_.Via)" })
+Check 'top3 per seed' ($singleHop.Count -eq 12) "got $($singleHop.Count)"
+# v6.3: rank assertions apply to single-hop rows only (chain rows have their own Rank 1..2 space)
+$evRows = @($singleHop | Where-Object { $_.Seed -eq 'evil.exe' } | Sort-Object Rank)
 Check 'ranks 1..3' ($evRows[0].Rank -eq 1 -and $evRows[1].Rank -eq 2 -and $evRows[2].Rank -eq 3)
 Check 'rank1 = closest' ($evRows[0].Name -eq 'n1.exe') "got $($evRows[0].Name)"
 Check 'rank3 = next-nearest by weight' ($evRows[2].Name -eq 'iocdrop.exe') "got $($evRows[2].Name)"
@@ -88,7 +91,7 @@ Check 'fleet_tcorr csv written' ($src.Contains("fleet_tcorr.csv"))
 Check 'fleet t-corr console line' ($src.Contains('FLEET T-CORR SPREAD'))
 Check 'fleet per-host exec_tcorr load' ($src.Contains("Join-Path `$csvDir 'exec_tcorr.csv'"))
 Check 'fleet report h2' ($src.Contains('Fleet t-corr spread'))
-Check 'version 6.2' ($src.Contains('$ScriptVersion = "6.2"'))
+Check 'version 6.3' ($src.Contains('$ScriptVersion = "6.3"'))
 
 Write-Host "test_v61: $(16 - $fails) checks passed, $fails failed"
 if ($fails -gt 0) { exit 1 } else { exit 0 }

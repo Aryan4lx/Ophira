@@ -1,4 +1,4 @@
-# test_v3.ps1 - v3.0: YARA Forge integration + noise suppression + design v3 pins
+﻿# test_v3.ps1 - v3.0: YARA Forge integration + noise suppression + design v3 pins
 # Extracts module 4.7 (YARA scan) and asserts the forge-dir merge; structural pins for
 # the Setup catalog row, the report noise-suppression block, tactic drill-downs,
 # branding reword and design-v3 CSS.
@@ -42,7 +42,7 @@ Check 'tactics: drill link emitted' ($src.Contains("open the Sigma drill-down fo
 Check 'brand: endpoint triage toolkit header' ($src.Contains('Windows Endpoint Triage Toolkit'))
 Check 'brand: no old IR banner left' (-not $src.Contains('Windows IR toolkit'))
 Check 'brand: nav brand sub' ($src.Contains('endpoint triage report'))
-Check 'brand: version 6.2' ($src.Contains('$ScriptVersion = "6.2"'))
+Check 'brand: version 6.3' ($src.Contains('$ScriptVersion = "6.3"'))
 
 # design v3 css
 Check 'css: body depth gradient' ($src.Contains('radial-gradient(1100px 480px'))
