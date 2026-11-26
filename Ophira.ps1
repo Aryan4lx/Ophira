@@ -6661,6 +6661,7 @@ a{color:var(--acc);text-decoration:none}a:hover{color:var(--tx)}
 .path{font-family:Consolas,monospace;font-size:12px;color:var(--acc);overflow-wrap:anywhere}
 table{border-collapse:collapse;width:100%;max-width:100%;font-size:13px}th,td{border:1px solid var(--line);padding:7px 11px;text-align:left;overflow-wrap:anywhere;line-height:1.5;vertical-align:top}
 th{background:linear-gradient(var(--bg3),var(--bg2));color:var(--acc);position:sticky;top:50px;z-index:2}tr:nth-child(even){background:var(--bg3)}
+table.tct th{white-space:nowrap}
 details{margin:10px 0;padding:6px 10px;background:var(--bg2);border:1px solid var(--line);border-radius:8px}summary{cursor:pointer;padding:4px 0}
 .crit{color:var(--bad);font-weight:700}.high{color:#ffb35c}.med{color:var(--warn)}.low{color:var(--info)}.info{color:var(--tx3)}
 .sevdot{display:inline-block;width:10px;height:10px;border-radius:3px;margin-right:7px;vertical-align:baseline;background:var(--tx3)}td.crit .sevdot{background:var(--bad)}td.med .sevdot{background:var(--warn)}td.info .sevdot{background:var(--info)}
@@ -7813,7 +7814,7 @@ a[name]{scroll-margin-top:66px}html{overflow-x:clip}[data-theme=light] .nav a.ac
     # ---------- temporal execution correlation (v2.85, v6.2 - the SANS-2017 t-corr view) ----------
     if ($tcorrRows.Count -gt 0) {
         $null = $sb.AppendLine("<h3>Temporal execution correlation (t-corr)</h3>")
-        $null = $sb.AppendLine("<table><tr><th>Seed (flagged binary)</th><th>Seed time</th><th>Executed nearby</th><th>Rank</th><th>Delta (min)</th><th>Weight</th><th>Bond</th><th>Via</th><th>Path</th></tr>")
+        $null = $sb.AppendLine("<table class='tct'><tr><th>Seed (flagged binary)</th><th>Seed time</th><th>Executed nearby</th><th>Rank</th><th>Delta (min)</th><th>Weight</th><th>Bond</th><th>Via</th><th>Path</th></tr>")
         Add-CapNote @($tcorrRows).Count 15 'exec_tcorr' 't-corr pairs'
         foreach ($tcR in ($tcorrRows | Select-Object -First 15)) {
             $tcCls = if ("$($tcR.Bond)" -match 'bidirectional') { 'crit' } elseif ((ConvertTo-SafeDbl $tcR.Weight) -ge 0.5) { 'med' } else { 'info' }
