@@ -1,4 +1,4 @@
-$repoScript = Join-Path (Split-Path -Parent $PSScriptRoot) "Ophira.ps1"
+﻿$repoScript = Join-Path (Split-Path -Parent $PSScriptRoot) "Ophira.ps1"
 # v2.20 - APT depth: structured parses (EID 10/13/2, 4688/4698/5140/5145, Defender 5001/5007),
 # hunt rules R8-R15, verdict wiring, Get-EventDataRows helper, fleet lateral-chain stitching
 $ErrorActionPreference = 'Stop'
@@ -140,7 +140,7 @@ Check "helper: real event keeps Time+EventId and maps missing field to empty" ($
 # PART 4 - structural wiring: SIEM, fleet lateral chain, whitelist, huntHi regex
 # ============================================================================
 Check "whitelist: Get-EventDataRows in SharedFunctions" ($src -match "'Get-EventDataRows'")
-Check "verdict: huntHi regex covers new high rules" ($src -match "LSASS access\|Office app spawned\|proxy-execution\|Admin-share\|" -and $src -match "WMI event subscription\|Sysmon configuration changed\|Lookalike system binary")
+Check "verdict: huntHi regex covers new high rules" ($src -match "LSASS access\|LSASS dump\|secretsdump\|ntdsutil\|RunAsPPL\|Office app spawned\|proxy-execution\|Admin-share\|" -and $src -match "WMI event subscription\|Sysmon configuration changed\|Lookalike system binary")
 Check "siem: hunt_finding kind exported" ($src -match "kind'\] = 'hunt_finding'")
 Check "fleet: lateral chain output + join sources present" ($src -match 'fleet_lateral_chain\.csv' -and $src -match 'security_share_access\.csv' -and $src -match 'net_interfaces\.csv')
 Check "fleet: HuntHit finding type mapped" ($src -match "'hunt_findings\.csv'\s+= 'HuntHit'")

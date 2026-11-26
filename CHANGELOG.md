@@ -1,11 +1,14 @@
-## v6.1 - sigma baseline-diff + fleet campaign narrative
+## v6.4 - credential-dump + lateral-intro hunt rules (Tier 1)
 
-Tuning becomes systematic: each host's own history decides what is background, and fleet clusters read as one story.
+Five hunt rules from the R&D backlog, all running on data Ophira already collects.
 
-- **Sigma baseline-diff (analyst-side)**: the first `-Mode Parse` of a host writes `baselines\sigma_<host>.csv` next to Ophira.ps1 (per-rule SeenCount/HitsSum/MaxLevel). Every later Parse classifies each rule **new / spike / chronic** against that history (spike = >= 2x this host's own average + 5 headroom, so a single-hit flake never spikes) into `csv\derived\sigma_baseline_diff.csv` (regen step 26). The sigma section then states the comparison honestly - "compared against N prior collection(s) of this host" - and annotates chronic low/medium rules as host-normal background. Verdict levels are untouched and critical/high rules NEVER fold, no matter how chronic.
-- **Fleet campaign narrative**: the largest union-find cluster now renders as a story card in fleet_report.html - hosts, shared evidence, worst verdict, and a suggested first pivot - instead of a bare table row.
+- **R63 USB first-seen then execution trail** (medium, T1091): a USB device's install-key LastWrite followed by binary executions (prefetch LastRun/PreviousRun0-6, userassist executables) within -2/+30 min; one finding per device, evidence lists the nearest binaries. Rides the hunt catch-all (no door).
+- **R64 LSASS dump artifacts** (high, T1003.001): Sysmon EID 11 TargetFilename `lsass*.dmp`, plus the command-line surface `comsvcs.dll ... MiniDump` across 4688 / Sysmon EID 1 / PowerShell 4104. Powers the floor-3 credential-dump regex term 'LSASS dump'.
+- **R65 hive dump + dump-tool command surface** (medium/high, T1003.002/T1003/T1003.003): `reg save` of SAM/SYSTEM/SECURITY/SOFTWARE hives (medium), secretsdump (high), ntdsutil (high) in command lines / 4104 scriptblocks - command-surface coverage the leaf-name R50 pack never had.
+- **R66 Defender / LSA protection disabled via registry** (high, T1562.001): Sysmon EID 13 - DisableAntiSpyware / DisableRealtimeMonitoring / DisableAntiVirus set nonzero, or RunAsPPL (Control\Lsa[\OSConfig]) set 0. Value-aware (trailing-hex parse of `DWORD (0x00000001)` shapes); GPO re-enable writes (0 on Defender keys, nonzero on RunAsPPL) never flag; unparseable values skipped, never guessed.
+- **R67 suspicious scheduled task action** (medium, T1053.005): 4698 task Command whose first token is a LOLBin (powershell/cmd/rundll32/regsvr32/mshta/...) or lives in a user-writable path; dedup per TaskName.
+- tests: test_v65.ps1 (24 checks: per-rule windows/dedup/filters/kind-mapping, value-parse shapes, wiring pins); test_v279 trace blocks 53->58; test_v280a literal-highs 28->30; test_v220 huntHi regex coverage pin extended.
 
-Test suite: `test_v61.ps1` (18 checks) - classification math (new/chronic/spike), baseline merge accumulation, unsafe-host-name sanitization, log line, report/fleet wiring pins.
 ## v6.3 - Audit-CVE + process genealogy hunt rules
 
 Two new hunt rules ported from the shipped Sigma set (both credit 13Cubed), plus t-corr depth-2 chains.
@@ -22,6 +25,15 @@ Two new hunt rules ported from the shipped Sigma set (both credit 13Cubed), plus
 - Report t-corr table: Rank column + updated honesty meta (seed sources, both bond meanings).
 - Fleet (-Mode Analyze): each host's derived exec_tcorr.csv is collected; correlation pairs recurring on **2+ hosts** are surfaced as FLEET T-CORR SPREAD (console + fleet_tcorr.csv + fleet report h2) - shared toolkit behaviour across hosts, campaign-grade evidence.
 - tests: test_v61.ps1 (16 checks: top-3 ranking, IOC/YARA seeding, flagged-candidate bond, fleet wiring); version-pin sweep across 20 suites; region window re-pinned.
+
+## v6.1 - sigma baseline-diff + fleet campaign narrative
+
+Tuning becomes systematic: each host's own history decides what is background, and fleet clusters read as one story.
+
+- **Sigma baseline-diff (analyst-side)**: the first `-Mode Parse` of a host writes `baselines\sigma_<host>.csv` next to Ophira.ps1 (per-rule SeenCount/HitsSum/MaxLevel). Every later Parse classifies each rule **new / spike / chronic** against that history (spike = >= 2x this host's own average + 5 headroom, so a single-hit flake never spikes) into `csv\derived\sigma_baseline_diff.csv` (regen step 26). The sigma section then states the comparison honestly - "compared against N prior collection(s) of this host" - and annotates chronic low/medium rules as host-normal background. Verdict levels are untouched and critical/high rules NEVER fold, no matter how chronic.
+- **Fleet campaign narrative**: the largest union-find cluster now renders as a story card in fleet_report.html - hosts, shared evidence, worst verdict, and a suggested first pivot - instead of a bare table row.
+
+Test suite: `test_v61.ps1` (18 checks) - classification math (new/chronic/spike), baseline merge accumulation, unsafe-host-name sanitization, log line, report/fleet wiring pins.
 
 ## v6.0 - user MRU artifacts (hands-on-keyboard execution evidence)
 

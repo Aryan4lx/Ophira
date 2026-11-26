@@ -50,7 +50,7 @@ $r4 = @(New-FleetWaveRows (New-Object 'System.Collections.Generic.List[object]')
 Check 'empty input' ($r4.Count -eq 0) ''
 
 # wiring pins
-Check 'version bumped' ($src -match 'Ophira v6\.3' -and $src -match '\$ScriptVersion = "6\.3"') ''
+Check 'version bumped' ($src -match 'Ophira v6\.4' -and $src -match '\$ScriptVersion = "6\.4"') ''
 Check 'merge ingests amcache stamps' ($src.Contains("foreach (`$cn in @('FileKeyLastWriteTimestamp', 'KeyLastWriteTimestamp', 'LastWriteTimestamp'))")) ''
 Check 'waves csv exported' ($src.Contains("fleet_waves.csv")) ''
 Check 'report h2 present' ($src.Contains('Deployment waves (coordinated first-seen across hosts)')) ''

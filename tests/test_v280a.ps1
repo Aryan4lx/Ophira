@@ -75,11 +75,14 @@ $expectedHi = @(
     'Typed execution of user-writable binary (RunMRU/TypedPaths)'
     # v6.3 Audit-CVE high with a dedicated floor-3 door (OS-reported known-vuln exploitation)
     'Audit-CVE exploitation event (CveEventWrite)'
+    # v6.4 LSASS-dump highs (R64; huntHi catch-all via the credential-dump regex terms)
+    'LSASS dump file created (Sysmon EID 11)'
+    'LSASS dump via comsvcs MiniDump (command line)'
 )
 Check "hunt rules: found $totalFinds &find call sites (extraction sane)" ($totalFinds -ge 40)
 $litHiUniq = @($litHi | Sort-Object -Unique)
 $dedicatedHi = @('Hidden scheduled task (TaskCache SD value stripped)', 'ntds.dit accessed (ESENT 325/326)', 'PsExec-family service install (EID 7045)', 'Impacket wmiexec execution signature', 'Impacket atexec execution signature', 'Typed execution of user-writable binary (RunMRU/TypedPaths)', 'Audit-CVE exploitation event (CveEventWrite)')
-Check "literal-high rules: 28 distinct (got $($litHiUniq.Count))" ($litHiUniq.Count -eq 28)
+Check "literal-high rules: 30 distinct (got $($litHiUniq.Count))" ($litHiUniq.Count -eq 30)
 $misses = @($expectedHi | Where-Object { $_ -notin $dedicatedHi -and $_ -notmatch $verdictRe })
 Check "dedicated verdict-door highs are wired as signals" ($src.Contains("Add-Signal 'Hidden scheduled task (TaskCache SD stripped)' 3") -and $src.Contains("Add-Signal 'ntds.dit accessed - non-backup pattern (ESENT 325/326)' 3") -and $src.Contains("Add-Signal 'PsExec-family service install (EID 7045)' 3") -and $src.Contains("Add-Signal 'Impacket/wmiexec execution signature (4688)' 3") -and $src.Contains("Add-Signal 'Hands-on-keyboard typed execution (RunMRU/TypedPaths)' 2") -and $src.Contains("Add-Signal 'Audit-CVE exploitation event (CveEventWrite)' 3"))
 Check "every literal-high rule name matches the verdict high-precision regex$(if ($misses.Count) { ' - misses: ' + ($misses -join '; ') })" ($misses.Count -eq 0)

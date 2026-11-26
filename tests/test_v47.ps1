@@ -60,7 +60,7 @@ Check 'weave task_updates' ($src.Contains("& `$weave 'task_updates' 200")) ''
 Check 'weave ps_module_log' ($src.Contains("& `$weave 'ps_module_log' 500")) ''
 Check 'desc entries' ($src -match "'task_updates'\s+= 'Scheduled task updates \(4702\)" -and $src -match "'ps_module_log'\s+= 'PowerShell Module Logging events \(4103\)" -and $src -match "'laps_state'\s+= 'Local admin password solution") ''
 Check 'emptyWhy entries' ($src -match "'task_updates'\s+= 'no scheduled task updates" -and $src -match "'ps_module_log'\s+= 'no PowerShell Module Logging" -and $src -match "'laps_state'\s+= 'no LAPS state recorded") ''
-Check 'version bumped' ($src -match 'Ophira v6\.3' -and $src -match '\$ScriptVersion = "6\.3"') ''
+Check 'version bumped' ($src -match 'Ophira v6\.4' -and $src -match '\$ScriptVersion = "6\.4"') ''
 
 Write-Host ''
 if ($script:Fails.Count -gt 0) {

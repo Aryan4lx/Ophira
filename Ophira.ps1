@@ -1,5 +1,5 @@
 ﻿<#
-Ophira v6.3  -  Windows Endpoint Triage Toolkit
+Ophira v6.4  -  Windows Endpoint Triage Toolkit
 READ-ONLY by design: never modifies the system, only reads and copies data
 into its own output folder. Intended to be handed to a system owner or run
 by a responder during early triage / threat hunting.
@@ -391,7 +391,7 @@ param(
     [switch]$ShareZip
 )
 
-$ScriptVersion = "6.3"
+$ScriptVersion = "6.4"
 $ErrorActionPreference = 'Continue'
 $ProgressPreference = 'SilentlyContinue'
 
@@ -12519,6 +12519,143 @@ function New-HuntFindings {
         }
     }
     & $trace 'R62' 'system process wrong parent' "security_proc_events + sysmon_proc_create scanned -> $($r62Seen.Count) distinct violation(s)"
+    # ---------- R63 (v6.4): first-time-seen USB -> execution window ----------
+    # Binary executions (prefetch run times / userassist) landing within 30 min of a USB
+    # device's install-key last-write are the dropped-loader shape (Elastic
+    # initial_access_exfiltration_first_time_seen_usb). R5 stays the report-only USB view;
+    # this is the time-window join. Registry LastWrite is a first-connect PROXY and
+    # prefetch keeps only the last 8 runs, so this proves OVERLAP, not that the binary
+    # came FROM the device - hence medium, no verdict door (T1091).
+    $r63Devs = @()
+    foreach ($r63d in @(Import-CaseCsv 'usb_devices')) {
+        $r63tU = Get-InvariantDate $r63d.LastWrite
+        if ($r63tU -eq [datetime]::MinValue) { continue }
+        $r63Runs = @{}
+        foreach ($r63src in @('prefetch_parsed', 'userassist')) {
+            foreach ($r63r in @(Import-CaseCsv $r63src)) {
+                if ($r63src -eq 'userassist' -and "$($r63r.Kind)" -ne 'executable') { continue }
+                $r63Name = ''; $r63times = @()
+                if ($r63src -eq 'prefetch_parsed') { $r63Name = "$($r63r.ExecutableName)"; $r63times = @('LastRun', 'PreviousRun0', 'PreviousRun1', 'PreviousRun2', 'PreviousRun3', 'PreviousRun4', 'PreviousRun5', 'PreviousRun6') }
+                else { $r63Name = "$($r63r.Entry)"; $r63times = @('LastRun') }
+                if (-not $r63Name) { continue }
+                foreach ($r63cn in $r63times) {
+                    $r63p = $r63r.PSObject.Properties[$r63cn]
+                    if (-not $r63p -or -not $r63p.Value) { continue }
+                    $r63t = Get-InvariantDate $r63p.Value
+                    if ($r63t -eq [datetime]::MinValue) { continue }
+                    $r63dMin = [Math]::Round(($r63t - $r63tU).TotalMinutes, 1)
+                    if ($r63dMin -ge -2 -and $r63dMin -le 30) {
+                        if (-not $r63Runs.ContainsKey($r63Name.ToLower())) { $r63Runs[$r63Name.ToLower()] = $r63dMin }
+                        break
+                    }
+                }
+            }
+        }
+        if ($r63Runs.Count -gt 0) {
+            $r63Top = @($r63Runs.GetEnumerator() | Sort-Object { [Math]::Abs($_.Value) } | Select-Object -First 3)
+            $r63Devs += "$($r63d.Serial)"
+            & $find 'USB first-seen then execution trail' 'medium' "USB $($r63d.Serial)" "$($r63Runs.Count) binary/binaries ran within the first-seen USB window ($(($r63Top | ForEach-Object { "$($_.Key) ($($_.Value) min)" }) -join ', '))" 'T1091'
+        }
+    }
+    & $trace 'R63' 'USB first-seen then execution' "usb_devices: $($r63Devs.Count) device(s) with same-window execution trail"
+    # ---------- R64 (v6.4): LSASS dump file created (EID 11 + command surface) ----------
+    # A file literally named lsass*.dmp appearing on disk, or comsvcs.dll MiniDump on a
+    # command line/script block, is credential-dump OUTPUT (Elastic
+    # credential_access_lsass_memdump_file_created). R10 covers the EID 10 handle-access
+    # view; this is the artifact side.
+    $r64Seen = @{}
+    foreach ($r64f in @(Import-CaseCsv 'sysmon_file_create')) {
+        if ("$($r64f.TargetFilename)" -notmatch '(?i)(^|\\)lsass[^\\]*\.dmp$') { continue }
+        $r64leaf = ("$($r64f.TargetFilename)" -split '[\\/]')[-1]
+        if ($r64Seen.ContainsKey("f|$r64leaf")) { continue }
+        $r64Seen["f|$r64leaf"] = $true
+        & $find 'LSASS dump file created (Sysmon EID 11)' 'high' $r64leaf "'$($r64f.TargetFilename)' created by '$($r64f.Image)' - credential-dump artifact on disk" 'T1003.001'
+    }
+    foreach ($r64src in @('security_proc_events', 'sysmon_proc_create', 'powershell_events')) {
+        foreach ($r64c in @(Import-CaseCsv $r64src)) {
+            if ($r64src -eq 'powershell_events' -and "$($r64c.Id)" -ne '4104') { continue }
+            $r64cmd = if ($r64src -eq 'powershell_events') { "$($r64c.Message)" } else { "$($r64c.CommandLine)" }
+            if (-not $r64cmd -or $r64cmd -notmatch '(?i)comsvcs\.dll.{0,60}minidump') { continue }
+            if ($r64Seen.ContainsKey("c|$r64src")) { continue }
+            $r64Seen["c|$r64src"] = $true
+            $r64ev = if ($r64cmd.Length -gt 160) { $r64cmd.Substring(0, 160) } else { $r64cmd }
+            & $find 'LSASS dump via comsvcs MiniDump (command line)' 'high' $r64src "comsvcs.dll MiniDump on a command line/script block: $r64ev" 'T1003.001'
+        }
+    }
+    & $trace 'R64' 'LSASS dump file created' "sysmon_file_create + proc/powershell command surfaces -> $($r64Seen.Count) artifact(s)"
+    # ---------- R65 (v6.4): registry-hive dump / NTDS command heads ----------
+    # 'reg save' of the SAM/SECURITY/SYSTEM hives, secretsdump and ntdsutil on a command
+    # line or script block are credential-dump prep (Elastic dump_registry_hives /
+    # moving_registry_hive_via_smb). R50 covers tool FILE NAMES; this covers the command
+    # surface (the process is usually python.exe/cmd.exe, not the tool name).
+    $r65Pats = @(
+        [pscustomobject]@{ Pat = '(?i)\breg(\.exe)?\s+save\s'; Sev = 'medium'; Name = 'reg save hive dump command'; Why = 'a registry hive (SAM/SECURITY/SYSTEM) is being saved to a file - credential-theft prep or IR tooling (verify the operator)'; Attck = 'T1003.002' }
+        [pscustomobject]@{ Pat = '(?i)secretsdump'; Sev = 'high'; Name = 'secretsdump command surface'; Why = 'secretsdump module invocation (remote hash/credential extraction tooling)'; Attck = 'T1003' }
+        [pscustomobject]@{ Pat = '(?i)\bntdsutil\b'; Sev = 'high'; Name = 'ntdsutil command surface'; Why = 'ntdsutil invoked - AD database (ntds.dit) theft prep; the ESENT-side view is R46'; Attck = 'T1003.003' }
+    )
+    $r65Seen = @{}
+    foreach ($r65src in @('security_proc_events', 'sysmon_proc_create', 'powershell_events')) {
+        foreach ($r65c in @(Import-CaseCsv $r65src)) {
+            if ($r65src -eq 'powershell_events' -and "$($r65c.Id)" -ne '4104') { continue }
+            $r65cmd = if ($r65src -eq 'powershell_events') { "$($r65c.Message)" } else { "$($r65c.CommandLine)" }
+            if (-not $r65cmd) { continue }
+            foreach ($r65p in $r65Pats) {
+                if ($r65cmd -notmatch $r65p.Pat) { continue }
+                $r65key = "$($r65p.Name)|$r65src"
+                if ($r65Seen.ContainsKey($r65key)) { continue }
+                $r65Seen[$r65key] = $true
+                $r65ev = if ($r65cmd.Length -gt 160) { $r65cmd.Substring(0, 160) } else { $r65cmd }
+                & $find $r65p.Name $r65p.Sev $r65src "$($r65p.Why) - $r65ev" $r65p.Attck
+                break
+            }
+        }
+    }
+    & $trace 'R65' 'hive dump / NTDS command heads' "proc + powershell command surfaces -> $($r65Seen.Count) pattern/source hit(s)"
+    # ---------- R66 (v6.4): Defender / LSA PPL disabled via registry (EID 13) ----------
+    # SetValue disabling the two default credential-dump obstacles (Elastic
+    # defender_disabled_via_registry, lsass_ppl_disabled_registry). Only fires when the
+    # written VALUE is parseable - empty/unknown Details carry no direction, so they are
+    # skipped rather than guessed (GPO refreshes write 0 = re-enable, never flagged).
+    $r66Seen = @{}
+    foreach ($r66 in @(Import-CaseCsv 'sysmon_registry')) {
+        $r66obj = "$($r66.TargetObject)"
+        if (-not $r66obj) { continue }
+        # trailing-hex extraction: Sysmon writes 'DWORD (0x00000001)', reg-text is
+        # 'dword:00000001' - the last hex run before end is the value in both shapes
+        $r66m = [regex]::Match("$($r66.Details)", '(?i)(0x)?([0-9a-f]+)\)?\s*$')
+        if (-not $r66m.Success -or -not $r66m.Groups[2].Value) { continue }
+        $r66n = $null
+        try { $r66n = [Convert]::ToInt64($r66m.Groups[2].Value, 16) } catch { continue }
+        $r66kind = ''
+        if ($r66obj -match '(?i)\\Microsoft\\Windows Defender(\\[a-z0-9 ]+)*\\Disable(AntiSpyware|RealtimeMonitoring|AntiVirus)$' -and $r66n -ne 0) { $r66kind = 'Defender real-time protection disabled via registry' }
+        elseif ($r66obj -match '(?i)\\Control\\Lsa(\\OSConfig)?\\RunAsPPL$' -and $r66n -eq 0) { $r66kind = 'LSA Protection (RunAsPPL) disabled via registry' }
+        if (-not $r66kind) { continue }
+        $r66leaf = ($r66obj -split '\\')[-1]
+        if ($r66Seen.ContainsKey("$r66kind|$r66leaf")) { continue }
+        $r66Seen["$r66kind|$r66leaf"] = $true
+        & $find $r66kind 'high' $r66leaf "'$r66obj' set to $r66n by '$($r66.Image)' - defense-evasion before credential access" 'T1562.001'
+    }
+    & $trace 'R66' 'Defender / LSA PPL disabled via registry' "sysmon_registry: $($r66Seen.Count) disable write(s)"
+    # ---------- R67 (v6.4): scheduled-task install/update with suspicious action ----------
+    # 4698/4702 carries the task XML; the collector extracts <Command>. A task whose
+    # action is a LOLBin head or runs from a user-writable path is atexec-style
+    # persistence (Sigma scheduled-task creation family; joins R45's cache-tamper view).
+    $r67Seen = @{}
+    foreach ($r67 in @(Import-CaseCsv 'security_task_install')) {
+        $r67cmd = ("$($r67.Command)" -replace '\s+', ' ').Trim()
+        if (-not $r67cmd) { continue }
+        $r67why = ''
+        $r67first = ($r67cmd -split ' ')[0].Trim('"')
+        if ($r67first -match '(?i)^(powershell|pwsh|cmd|rundll32|regsvr32|mshta|wscript|cscript|msbuild|installutil|certutil|msxsl)(\.exe)?("|$)') { $r67why = 'LOLBin task action' }
+        elseif ($r67first -match '\\' -and (Test-IsUserWritablePath $r67first)) { $r67why = 'task action from a user-writable path' }
+        if (-not $r67why) { continue }
+        $r67tn = "$($r67.TaskName)"
+        if (-not $r67tn -or $r67Seen.ContainsKey($r67tn)) { continue }
+        $r67Seen[$r67tn] = $true
+        $r67ev = if ($r67cmd.Length -gt 160) { $r67cmd.Substring(0, 160) } else { $r67cmd }
+        & $find 'Scheduled task with suspicious action' 'medium' $r67tn "task installed/updated ($r67why, by $($r67.Account)): $r67ev" 'T1053.005'
+    }
+    & $trace 'R67' 'scheduled task suspicious action' "security_task_install: $($r67Seen.Count) task(s) flagged"
 
     # v2.87 storm guard: one broken source can flood one rule with hundreds of rows and
     # drown both the report and the verdict - cap each rule+severity at 15 rows and
@@ -12835,7 +12972,7 @@ function Get-CompromiseVerdict {
     $postureBad = @($posture | Where-Object { "$($_.Status)" -eq 'BAD' })
     $credSweep = Import-CaseCsv 'credential_sweep'
     $hunt = Import-CaseCsv 'hunt_findings'
-    $huntHi = @($hunt | Where-Object { "$($_.Severity)" -eq 'high' -and "$($_.Rule)" -match 'Renamed LOLBin|side-load|Downloaded then executed|LSASS access|Office app spawned|proxy-execution|Admin-share|Defender (real-time|exclusion)|DCSync|Password spray|Web server spawned|Remote-access tunnel|ServiceDll tamper|authorized_keys|Svchost masquerade|Cross-process injection|C2-style named pipe|image tampering|Direct volume access|WMI event subscription|Sysmon configuration changed|Lookalike system binary|Misplaced system binary|Known-bad name pattern' })
+    $huntHi = @($hunt | Where-Object { "$($_.Severity)" -eq 'high' -and "$($_.Rule)" -match 'Renamed LOLBin|side-load|Downloaded then executed|LSASS access|LSASS dump|secretsdump|ntdsutil|RunAsPPL|Office app spawned|proxy-execution|Admin-share|Defender (real-time|exclusion)|DCSync|Password spray|Web server spawned|Remote-access tunnel|ServiceDll tamper|authorized_keys|Svchost masquerade|Cross-process injection|C2-style named pipe|image tampering|Direct volume access|WMI event subscription|Sysmon configuration changed|Lookalike system binary|Misplaced system binary|Known-bad name pattern' })   # v6.4: +LSASS dump/secretsdump/ntdsutil/RunAsPPL (R64-R66 credential-dump family)
     # v2.64: EcsConfigs-only 5007 exclusion - Features\EcsConfigs is Defender's tamper-protected,
     # platform-managed cloud-config key (rewritten on every engine sync), NOT a user-set exclusion.
     # A 'Defender exclusion configuration changed' finding that only touches EcsConfigs paths is
