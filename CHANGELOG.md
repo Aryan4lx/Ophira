@@ -6,6 +6,7 @@ Three hunt rules covering persistence and lateral-movement surfaces that were re
 - **R69 Run-key autostart LOLBin+tell** (medium, T1547.001): Run/RunOnce values whose command starts with a LOLBin AND carries a tell (encoded/hidden/nop flags, http(s), UNC payload, appdata/temp/programdata path). Bare LOLBin without a tell stays silent - the OneDrive-shaped vendor entries this box ships never flag.
 - **R70 DCOM lateral command surface** (medium, T1021.003): MMC20.Application / RunHTA / ExecuteShellCommand strings across 4688 command lines, Sysmon EID 1, and PowerShell 4104 scriptblocks; dedup per pattern+source.
 - tests: test_v66.ps1 (26 checks: per-rule severity/entity/evidence, dedup + filter negatives, kind mapping, wiring pins); test_v279 trace blocks 58->61; test_v280a literal-highs 30->31; test_v220 huntHi regex pin extended; version sweep covered the 4 escaped-regex test files (v46/v47/v48/v49).
+- **Release kits + headless cookbook** (README + release workflow, no script change): releases now ship three zips - script-only (<1 MB), **lite** (~34 MB: hayabusa + Sigma rules, EZ parsers, LOLDrivers, winpmem) and **bundle** (~113 MB: every tracked tool incl. chainsaw/YARA/vol3/SQLECmd) - all hashed in SHA256SUMS; README gains the kit table (what runs with no tools\ and the Setup fallback) and a headless one-liner cookbook (what/why/when per `-Mode`, `-ExitVerdict` for schedulers, the two marked prompts).
 
 ## v6.4 - credential-dump + lateral-intro hunt rules (Tier 1)
 

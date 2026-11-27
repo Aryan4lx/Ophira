@@ -12,19 +12,25 @@ Built first for the **MSSP / fleet responder**: triage endpoints across many cli
 
 ## Get the kit
 
-`git clone` is the reliable path (long file paths in the bundled rule packs exceed Windows' 260-char ZIP limit in some locations):
+Three ready-to-run kits ship with every release (`SHA256SUMS` carries the hash of every asset). Pick the one that fits the job:
+
+| Asset | Size | What's inside |
+|---|---|---|
+| `Ophira-vX.Y.zip` | <1 MB | script + `RUN-OPHIRA.bat` + docs - no tools |
+| `Ophira-vX.Y-lite.zip` | ~34 MB | + hayabusa (incl. Sigma rules), the EZ parsers, LOLDrivers, winpmem |
+| `Ophira-vX.Y-bundle.zip` | ~113 MB | + everything: chainsaw, YARA, vol3, SQLECmd, SrumECmd |
+
+- **Bundle** is the out-of-the-box kit: collection, all offline parsing, memory triage and verdict work with zero downloads. If you might be offline - or need to email a kit to a first responder - take this one.
+- **Lite** covers collection plus a standard `-Mode Parse` (filesystem, execution-timeline and Sigma evidence). chainsaw/YARA/vol3/SQLECmd can be fetched later with `-Mode Setup`.
+- **Script-only** is the code-only kit. Pure-PowerShell collection works with no tools at all - every parser that needs a missing tool logs and skips, and the report's coverage table shows exactly what is missing (never a crash). `-Mode Setup` downloads whatever the case needs from official sources.
+
+Long file paths in the bundled rule packs exceed Windows' 260-char ZIP limit in some locations, so extract with `tar -xf` or 7-Zip - **not** Explorer's built-in extractor:
 
 ```
-git clone https://github.com/Aryan4lx/Ophira.git
+tar -xf Ophira-v6.5-bundle.zip
 ```
 
-If you download the ZIP instead, do **not** use Explorer's built-in extractor - use either:
-
-```
-tar -xf Ophira-main.zip            # tar.exe ships with Windows 10+ and handles long paths
-```
-
-or 7-Zip ("Extract" from the context menu).
+`git clone` remains the reliable path for the full repo. A belt-and-braces `Get-ChildItem -Recurse | Unblock-File` on the extracted folder clears any mark-of-the-web the download carried (`RUN-OPHIRA.bat` unblocks the script itself regardless).
 
 **Read-only by design** - never kills processes, never deletes files, never modifies the system. Only reads and copies.
 
@@ -67,6 +73,75 @@ or 7-Zip ("Extract" from the context menu).
 ```
 
 **Owner handoff:** send the whole folder. They double-click `RUN-OPHIRA.bat`, accept UAC, wait 3-5 minutes. A folder window opens with the result file selected and its path is copied to the clipboard - they paste it into an email. If you pre-fill `ophira.config.txt` (SHARE=/CASE=/ANALYST=), results upload to your share automatically and there's literally nothing to send. Pre-fill `LOGWINDOW=30d` (or `LOGSTART=`/`LOGEND=` for an exact range) to widen the analysis window beyond the default 7 days - the owner's DONE screen prints the resolved range (`Checked: Last 30d`) so you can confirm it took.
+
+## Run it headless: one-liners
+
+Everything also runs without the TUI. Hand these to RMM agents, scheduled tasks, wrappers - or just paste them into a terminal. The only prompts you will ever see are the ones marked; `ophira.config.txt` pre-fills SHARE/CASE/ANALYST/LOGWINDOW so even these lines can run zero-argument. Add `-ExitVerdict` to any verdict-producing run and the process exit code carries the verdict rank (2 = SUSPICIOUS, 3 = LIKELY COMPROMISED, 4 = COMPROMISED, 0 = clean/not assessed), so a scheduler can sort hosts without reading reports.
+
+### Collect this PC, unattended
+
+```
+.\Ophira.ps1 -NoMenu -Preset Standard -CaseID INC-2026-042
+```
+
+**What:** one command, zero clicks - Standard-depth collection (3-5 min) into `OPHIRA_<host>_<stamp>`, ending with the evidence zip, report.html and verdict. **Why:** this is the line you embed in GPO, an RMM agent, or paste to a first responder over chat. **When:** any collection you don't want to babysit. Tune depth with `-Preset Flash|Quick|Standard|Full`, widen the log analysis with `-LogWindow 30d`, push results to your share with `-SharePath \\SRV\collections$`, and run from a limited account with `-NoElevate` (skips show honestly in the coverage table).
+
+### Finish a case on the analyst PC
+
+```
+.\Ophira.ps1 -Mode Parse -ParsePath .\OPHIRA_HOST_20260926_120000.zip -ExitVerdict
+```
+
+**What:** re-runs every raw-driven parser (Amcache, LECmd, SQLECmd, chainsaw, hayabusa, memory) over the case's `raw\` evidence and rebuilds supertimeline, verdict, SIEM export and report.html. **Why:** endpoints can collect Flash/Quick; heavy analytics happen later on YOUR hardware using tools\analyst. **When:** a case zip arrives by email or lands in your share - or whenever hunt rules improved, since re-parse upgrades old cases. Without `-ParsePath` it prompts for the newest case (marked prompt #1).
+
+### Push-and-run across the fleet
+
+```
+.\Ophira.ps1 -Mode Deploy -TargetsFile hosts.txt -PushTools -Credential (Get-Credential)
+```
+
+**What:** copies the script (plus tools\endpoint with `-PushTools`) to each host over WinRM, collects unattended in parallel (`-MaxThreads 8` default), pulls finished case zips back, removes itself. **Why:** N machines, one command - endpoints parse their own evidence when tools ride along. **When:** an incident with known scope; short lists can use `-ComputerName SRV01,SRV02`. Prompts once for credentials (marked prompt #2).
+
+### Merge the fleet into one view
+
+```
+.\Ophira.ps1 -Mode Analyze -AnalyzePath .\collections
+```
+
+**What:** merges every `OPHIRA_*.zip` in the folder into `fleet_report.html` - per-host verdicts, worst-first ranking, fleet ATT&CK roll-up, cross-host campaign clustering. **Why:** one verdict is a story; twenty are a campaign (mass-deploy vs mass-infection, shared binaries, lateral chains). **When:** after a Deploy wave, or any time cases pile up in a share.
+
+### One entity, full dossier
+
+```
+.\Ophira.ps1 -Mode Focus -ParsePath <case> -ProcessName evil.exe
+```
+
+**What:** the activity chain of ONE entity - seed with a name, PID, path, hash, IP, ip:port or port and it iteratively expands across every CSV into `focus\focus_report.html`; `-After`/`-Before` bound the window. **Why:** "what did THIS do" beats reading a 22-finding report linearly. **When:** triaging a specific hunt hit. `-Mode Timeline -TimelineStart/-TimelineEnd` cuts the master timeline to a UTC window the same way.
+
+### Client-safe handoff
+
+```
+.\Ophira.ps1 -Mode Share -ParsePath <case> -Redact -ShareZip
+```
+
+**What:** builds the client-safe bundle - analyst-side files stripped, hosts/users/internal IPs/MACs tokenized (the map stays with you), the redacted report swapped in, one zip to attach. **Why:** clients don't need raw evidence or their users' names in a report. **When:** MSSP/customer hand-off.
+
+### Install or update tools
+
+```
+.\Ophira.ps1 -Mode Setup        # ENTER = all; -SetupTools hayabusa,winpmem for a list
+.\Ophira.ps1 -Mode UpdateRules  # refresh the Sigma rule pack
+```
+
+**What:** downloads companion tools into tools\ from their official sources (receipts recorded); `-Mode Links` prints the download pages only. **Why:** the script-only kit ships no tools by design - this fills the gaps. **When:** you took the script-only or lite zip and now need chainsaw/YARA/vol3/SQLECmd, or you want fresher Sigma rules.
+
+### Prove the pipeline works
+
+```
+.\Ophira.ps1 -Mode Canary
+```
+
+**What:** plants harmless labeled test activity, runs the whole detect - parse - verdict chain over it, prints a FIRED/MISS/BLIND scorecard. **Why:** "tools downloaded" is not "detection works". **When:** after Setup, after rule updates, and before you trust the kit on a real case. Cousins: `-Mode Watch` (live read-only diff while a sample detonates), `-Mode Tune` (quiet noisy Sigma rules), `-Mode Help` (the full parameter reference).
 
 ## Interactive launcher (role gate + task menu)
 
@@ -180,7 +255,7 @@ Merges N case zips â†' `fleet_report.csv` + **`fleet_report.html`** (**per-ho
 
 ## Companion tools
 
-Two folders - **`tools\endpoint\`** is what `Deploy -PushTools` ships to remote hosts (hayabusa, chainsaw, yara, the EZ parsers, LOLDrivers lists, winpmem â‰ˆ 72 MB zipped, 9979 files); **`tools\analyst\`** never leaves your PC (volatility3 memory analysis, SQLECmd browser parser - it needs .NET 9 which endpoints rarely have; its targets are parsed analyst-side via `-Mode Parse`). Ophira finds tools recursively in both. Refresh via `-Mode Setup` or each project's releases:
+**`tools\endpoint\`** is what `Deploy -PushTools` ships to remote hosts (hayabusa, chainsaw, yara, the EZ parsers, LOLDrivers lists, winpmem - ~120 MB, 9,000+ files; also what the release **bundle** zip packs - the **lite** zip ships just hayabusa + EZ parsers + winpmem); **`tools\analyst\`** never leaves your PC (volatility3 memory analysis, SQLECmd browser parser - it needs .NET 9 which endpoints rarely have; its targets are parsed analyst-side via `-Mode Parse`). Ophira finds tools recursively in both. Refresh via `-Mode Setup` or each project's releases:
 
 | Tool | Enables | Download |
 |---|---|---|
@@ -370,6 +445,7 @@ while ($true) { try { (New-Object Net.Sockets.TcpClient('1.1.1.1', 443)).Close()
 - [x] **Audit-CVE + process genealogy hunt rules (v6.3)**: R61 Audit-CVE (CveEventWrite - the OS itself reporting a known-vulnerability exploitation attempt, high, floor-3 verdict door, collected via provider filter in module 4.10) and R62 system-process-wrong-parent (4688 + Sysmon EID 1 genealogy check with Sigma cf1c2cd4 filters, medium); both cite-verified against the shipped Sigma set, research backlog in docs\research\2026-11-26-hunting-backlog.md
 - [x] **Credential-dump + lateral-intro hunt rules (v6.4)**: R63 USB-then-exec window (T1091), R64 LSASS dump file + comsvcs MiniDump command surface (high, T1003.001), R65 reg-save hive / secretsdump / ntdsutil command scans (T1003.x), R66 Defender-disable + RunAsPPL registry writes with value-aware parsing (high, T1562.001), R67 suspicious 4698 task actions (T1053.005) - all on already-collected data; 'LSASS dump|secretsdump|ntdsutil|RunAsPPL' joined the floor-3 credential-dump regex
 - [x] **Service/run-key/DCOM hunt rules (v6.5)**: R68 7045 service-binary triage (LOLBin high + user-writable medium, T1543.003, 'LOLBin service binary' joined the floor-3 regex), R69 Run-key autostart LOLBin+tell scan (medium, T1547.001 - bare LOLBin without a hidden/encoded/UNC/user-path tell stays silent so OneDrive-shaped vendor entries never flag), R70 DCOM lateral command surface (MMC20.Application / RunHTA / ExecuteShellCommand across 4688 + Sysmon EID 1 + 4104, medium, T1021.003)
+- [x] **Release kits + headless cookbook**: releases now ship three zips - script-only (<1 MB), **lite** (~34 MB: hayabusa+Sigma, EZ parsers, LOLDrivers, winpmem) and **bundle** (~113 MB: every tracked tool) - plus SHA256SUMS, so the kit is genuinely ready-to-go without a clone; README gains the kit table (what happens with no tools\, Setup fallback) and a headless one-liner cookbook (what/why/when per `-Mode`, `-ExitVerdict` for schedulers)
 - [x] **User MRU artifacts (v6.0)**: RunMRU (Win+R), TypedPaths (Explorer address bar) and MUICache collectors; typed user-writable executable paths flag HIGH as hands-on-keyboard staging (T1204, dedicated floor-2 verdict door); R60 severity gates keep installer churn low/context-only; new csv\artifacts\user_mru.csv
 
 ## Coverage vs Velociraptor (built-in Windows artifacts)

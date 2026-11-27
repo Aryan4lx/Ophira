@@ -65,7 +65,7 @@ Check "release: kit = script + bat + docs + license + hosts example" ((@('Ophira
 Check "release: missing kit file fails the build" ($wf -match 'throw "missing kit file')
 Check "release: zip named per tag + SHA256SUMS over every file" ($wf -match 'Ophira-\$tag\.zip' -and $wf -match 'SHA256SUMS' -and $wf -match 'Get-FileHash \$f -Algorithm SHA256')
 Check "release: version-tag consistency gate" ($wf -match 'Ophira\.ps1 version does not match tag')
-Check "release: notes extracted from the tag's CHANGELOG section" ($wf -match 'Escape\(\$env:GITHUB_REF_NAME\)' -and $wf -match 'no CHANGELOG section for')
+Check "release: notes extracted from the tag's CHANGELOG section" ($wf -match '\$t = \$env:GITHUB_REF_NAME' -and $wf -match 'Escape\(\$t\)' -and $wf -match 'no CHANGELOG section for')
 Check "release: gh release create with zip + sums + notes file" ($wf -match 'gh release create' -and $wf -match '--notes-file')
 
 # ============================================================================

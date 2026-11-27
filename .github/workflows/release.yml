@@ -1,7 +1,8 @@
+---
 name: release
-on:
+'on':
   push:
-    tags: [ 'v*' ]
+    tags: ['v*']
 permissions:
   contents: write
 jobs:
@@ -10,26 +11,114 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Build distribution zip + SHA256SUMS
+      - name: Build distribution zips + SHA256SUMS
         shell: pwsh
         run: |
+          # v6.5: three kits ship as release assets -
+          #   Ophira-<tag>.zip         script + docs only
+          #   Ophira-<tag>-lite.zip    + hayabusa (Sigma rules), EZ parsers,
+          #                            loldrivers, winpmem (email-able;
+          #                            covers Parse of a standard case)
+          #   Ophira-<tag>-bundle.zip  + ALL tools incl. chainsaw/yara/
+          #                            vol3/SQLECmd (everything works out
+          #                            of the box)
+          # Missing tools can be fetched later with -Mode Setup.
           $tag = $env:GITHUB_REF_NAME
-          $files = @('Ophira.ps1','RUN-OPHIRA.bat','README.md','CHANGELOG.md','LICENSE','hosts.txt.example')
-          foreach ($f in $files) { if (-not (Test-Path $f)) { throw "missing kit file: $f" } }
-          if ((Get-Content Ophira.ps1 -Raw) -notmatch [regex]::Escape("Ophira v$($tag.TrimStart('v'))")) { throw "Ophira.ps1 version does not match tag $tag" }
+          $lf = "`r`n"
+          $files = @(
+            'Ophira.ps1', 'RUN-OPHIRA.bat', 'README.md',
+            'CHANGELOG.md', 'LICENSE', 'hosts.txt.example')
+          foreach ($f in $files) {
+            if (-not (Test-Path $f)) { throw "missing kit file: $f" }
+          }
+          $ver = [regex]::Escape("Ophira v$($tag.TrimStart('v'))")
+          if ((Get-Content Ophira.ps1 -Raw) -notmatch $ver) {
+            throw "Ophira.ps1 version does not match tag $tag"
+          }
+          $liteTools = @(
+            'tools/endpoint/AmcacheParser',
+            'tools/endpoint/MFTECmd',
+            'tools/endpoint/PECmd',
+            'tools/endpoint/RBCmd',
+            'tools/endpoint/LECmd',
+            'tools/endpoint/JLECmd',
+            'tools/endpoint/SBECmd',
+            'tools/endpoint/hayabusa',
+            'tools/endpoint/loldrivers',
+            'tools/endpoint/go-winpmem_amd64_1.0-rc2_signed.exe')
+          foreach ($t in $liteTools) {
+            if (-not (Test-Path $t)) { throw "missing lite tool: $t" }
+          }
+          $bundleOnly = 'tools/endpoint/chainsaw', 'tools/endpoint/yara',
+            'tools/analyst'
+          foreach ($t in $bundleOnly) {
+            if (-not (Test-Path $t)) { throw "missing bundle tool: $t" }
+          }
           $zip = "Ophira-$tag.zip"
+          $liteZip = "Ophira-$tag-lite.zip"
+          $bundleZip = "Ophira-$tag-bundle.zip"
+          # Compress-Archive strips parent dirs (tools/endpoint/X lands at
+          # the zip root) and writes backslash entry separators, so stage
+          # a proper kit layout first and zip it with .NET ZipFile
+          # (forward slashes, keeps tools\endpoint\... structure intact).
+          Add-Type -AssemblyName System.IO.Compression.FileSystem
+          $stage = Join-Path $env:TEMP 'ophira-kit-stage'
+          Remove-Item $stage -Recurse -Force -ErrorAction SilentlyContinue
+          New-Item -ItemType Directory "$stage/tools/endpoint" -Force |
+            Out-Null
+          foreach ($f in $files) { Copy-Item $f $stage }
+          foreach ($t in $liteTools) {
+            Copy-Item $t -Destination "$stage/tools/endpoint" -Recurse
+          }
+          $opt = [IO.Compression.CompressionLevel]::Optimal
+          [IO.Compression.ZipFile]::CreateFromDirectory(
+            $stage, $liteZip, $opt, $false)
+          foreach ($t in @('tools/endpoint/chainsaw', 'tools/endpoint/yara')) {
+            Copy-Item $t -Destination "$stage/tools/endpoint" -Recurse
+          }
+          # tools/analyst is created by the copy below (Copy-Item into
+          # an existing dir of the same name would collide).
+          Copy-Item 'tools/analyst' -Destination "$stage/tools" -Recurse
+          [IO.Compression.ZipFile]::CreateFromDirectory(
+            $stage, $bundleZip, $opt, $false)
+          Remove-Item $stage -Recurse -Force
           Compress-Archive -Path $files -DestinationPath $zip -Force
-          $hashes = foreach ($f in ($files + $zip)) { "$((Get-FileHash $f -Algorithm SHA256).Hash)  $f" }
-          [IO.File]::WriteAllText("SHA256SUMS", ($hashes -join "`r`n") + "`r`n")
+          $all = $files + $zip + $liteZip + $bundleZip
+          $hashes = foreach ($f in $all) {
+            $h = Get-FileHash $f -Algorithm SHA256
+            "$($h.Hash)  $f"
+          }
+          [IO.File]::WriteAllText('SHA256SUMS', ($hashes -join $lf) + $lf)
 
       - name: Extract release notes from CHANGELOG
         shell: pwsh
         run: |
           $raw = Get-Content CHANGELOG.md -Raw
-          $m = [regex]::Match($raw, '(?s)## ' + [regex]::Escape($env:GITHUB_REF_NAME) + '\b(.*?)(\r?\n## |\z)')
-          if (-not $m.Success) { throw "no CHANGELOG section for $($env:GITHUB_REF_NAME)" }
-          $notes = "Ophira $($env:GITHUB_REF_NAME) - single-file Windows IR triage toolkit`r`n`r`n" + $m.Groups[1].Value.Trim() + "`r`n`r`nDownload the zip, unblock it, right-click -> Extract All, then run RUN-OPHIRA.bat (see README for Setup, which fetches the DFIR tools)."
-          [IO.File]::WriteAllText("$env:TEMP\release_notes.md", $notes)
+          $t = $env:GITHUB_REF_NAME
+          $esc = [regex]::Escape($t)
+          $pat = "(?s)## $esc\b(.*?)(\r?\n## |\z)"
+          $m = [regex]::Match($raw, $pat)
+          if (-not $m.Success) {
+            throw "no CHANGELOG section for $t"
+          }
+          $lf = "`r`n"
+          $head = "Ophira $t - single-file Windows IR triage toolkit$lf$lf"
+          $kits = @(
+            'Kits:',
+            "- Ophira-$t.zip = script + docs only.",
+            "- Ophira-$t-lite.zip = + hayabusa (Sigma rules), EZ parsers," +
+              ' loldrivers, winpmem. Email-able; covers Parse of a' +
+              ' standard case.',
+            "- Ophira-$t-bundle.zip = + ALL tools incl. chainsaw/yara/" +
+              'vol3/SQLECmd. Everything works out of the box.',
+            'Download a kit, unblock it, extract with tar.exe or 7-Zip' +
+              ' (long paths in the rule packs break Explorer''s' +
+              ' extractor), then run RUN-OPHIRA.bat. Missing tools can' +
+              ' be fetched later with -Mode Setup; see README' +
+              ' ''Get the kit''.') -join ' '
+          $notes = $head + $m.Groups[1].Value.Trim() + "$lf$lf" + $kits
+          $path = "$env:TEMP/release_notes.md"
+          [IO.File]::WriteAllText($path, $notes)
 
       - name: Create GitHub release
         env:
@@ -37,12 +126,18 @@ jobs:
         shell: pwsh
         run: |
           $tag = $env:GITHUB_REF_NAME
-          # v2.82: idempotent - a re-run of a workflow on an existing tag used to fail with
-          # "a release with the same tag name already exists" (red email noise, no harm done)
-          # v4.5: overhaul blessed by user - releases ship as full releases (v4.5 = Latest)
+          # v2.82: idempotent - a re-run of a workflow on an existing tag
+          # used to fail with "a release with the same tag name already
+          # exists" (red email noise, no harm done)
+          # v4.5: overhaul blessed by user - releases ship as full
+          # releases (v4.5 = Latest)
+          $k = @("Ophira-$tag.zip", "Ophira-$tag-lite.zip",
+            "Ophira-$tag-bundle.zip", 'SHA256SUMS')
           if (gh release view $tag 2>$null) {
             gh release edit $tag --prerelease=false
-            gh release upload $tag "Ophira-$tag.zip" SHA256SUMS --clobber
+            gh release upload $tag @k --clobber
           } else {
-            gh release create $tag "Ophira-$tag.zip" SHA256SUMS --title "Ophira $tag" --notes-file "$env:TEMP\release_notes.md"
+            $notes = "$env:TEMP/release_notes.md"
+            gh release create $tag @k --title "Ophira $tag" `
+              --notes-file $notes
           }
