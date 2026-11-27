@@ -1,5 +1,5 @@
 ﻿<#
-Ophira v6.5  -  Windows Endpoint Triage Toolkit
+Ophira v6.6  -  Windows Endpoint Triage Toolkit
 READ-ONLY by design: never modifies the system, only reads and copies data
 into its own output folder. Intended to be handed to a system owner or run
 by a responder during early triage / threat hunting.
@@ -391,7 +391,7 @@ param(
     [switch]$ShareZip
 )
 
-$ScriptVersion = "6.5"
+$ScriptVersion = "6.6"
 $ErrorActionPreference = 'Continue'
 $ProgressPreference = 'SilentlyContinue'
 
@@ -641,7 +641,7 @@ $script:CsvCatMap = @{
     # DERIVED (rebuilt by Invoke-RegenerateOutputs / analyst modes)
     'supertimeline' = 'derived'; 'parse_needed' = 'derived'; 'hunt_findings' = 'derived'
     'entities_binaries' = 'derived'; 'entities_accounts' = 'derived'; 'entities_remotes' = 'derived'
-    'session_activity' = 'derived'; 'process_chains' = 'derived'; 'logging_gaps' = 'derived'
+    'session_activity' = 'derived'; 'process_chains' = 'derived'; 'logging_gaps' = 'derived'; 'session_stories' = 'derived'
     'ioc_hits_amcache' = 'derived'; 'ioc_hits_browser' = 'derived'; 'ioc_hits_dns' = 'derived'
     'ioc_hits_network' = 'derived'; 'ioc_hits_mft' = 'derived'; 'ioc_hits_hash' = 'derived'
     'ioc_export' = 'derived'; 'process_pivot' = 'derived'; 'leads' = 'derived'
@@ -1901,6 +1901,7 @@ function Invoke-AnalyzeMode {
 $signerRows = @()
 $leafStamps = New-Object 'System.Collections.Generic.List[object]'
 $fleetTc = New-Object System.Collections.Generic.List[object]   # v6.2: per-host t-corr pairs for cross-host spread
+$fleetSess = New-Object System.Collections.Generic.List[object] # v6.6: per-host session-story headers for the fleet view
     $extractWorker = {
         param($zipPath, $tmp)
         Add-Type -AssemblyName System.IO.Compression.FileSystem
@@ -2065,6 +2066,17 @@ $fleetTc = New-Object System.Collections.Generic.List[object]   # v6.2: per-host
                         if (-not "$($r.Seed)" -or -not "$($r.Name)") { continue }
                         if ("$($r.Via)") { continue }   # v6.3: chain hops are not seed<->neighbour pairs
                         $null = $fleetTc.Add([pscustomobject]@{ Host = $host_; Seed = "$($r.Seed)"; Name = "$($r.Name)"; Weight = "$($r.Weight)"; Bond = "$($r.Bond)" })
+                    }
+                } catch { }
+            }
+            # v6.6 fleet session stories: one header row per session built on this host
+            $fsC = Join-Path $csvDir 'session_stories.csv'
+            if (-not (Test-Path $fsC)) { $fsC = Join-Path $csvDir (Get-CaseCsvPath 'session_stories.csv') }
+            if ((Test-Path $fsC) -and $fleetSess.Count -lt 3000) {
+                try {
+                    foreach ($r in (Import-Csv $fsC)) {
+                        if (-not "$($r.SessionStart)") { continue }
+                        $null = $fleetSess.Add([pscustomobject]@{ Host = $host_; User = "$($r.User)"; Start = "$($r.SessionStart)"; Type = "$($r.LogonType)"; Source = "$($r.SourceIp)"; Duration = "$($r.DurationMinutes)"; End = "$($r.EndReason)"; Chips = "$($r.Chips)" })
                     }
                 } catch { }
             }
@@ -2328,6 +2340,14 @@ a{color:#7aa2f7;text-decoration:none}a:hover{color:#9ec1f0}.foot{margin-top:40px
         }
         $null = $fsb.AppendLine("</table><div class='meta'>The same execution correlation (seed binary + its temporal neighbour) observed on multiple hosts means shared behaviour, not local noise - the classic sign of one toolkit deployed broadly. Built from each host's derived csv\exec_tcorr.csv; per-host t-corr quality depends on that host's evidence density. Full list: fleet_tcorr.csv.</div>")
         }
+    }
+    if ($fleetSess.Count -gt 0) {
+        $null = $fsb.AppendLine("<h2>Session stories across hosts (per-session narratives)</h2><table><tr><th>Host</th><th>User</th><th>Start</th><th>Type</th><th>Source</th><th>Duration</th><th>How it ended</th><th>Flags</th></tr>")
+        foreach ($r in ($fleetSess.ToArray() | Sort-Object Start -Descending | Select-Object -First 30)) {
+            $null = $fsb.AppendLine("<tr><td>$(ConvertTo-HtmlEsc $r.Host)</td><td>$(ConvertTo-HtmlEsc $r.User)</td><td>$(ConvertTo-HtmlEsc $r.Start)</td><td>$(ConvertTo-HtmlEsc $r.Type)</td><td>$(ConvertTo-HtmlEsc $r.Source)</td><td>$(if ("$($r.Duration)" -ne '') { "$($r.Duration) min" } else { '-' })</td><td>$(ConvertTo-HtmlEsc $r.End)</td><td class='path'>$(ConvertTo-HtmlEsc $r.Chips)</td></tr>")
+        }
+        $null = $fsb.AppendLine("</table><div class='meta'>One row per interactive/RDP session story built on each host: logon (type + source), how the session ended, and flags (first session for the account, off-hours start, ended by reboot, fast-user-switch handoffs). Newest 30 shown; the full story per session is in that case's own report (Session stories section, csv\derived\session_stories.csv).</div>")
+        if ($fleetSess.Count -gt 30) { $null = $fsb.AppendLine("<div class='meta'>showing newest 30 of $($fleetSess.Count) sessions</div>") }
     }
     if ($hayOut -and (Test-Path $hayOut)) {
         $ftech = @{}
@@ -3859,7 +3879,10 @@ $script:Modules = @(
     [pscustomobject]@{ Id = '4.1'; Cat = 'LOGS'; Name = 'Security log (auth events + evtx export)'; Default = $true; Quick = $false;
         Run = {
             $start = Get-LogStart
-            $ids = @(4624, 4625, 4648, 4672, 4720, 4722, 4724, 4726, 4728, 4732, 4735, 4756, 4688, 4698, 5140, 5145, 1102)
+            # v6.6: + 4634/4647 logoff, 4800/4801 lock/unlock, 4778/4779 session
+            # connect/disconnect - the session-stories bookends (need "Other Logon Events"
+            # auditing on stock boxes; the LSM channel 4.4 covers switches regardless).
+            $ids = @(4624, 4625, 4648, 4672, 4720, 4722, 4724, 4726, 4728, 4732, 4735, 4756, 4688, 4698, 5140, 5145, 1102, 4634, 4647, 4800, 4801, 4778, 4779)
             $ev = Get-FilteredEvents -LogName 'Security' -Ids $ids -Start $start
             Save-Rows -Name 'security_events' -Rows $ev
             $auth = @($ev | Where-Object { @(4624, 4625) -contains $_.Id } | ForEach-Object {
@@ -3876,11 +3899,22 @@ $script:Modules = @(
                 $ip = if ($msg -match 'Source Network Address:\s+(\S+)') { $Matches[1] } else { '' }
                 $lt = if ($msg -match 'Logon Type:\s+(\d+)') { $Matches[1] } else { '' }
                 $lid = if ($after -match 'Logon ID:\s+(0x[0-9A-Fa-f]+)') { $Matches[1] } else { '' }
-                [pscustomobject]@{ Time = $_.TimeCreated; EventId = $_.Id; Account = $acct; AccountDomain = $dom; SubjectAccount = $subject; SourceIp = $ip; LogonType = $lt; LogonId = $lid }
+                # v6.6: TargetSid lets userassist (SID-keyed) join this session by account
+                $tsid = if ($after -match 'Security ID:\s+(\S+)\s+Account Name:') { $Matches[1] } else { '' }
+                [pscustomobject]@{ Time = $_.TimeCreated; EventId = $_.Id; Account = $acct; AccountDomain = $dom; SubjectAccount = $subject; SourceIp = $ip; LogonType = $lt; LogonId = $lid; TargetSid = $tsid }
             })
             # account management EIDs (R6 account lifecycle) - TargetUserName-style EventData
             $acctEv = Get-EventDataRows -LogName 'Security' -Id @(4720, 4722, 4724, 4726, 4728, 4732, 4735, 4756) -Start $start -Cap 2000 -Fields ([ordered]@{ Account = 'TargetUserName'; SourceIp = 'IpAddress'; LogonType = ''; LogonId = '' })
-            $auth = @($auth + $acctEv)
+            # v6.6 session-lifecycle bookends land in security_auth_events with the same
+            # columns - EventData field names differ per EID family, so one parse per family.
+            $sessRows = @()
+            foreach ($fam in @(
+                @{ Ids = @(4634); Fields = [ordered]@{ Account = 'SubjectUserName'; AccountDomain = 'SubjectDomainName'; SourceIp = ''; LogonType = 'LogonType'; LogonId = 'SubjectLogonId'; TargetSid = '' } },
+                @{ Ids = @(4647, 4800, 4801); Fields = [ordered]@{ Account = 'TargetUserName'; AccountDomain = 'TargetDomainName'; SourceIp = ''; LogonType = 'LogonType'; LogonId = 'TargetLogonId'; TargetSid = '' } },
+                @{ Ids = @(4778, 4779); Fields = [ordered]@{ Account = 'AccountName'; AccountDomain = 'AccountDomain'; SourceIp = 'ClientAddress'; LogonType = ''; LogonId = 'LogonId'; TargetSid = '' } })) {
+                $sessRows += @(Get-EventDataRows -LogName 'Security' -Id $fam.Ids -Start $start -Cap 2000 -Fields $fam.Fields)
+            }
+            $auth = @($auth + $acctEv + $sessRows)
             Save-Rows -Name 'security_auth_events' -Rows $auth
             # v4.0: empty/'-'/loopback sources are LOCAL logon failures (console/scheduled-task
             # noise on a stock host), not remote brute-force sources - listing them as one
@@ -4044,7 +4078,7 @@ $script:Modules = @(
     [pscustomobject]@{ Id = '4.4'; Cat = 'LOGS'; Name = 'RDP logs (LocalSessionManager + ConnectionManager)'; Default = $true; Quick = $false;
         Run = {
             $start = Get-LogStart
-            $ev1 = Get-FilteredEvents -LogName 'Microsoft-Windows-TerminalServices-LocalSessionManager/Operational' -Ids @(21, 22, 24, 25, 39, 40) -Start $start -MaxMsg 300
+            $ev1 = Get-FilteredEvents -LogName 'Microsoft-Windows-TerminalServices-LocalSessionManager/Operational' -Ids @(21, 22, 23, 24, 25, 39, 40) -Start $start -MaxMsg 300
             Save-Rows -Name 'rdp_localsession' -Rows $ev1
             Export-Evtx -LogName 'Microsoft-Windows-TerminalServices-LocalSessionManager/Operational' -FileName 'RDP_LocalSessionManager.evtx'
             $ev2 = Get-FilteredEvents -LogName 'Microsoft-Windows-TerminalServices-RemoteConnectionManager/Operational' -Ids @(1149) -Start $start -MaxMsg 300
@@ -6577,6 +6611,7 @@ function New-HtmlReport {
     $pfParsed = @(Import-CaseCsv 'prefetch_parsed.csv')
     $authSum = @(Import-CaseCsv 'security_auth_summary.csv')
     $authEv = @(Import-CaseCsv 'security_auth_events.csv')
+    $sessStories = @(Import-CaseCsv 'session_stories.csv')
     $runKeys = @(Import-CaseCsv 'autoruns_runkeys.csv')
     $tasksFlag = @(Import-CaseCsv 'scheduled_tasks_flagged.csv')
     # v2.83: ghost/hidden tasks + ntds access + execution-evidence extras
@@ -6947,6 +6982,7 @@ a[name]{scroll-margin-top:66px}html{overflow-x:clip}[data-theme=light] .nav a.ac
         processes = $scored.Count
         sigma = $hayRows.Count
         logons = $authEv.Count + $authSum.Count + $brute.Count + $secNav
+        sessions = $sessStories.Count
         useract = $userActNav
         persistence = $tasksFlag.Count + $svcFlag.Count + $wmiBind.Count + $runKeys.Count + $asepHot.Count + $certHot.Count + $taskCacheAnom.Count + $taskDel.Count + $esentRows.Count
         filesystem = $usnBursts.Count + $pfParsed.Count + $mftRecent.Count
@@ -6963,7 +6999,7 @@ a[name]{scroll-margin-top:66px}html{overflow-x:clip}[data-theme=light] .nav a.ac
     $nLabel = [ordered]@{
         verdict = 'Verdict'; activity = 'Activity picture'; leads = 'Leads'; coverage = 'Coverage'; attack = 'ATT&CK'; ioc = 'IOCs'
         tactics = 'Findings by tactic'; yara = 'YARA'; processes = 'Processes'; sigma = 'Sigma'
-        logons = 'Logons'; useract = 'User activity'; persistence = 'Persistence'; filesystem = 'File system'; beacons = 'Beaconing'
+        logons = 'Logons'; sessions = 'Session stories'; useract = 'User activity'; persistence = 'Persistence'; filesystem = 'File system'; beacons = 'Beaconing'
         network = 'Network'; drivers = 'Drivers'; hunt = 'Hunt'; entities = 'Entities'
         snapshot = 'Snapshot'; posture = 'Posture'; timeline = 'Timeline'; focus = 'Focus'; recommendations = 'Recommendations'
         evidence = 'Evidence index'
@@ -6974,7 +7010,7 @@ a[name]{scroll-margin-top:66px}html{overflow-x:clip}[data-theme=light] .nav a.ac
     $navGroups = [ordered]@{
         'Overview' = @('verdict','activity','leads','coverage')
         'Findings' = @('attack','ioc','tactics','yara','processes','sigma','hunt')
-        'Context' = @('logons','useract','entities','persistence','filesystem','beacons','network','drivers')
+        'Context' = @('logons','sessions','useract','entities','persistence','filesystem','beacons','network','drivers')
         'Host state' = @('snapshot','posture','timeline','focus')
         'Reference' = @('recommendations','evidence')
     }
@@ -7956,6 +7992,28 @@ a[name]{scroll-margin-top:66px}html{overflow-x:clip}[data-theme=light] .nav a.ac
     }
 
     # ---------- persistence inventory ----------
+    # ---------- session stories (v6.6): one narrative per interactive/RDP session ----------
+    $null = $sb.AppendLine("<a name='sessions'></a><h2>Session stories</h2>")
+    if ($sessStories.Count -gt 0) {
+        $null = $sb.AppendLine("<div class='meta'>One story per interactive/RDP session: logon (type + source), lock/unlock and fast-user-switch bookends, what the session or its account did, and how it ended. Attribution <b>session-joined</b> = exact logon-session ID match (4688/5145); <b>account history</b> = UserAssist launch times inside the session span. Bookends need 'Other Logon Events' auditing; console switch events also arrive via TerminalServices-LocalSessionManager without it.</div>")
+        $ssGroups = @($sessStories | Group-Object SessionKey | Sort-Object { "$($_.Group[0].SessionStart)" } -Descending)
+        Add-CapNote $ssGroups.Count 12 'session_stories' 'Session cards'
+        foreach ($sg2 in ($ssGroups | Select-Object -First 12)) {
+            $ssRows = @($sg2.Group | Sort-Object Time)
+            $hdr = $ssRows[0]
+            $chip2 = "$(ConvertTo-HtmlEsc "$($hdr.Chips)")"
+            $null = $sb.AppendLine("<h3>$(ConvertTo-HtmlEsc "$($hdr.User)") - $(ConvertTo-HtmlEsc "$($hdr.SessionStart)")$(if ("$($hdr.DurationMinutes)" -ne '') { " - $(ConvertTo-SafeInt "$($hdr.DurationMinutes)") min" })$(if ("$($hdr.EndReason)") { " - ended: $(ConvertTo-HtmlEsc "$($hdr.EndReason)")" })$(if ($chip2) { " - <span class='meta'>$chip2</span>" })</h3>")
+            $null = $sb.AppendLine("<table><tr><th>Time</th><th>Event</th><th>Detail</th><th>Source</th><th>Attribution</th></tr>")
+            foreach ($sr in ($ssRows | Select-Object -First 40)) {
+                $null = $sb.AppendLine("<tr><td>$(ConvertTo-HtmlEsc "$($sr.Time)")</td><td><b>$(ConvertTo-HtmlEsc "$($sr.Kind)")</b></td><td class='path'>$(ConvertTo-HtmlEsc "$($sr.Detail)")</td><td>$(ConvertTo-HtmlEsc "$($sr.Source)")</td><td>$(ConvertTo-HtmlEsc "$($sr.Attribution)")</td></tr>")
+            }
+            $null = $sb.AppendLine('</table>')
+            if ($ssRows.Count -gt 40) { $null = $sb.AppendLine("<div class='meta'>showing first 40 of $($ssRows.Count) rows - full list: csv\$(Get-CaseCsvPath 'session_stories')</div>") }
+        }
+    } else {
+        $null = $sb.AppendLine("<div class='meta'>No interactive/RDP sessions parsed from security_auth_events (no 4624 logon-type 2/7/10 rows in the window, or Security auditing off). Lock/unlock and fast-user-switch bookends additionally need 'Other Logon Events' auditing: auditpol /set /subcategory:`"Other Logon Events`" /success:enable - console/RDP switch events still arrive via TerminalServices-LocalSessionManager without it.</div>")
+    }
+
     # v2.88 USER ACTIVITY section - per-account rollup built above
     $null = $sb.AppendLine("<a name='useract'></a><h2>User activity rollup</h2>")
     if ($userAct.Count -gt 0) {
@@ -9246,6 +9304,7 @@ a[name]{scroll-margin-top:66px}html{overflow-x:clip}[data-theme=light] .nav a.ac
         'iis_requests'                    = 'Parsed IIS W3C requests (web role) - what hit this server'
         'iis_anomalies'                   = 'IIS anomalies: error bursts, suspicious URIs, POSTs to upload paths, headless POSTs'
         'session_activity'                = '4624 LogonId x 4688/5145 joins - which logon session (human/IP) did what'
+        'session_stories'                 = 'Per-session narrative: logon (type/source), lock/unlock + fast-user-switch bookends, session/account activity, and how the session ended'
         'process_chains'                  = 'Ancestry chains for flagged binaries (4688 lineage + live PPID) - how it got there'
         'memory_live_scan'                = 'Flagged-process minidumps + YARA hits found in live memory'
         'sysmon_image_load'               = 'Sysmon DLL loads (EID 7) - side-load data source'
@@ -9268,6 +9327,7 @@ a[name]{scroll-margin-top:66px}html{overflow-x:clip}[data-theme=light] .nav a.ac
         'security_proc_events'            = 'no 4688 events in the Security log - process-creation auditing appears disabled (see the hardening recommendation); lineage and session attribution run thin'
         'process_chains'                  = 'built from 4688 events - with process auditing disabled almost no lineage is recoverable'
         'session_activity'                = 'joins 4688/5145 events - nothing to join when process/share auditing is disabled'
+        'session_stories'                 = 'needs interactive/RDP 4624 logons (types 2/7/10) in the window - short windows, server-only collection or non-interactive presets leave none; lock/switch bookends additionally need Other Logon Events auditing'
         'rdp_localsession'                = 'no RDP session events (EID 21/22/24/25) in the window - EID 59 rows in this channel are VMware session probes, not RDP activity'
         'rdp_connections'                 = 'no inbound RDP connection events (EID 1149) in the window'
         'system_new_services'             = 'no EID 7045 service installs in the window'
@@ -10418,6 +10478,208 @@ function New-SessionAttribution {
         Write-CaseLog "    session attribution: $n activity row(s) joined to logon sessions (4624 LogonId x 4688/5145) -> csv\session_activity.csv" 'Gray'
     } else {
         Write-CaseLog "    session attribution: no joins (4624 without LogonId in this case, or no 4688/5145 activity)" 'DarkGray'
+    }
+}
+
+function New-SessionStories {
+    # v6.6: per-session investigation narrative - logon (type/source) -> lock/unlock and
+    # fast-user-switch bookends -> what the session (LogonId join) or its account (UserAssist
+    # SID join) did -> how it ended (logoff / switch-away / shutdown / open at window end).
+    $auth = @(Import-CaseCsv 'security_auth_events')
+    if ($auth.Count -eq 0) { Save-Rows -Name 'session_stories' -Rows @(); return }
+    $profBySid = @{}
+    foreach ($p in (Import-CaseCsv 'profile_list')) { if ("$($p.Sid)" -match '^S-1-5-21-' -and "$($p.User)") { $profBySid["$($p.Sid)"] = "$($p.User)" } }
+
+    # ---- 1. session ledger: interactive/unlock/remote 4624 + LSM console sessions ----
+    $ledger = New-Object System.Collections.Generic.List[object]
+    foreach ($r in ($auth | Where-Object { "$($_.EventId)" -eq '4624' -and "$($_.LogonType)" -match '^(2|7|10)$' -and "$($_.LogonId)" -and "$($_.Account)" -and "$($_.Account)" -notmatch '^(DWM-\d+|UMFD-\d+)$' -and "$($_.Account)" -notmatch '(?i)Window Manager|Font Driver' })) {
+        $t = Get-InvariantDate $r.Time
+        if ($t -eq [datetime]::MinValue) { continue }
+        $sip = "$($r.SourceIp)"; if ($sip -eq '-') { $sip = '' }
+        $stype = switch ("$($r.LogonType)") { '2' { 'console' } '7' { 'unlock' } default { 'RDP' } }
+        # Windows signs a single interactive logon into TWO paired logon sessions (same user,
+        # same second, adjacent LogonIds) - fold the twin into one story instead of two cards.
+        $twin = $null
+        if ($stype -ne 'unlock') { foreach ($s in $ledger) { if ($s.Acct -eq "$($r.Account)" -and $s.Type -eq $stype -and [Math]::Abs(($s.Start - $t).TotalSeconds) -le 60) { $twin = $s; break } } }
+        if ($twin) { $null = $twin.Keys.Add("L$($r.LogonId)"); continue }
+        $null = $ledger.Add([pscustomobject]@{ Keys = (New-Object System.Collections.Generic.List[string]); User = "$(if ("$($r.AccountDomain)") { "$($r.AccountDomain)\" })$($r.Account)"; Acct = "$($r.Account)"; Sid = "$($r.TargetSid)"; Start = $t; Type = $stype; Source = $sip; Events = (New-Object System.Collections.Generic.List[object]); End = $null; EndReason = ''; DurationMinutes = ''; Chips = '' })
+        $ledger[$ledger.Count - 1].Keys.Add("L$($r.LogonId)")
+    }
+    # LSM 21/22 console sessions when 4624 is missing (partial Security auditing); deduped
+    # against a 4624 session for the same user within 60s. 23/24/25/39/40 act as bookends.
+    foreach ($r in (Import-CaseCsv 'rdp_localsession')) {
+        if (@(21, 22) -notcontains [int]"$($r.Id)") { continue }
+        if ("$($r.Message)" -notmatch 'User:\s+\S+\\([^\s]+?)[.,]?\s+Session ID:') { continue }
+        $u = $Matches[1]; $t = Get-InvariantDate $r.TimeCreated
+        if ($t -eq [datetime]::MinValue) { continue }
+        $dupe = $false
+        foreach ($s in $ledger) { if ($s.Acct -eq $u -and [Math]::Abs(($s.Start - $t).TotalSeconds) -le 60) { $dupe = $true; break } }
+        if ($dupe) { continue }
+        $sip = ''; if ("$($r.Message)" -match 'Source Network Address:\s+(\S+)') { $sip = $Matches[1] }
+        $null = $ledger.Add([pscustomobject]@{ Keys = (New-Object System.Collections.Generic.List[string]); User = $u; Acct = $u; Sid = ''; Start = $t; Type = 'console (LSM)'; Source = $sip; Events = (New-Object System.Collections.Generic.List[object]); End = $null; EndReason = ''; DurationMinutes = ''; Chips = '' })
+        $ledger[$ledger.Count - 1].Keys.Add("LSM$($t.ToString('yyyyMMddHHmmss'))")
+    }
+    if ($ledger.Count -eq 0) { Save-Rows -Name 'session_stories' -Rows @(); return }
+    $sorted = New-Object System.Collections.Generic.List[object]
+    foreach ($s in ($ledger.ToArray() | Sort-Object Start)) { $null = $sorted.Add($s) }
+    $ledger = $sorted
+
+    # ---- 2. bookends: Security lifecycle EIDs by LogonId (latest matching session wins -
+    # LogonId values recycle across reboots), LSM by user + time (Security wins dedupe) ----
+    $orphanBookends = 0
+    foreach ($r in ($auth | Where-Object { @(4634, 4647, 4800, 4801, 4778, 4779) -contains [int]"$($_.EventId)" })) {
+        $eid = [int]"$($r.EventId)"
+        $t = Get-InvariantDate $r.Time
+        if ($t -eq [datetime]::MinValue) { continue }
+        $cand = $null
+        foreach ($s in $ledger) { if ($s.Keys -contains "L$($r.LogonId)" -and $s.Start -le $t) { $cand = $s } }
+        if (-not $cand) { $orphanBookends++; continue }
+        # NB: inside a foreach STATEMENT $_ is not the row - use $eid/$r, never $_
+        $kind = switch ($eid) { 4634 { 'logged off' } 4647 { 'logged off' } 4800 { 'locked' } 4801 { 'unlocked' } 4778 { 'switched to' } 4779 { 'switched away' } default { 'bookend' } }
+        $bsip = "$($r.SourceIp)"; if ($bsip -eq '-') { $bsip = '' }
+        $det = ''; if (@(4778, 4779) -contains $eid -and $bsip) { $det = "from $bsip" }
+        $cand.Events.Add([pscustomobject]@{ Time = $t; Kind = $kind; Detail = $det; Source = "EID $eid"; Attr = 'session-joined' })
+    }
+    foreach ($r in (Import-CaseCsv 'rdp_localsession')) {
+        $eid = [int]"$($r.Id)"
+        if (@(23, 24, 25, 39, 40) -notcontains $eid) { continue }
+        if ("$($r.Message)" -notmatch 'User:\s+\S+\\([^\s]+?)[.,]?\s+Session ID:') { continue }
+        $u = $Matches[1]; $t = Get-InvariantDate $r.TimeCreated
+        if ($t -eq [datetime]::MinValue) { continue }
+        $cand = $null
+        foreach ($s in $ledger) { if ($s.Acct -eq $u -and $s.Start -le $t) { $cand = $s } }
+        if (-not $cand) { continue }
+        $kind = switch ($eid) { 23 { 'logged off' } 24 { 'switched away' } 25 { 'switched to' } default { 'disconnected' } }
+        $dupe = $false
+        foreach ($e in $cand.Events) { if ($e.Kind -eq $kind -and [Math]::Abs(($e.Time - $t).TotalSeconds) -le 60) { $dupe = $true; break } }
+        if ($dupe) { continue }
+        $cand.Events.Add([pscustomobject]@{ Time = $t; Kind = $kind; Detail = ''; Source = "LSM EID $eid"; Attr = 'session-joined' })
+    }
+
+    # ---- 3. PRELIMINARY end (bookends only) - feeds the UserAssist covering-span check;
+    #         the final end is recomputed after activity is attached ----
+    $winEnd = [datetime]::MinValue
+    foreach ($r in $auth) { $t = Get-InvariantDate $r.Time; if ($t -gt $winEnd) { $winEnd = $t } }
+    $shutdowns = New-Object System.Collections.Generic.List[datetime]
+    foreach ($r in (Import-CaseCsv 'system_events')) {
+        if (@('6005', '6006', '1074', '41') -contains "$($r.Id)") { $t = Get-InvariantDate $r.TimeCreated; if ($t -ne [datetime]::MinValue) { $shutdowns.Add($t) } }
+    }
+    foreach ($s in $ledger) {
+        $last = $null
+        foreach ($e in $s.Events) { if (-not $last -or $e.Time -gt $last.Time) { $last = $e } }
+        if (-not $last) { continue }
+        if (@('logged off', 'switched away', 'disconnected') -contains $last.Kind) {
+            $s.End = $last.Time; $s.EndReason = $last.Kind
+        } else {
+            $sd = $null
+            foreach ($sh2 in $shutdowns) { $m = ($sh2 - $last.Time).TotalMinutes; if ($m -ge 0 -and $m -le 5 -and (-not $sd -or $sh2 -lt $sd)) { $sd = $sh2 } }
+            if ($sd) { $s.End = $sd; $s.EndReason = 'host shutdown/reboot' }
+            elseif ($winEnd -ne [datetime]::MinValue -and ($winEnd - $last.Time).TotalMinutes -le 5) { $s.End = $last.Time; $s.EndReason = 'open at window end' }
+            else { $s.End = $last.Time; $s.EndReason = 'end not captured' }
+        }
+        if ($s.End) { $s.DurationMinutes = "$(if (($s.End - $s.Start).TotalMinutes -ge 0) { [int]($s.End - $s.Start).TotalMinutes } else { 0 })" }
+    }
+
+    # ---- 4. activity: exact LogonId joins + account-attributed launches ----
+    foreach ($r in (Import-CaseCsv 'security_proc_events')) {
+        $t = Get-InvariantDate $r.Time; $lid = "$($r.LogonId)"
+        if ($t -eq [datetime]::MinValue -or -not $lid) { continue }
+        $cand = $null
+        foreach ($s in $ledger) { if ($s.Keys -contains "L$lid" -and $s.Start -le $t) { $cand = $s } }
+        if (-not $cand) { continue }
+        $cmd = "$($r.CommandLine)"; if ($cmd.Length -gt 160) { $cmd = $cmd.Substring(0, 160) + '...' }
+        $cand.Events.Add([pscustomobject]@{ Time = $t; Kind = 'ran (4688)'; Detail = ("$($r.NewProcess) $cmd").Trim(); Source = '4688'; Attr = 'session-joined' })
+    }
+    foreach ($r in (Import-CaseCsv 'security_share_access')) {
+        $t = Get-InvariantDate $r.Time; $lid = "$($r.LogonId)"
+        if ($t -eq [datetime]::MinValue -or -not $lid) { continue }
+        $cand = $null
+        foreach ($s in $ledger) { if ($s.Keys -contains "L$lid" -and $s.Start -le $t) { $cand = $s } }
+        if (-not $cand) { continue }
+        $sh = ("$($r.ShareName)") -replace '^[\*\\\s]+', ''
+        $cand.Events.Add([pscustomobject]@{ Time = $t; Kind = 'share access'; Detail = "$sh -> $($r.RelativeTargetName)"; Source = '5145'; Attr = 'session-joined' })
+    }
+    foreach ($r in (Import-CaseCsv 'userassist')) {
+        if ("$($r.Kind)" -ne 'executable' -or "$($r.Entry)" -match '^UEME_' -or "$($r.Entry)" -notmatch '\.(exe|dll)$') { continue }
+        $un = $profBySid["$($r.User)"]
+        if (-not $un) { continue }
+        $t = Get-InvariantDate $r.LastRun
+        if ($t -eq [datetime]::MinValue -or $t.Year -lt 2000) { continue }
+        $cand = $null
+        foreach ($s in $ledger) {
+            if (($s.Acct -eq $un -or ($s.Sid -and "$($s.Sid)" -eq "$($r.User)")) -and $s.Start -le $t -and (-not $s.End -or $t -le $s.End.AddMinutes(5))) { $cand = $s }
+        }
+        if (-not $cand) { continue }
+        $cand.Events.Add([pscustomobject]@{ Time = $t; Kind = 'ran (UserAssist)'; Detail = (Split-Path -Leaf "$($r.Entry)"); Source = 'userassist'; Attr = 'account history' })
+    }
+
+    # ---- 4b. FINAL end: recompute over bookends + activity, so a session whose only
+    #          evidence is process/share/UA activity still gets shutdown/window-end reasons ----
+    foreach ($s in $ledger) {
+        $last = $null
+        foreach ($e in $s.Events) { if (-not $last -or $e.Time -gt $last.Time) { $last = $e } }
+        if (-not $last) { $last = [pscustomobject]@{ Time = $s.Start; Kind = 'logon' } }  # logon-only session: the sign-in is the last known fact
+        if (@('logged off', 'switched away', 'disconnected') -contains $last.Kind) {
+            $s.End = $last.Time; $s.EndReason = $last.Kind
+        } else {
+            $sd = $null
+            foreach ($sh2 in $shutdowns) { $m = ($sh2 - $last.Time).TotalMinutes; if ($m -ge 0 -and $m -le 5 -and (-not $sd -or $sh2 -lt $sd)) { $sd = $sh2 } }
+            if ($sd) { $s.End = $sd; $s.EndReason = 'host shutdown/reboot' }
+            elseif ($winEnd -ne [datetime]::MinValue -and ($winEnd - $last.Time).TotalMinutes -le 5) { $s.End = $last.Time; $s.EndReason = 'open at window end' }
+            else { $s.End = $last.Time; $s.EndReason = 'end not captured' }
+        }
+        if ($s.End) { $s.DurationMinutes = "$(if (($s.End - $s.Start).TotalMinutes -ge 0) { [int]($s.End - $s.Start).TotalMinutes } else { 0 })" }
+    }
+
+    # ---- 5. chips: first session, off-hours, reboot end, fast-user-switch handoffs ----
+    $acctFirstLogon = @{}
+    foreach ($r in ($auth | Where-Object { "$($_.EventId)" -eq '4624' })) {
+        $a = "$($r.Account)"; if (-not $a) { continue }
+        $t = Get-InvariantDate $r.Time
+        if ($t -eq [datetime]::MinValue) { continue }
+        if (-not $acctFirstLogon.ContainsKey($a) -or $t -lt $acctFirstLogon[$a]) { $acctFirstLogon[$a] = $t }
+    }
+    foreach ($s in $ledger) {
+        $chips = New-Object System.Collections.Generic.List[string]
+        $first = $acctFirstLogon[$s.Acct]
+        if ($null -ne $first -and ($s.Start - $first).TotalSeconds -le 60) { $chips.Add('first session seen for this account') }
+        if ($s.Start.Hour -lt 6 -or $s.Start.Hour -gt 20 -or @([DayOfWeek]::Saturday, [DayOfWeek]::Sunday) -contains $s.Start.DayOfWeek) { $chips.Add('off-hours start') }
+        if ($s.EndReason -eq 'host shutdown/reboot') { $chips.Add('ended by reboot') }
+        $s.Chips = ($chips.ToArray() -join '; ')
+    }
+    foreach ($s in $ledger) {
+        if ($s.EndReason -ne 'switched away' -or -not $s.End) { continue }
+        foreach ($s2 in $ledger) {
+            if ($s2 -eq $s -or $s2.Acct -eq $s.Acct) { continue }
+            $dt = ($s2.Start - $s.End).TotalMinutes
+            if ($dt -ge 0 -and $dt -le 15) {
+                $s.Chips = ((@("$($s.Chips)") + @("handed off to $($s2.User)")) | Where-Object { $_ }) -join '; '
+                $s2.Chips = ((@("$($s2.Chips)") + @("took over from $($s.User)")) | Where-Object { $_ }) -join '; '
+                break
+            }
+        }
+    }
+
+    # ---- 6. emit: newest sessions first, rows time-ascending inside each; cap 3000 rows ----
+    $out = New-Object System.Collections.Generic.List[object]
+    $droppedSessions = 0
+    foreach ($s in ($ledger.ToArray() | Sort-Object Start -Descending)) {
+        $rows = @($s.Events.ToArray() | Sort-Object Time)
+        if ($out.Count + $rows.Count + 1 -gt 3000) { $droppedSessions++; continue }
+        $ss = $s.Start.ToString('yyyy-MM-dd HH:mm:ss', [Globalization.CultureInfo]::InvariantCulture)
+        $se = ''; if ($s.End) { $se = $s.End.ToString('yyyy-MM-dd HH:mm:ss', [Globalization.CultureInfo]::InvariantCulture) }
+        $src0 = "4624"; if ($s.Keys[0] -like 'LSM*') { $src0 = 'LSM EID 21' }
+        $out.Add([pscustomobject]@{ Time = $ss; Kind = 'logon'; Detail = "$($s.Type) session$(if ($s.Source) { " from $($s.Source)" })$(if ($s.Keys.Count -gt 1) { " (paired logon session)" })"; Source = $src0; Attribution = ''; SessionKey = $s.Keys[0]; User = $s.User; LogonType = $s.Type; SourceIp = $s.Source; SessionStart = $ss; SessionEnd = $se; EndReason = $s.EndReason; DurationMinutes = $s.DurationMinutes; Chips = $s.Chips })
+        foreach ($e in $rows) {
+            $out.Add([pscustomobject]@{ Time = $e.Time.ToString('yyyy-MM-dd HH:mm:ss', [Globalization.CultureInfo]::InvariantCulture); Kind = $e.Kind; Detail = $e.Detail; Source = $e.Source; Attribution = $e.Attr; SessionKey = $s.Keys[0]; User = $s.User; LogonType = $s.Type; SourceIp = $s.Source; SessionStart = $ss; SessionEnd = $se; EndReason = $s.EndReason; DurationMinutes = $s.DurationMinutes; Chips = $s.Chips })
+        }
+    }
+    Save-Rows -Name 'session_stories' -Rows $out.ToArray()
+    if ($out.Count -gt 0) {
+        Write-CaseLog "    session stories: $($ledger.Count) session(s)$(if ($droppedSessions -gt 0) { " ($droppedSessions dropped over row cap)" }), $($out.Count) row(s) -> csv\derived\session_stories.csv" 'Gray'
+        if ($orphanBookends -gt 0) { Write-CaseLog "    session stories: $orphanBookends bookend event(s) had no matching session (LogonId outside the window) - dropped" 'DarkGray' }
+    } else {
+        Write-CaseLog '    session stories: no interactive/RDP sessions in this case' 'DarkGray'
     }
 }
 
@@ -13283,6 +13545,7 @@ function Get-CompromiseVerdict {
     Add-Cov 'ShellBags folder history' (Test-CaseCsv 'shellbags') 2
     Add-Cov 'JumpLists' (Test-CaseCsv 'jumplist_parsed') 2
     Add-Cov 'Session attribution + process lineage' ((Test-CaseCsv 'session_activity') -or (Test-CaseCsv 'process_chains')) 2
+    Add-Cov 'Session stories (per-session narrative)' (Test-CaseCsv 'session_stories') 1
     Add-Cov 'Host extras (WER/StartupInfo/QuickAssist/GPO)' ((Test-CaseCsv 'wer_reports') -or (Test-CaseCsv 'startup_info')) 2
     $iocsLoaded = $false
     try { $iocsLoaded = ($null -ne (Get-IocList)) } catch { }
@@ -13911,6 +14174,7 @@ function Invoke-RegenerateOutputs {
     & $rgStep 'IOC export' 'New-CaseIocExport' { New-CaseIocExport }
     & $rgStep 'entity correlation' 'New-EntityCorrelation' { New-EntityCorrelation }
     & $rgStep 'session attribution' 'New-SessionAttribution' { New-SessionAttribution }
+    & $rgStep 'session stories' 'New-SessionStories' { New-SessionStories }
     & $rgStep 'process lineage' 'New-ProcessChains' { New-ProcessChains }
     & $rgStep 'connection attribution' 'New-ConnectionDns' { New-ConnectionDns }
     & $rgStep 'shimcache exec flags' 'New-ShimcacheExec' { New-ShimcacheExec }

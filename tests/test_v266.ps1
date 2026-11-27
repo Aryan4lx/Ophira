@@ -161,7 +161,7 @@ Check "B1: every nav link targets an existing document anchor" ($deadNav.Count -
 $docInNavOrder = @($docSeq | Where-Object { $navSeq -contains $_ })
 # v2.89: sidebar groups the sections (Overview/Findings/Context/HostState/Reference) - pin the
 # grouped flat sequence instead of raw document order (the old doc-order pin is the v2.85 layout)
-$navSeqExpected = @('verdict','activity','leads','coverage','attack','ioc','tactics','yara','processes','sigma','hunt','logons','useract','entities','persistence','filesystem','beacons','network','drivers','snapshot','posture','timeline','focus','recommendations','evidence')
+$navSeqExpected = @('verdict','activity','leads','coverage','attack','ioc','tactics','yara','processes','sigma','hunt','logons','sessions','useract','entities','persistence','filesystem','beacons','network','drivers','snapshot','posture','timeline','focus','recommendations','evidence')
 Check "B1: nav sequence == grouped sidebar order (v2.89 groups)" ((($navSeq -join ',') -eq ($navSeqExpected -join ',')))
 # grouped nav re-orders vs the document (hunt moved into Findings group etc) - compare as SETS
 Check "B1: nav covers every document section" (((@($docInNavOrder | Sort-Object) -join ',') -eq (@($navSeqExpected | Sort-Object) -join ',')))

@@ -91,7 +91,7 @@ Check 'fleet_tcorr csv written' ($src.Contains("fleet_tcorr.csv"))
 Check 'fleet t-corr console line' ($src.Contains('FLEET T-CORR SPREAD'))
 Check 'fleet per-host exec_tcorr load' ($src.Contains("Join-Path `$csvDir 'exec_tcorr.csv'"))
 Check 'fleet report h2' ($src.Contains('Fleet t-corr spread'))
-Check 'version 6.3' ($src.Contains('$ScriptVersion = "6.5"'))
+Check 'version 6.3' ($src.Contains('$ScriptVersion = "6.6"'))
 
 Write-Host "test_v61: $(16 - $fails) checks passed, $fails failed"
 if ($fails -gt 0) { exit 1 } else { exit 0 }

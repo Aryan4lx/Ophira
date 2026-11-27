@@ -1,3 +1,13 @@
+## v6.6 - session stories (per-session investigation narrative)
+
+The report now reconstructs what each interactive account DID between logon and logoff, as a card per session: logon (type/source), lock/unlock and fast-user-switch bookends, in-session activity, and how the session ended.
+
+- **Collector widened**: Security lifecycle events 4634/4647/4800/4801/4778/4779 + LSM EID 23 are now collected (were report-only or missing); 4624 parse gains the Target SID so UserAssist rows can be attributed by account even without profile_list.
+- **New-SessionStories** -> csv\derived\session_stories.csv: sessions from 4624 types 2/7/10 (DWM/UMFD excluded) plus LSM console sessions when Security auditing is partial (deduped within 60s); bookends by LogonId (latest session wins - IDs recycle) and LSM by user+time (Security wins); activity joins = 4688 + 5145 by LogonId (session-joined) and UserAssist by SID/account inside the covering span (account history); end reason = explicit logoff/switch-away > LSM disconnect > system shutdown/reboot within 5 min of last activity > open at window end > end not captured; chips = first-session-for-account, off-hours/weekend start, ended-by-reboot, fast-user-switch handoff pairs (within 15 min).
+- **Report**: new 'Session stories' section (per-session cards, newest first, 12 shown, 40 rows per card + pointer, chips + duration + end reason on the header) between Logons and User activity; fleet report gains a per-host session-stories table; coverage gains the session_stories row (35 sources).
+- No verdict weight - attribution narrative only. No new signal floors.
+- tests: test_v67.ps1 (36 checks: session assembly, bookend kinds, LSM dedup/fallback sessions, 4688/5145/UserAssist joins, end reasons incl. shutdown-after-activity, chips, wiring pins); test_v264 coverage 34->35 sources (A7 21/35 = 75%); test_v266 nav pin +sessions; test_v267 safe-int cast; test_v279 regen steps 26->27; test_v221 PS-compat catch (-in -> -contains).
+
 ## v6.5 - service / run-key / DCOM hunt rules (Tier 2)
 
 Three hunt rules covering persistence and lateral-movement surfaces that were report-only until now.

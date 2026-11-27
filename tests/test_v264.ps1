@@ -130,7 +130,7 @@ foreach ($n in 'Test-IsUserWritablePath', 'Get-UserProfileList') {
 $m26 = [regex]::Match($src, "(?s)Id = '2\.6';.*?Run = \{(.*?)\r?\n        \} \}\r?\n    \[pscustomobject\]@\{ Id = '3\.1'")
 if (-not $m26.Success) { throw 'module 2.6 extract failed' }
 function Save-Rows { param([string]$Name, $Rows) $script:asepSaved[$Name] = $Rows }
-function Write-CaseLog { param([string]$Message, [string]$Color = 'Gray') }
+function Write-CaseLog { param([string]$_Message, [string]$_Color = 'Gray') }
 $script:asepSaved = @{}
 # fake %SystemDrive% so the module's user walk only sees our fixture profiles
 $fakeRoot = Join-Path $tmp 'sysdrive'
@@ -222,19 +222,19 @@ Check "A6: HIGH score 6 + YARA hit present -> corroborated, weight 2" (@($vA6c.S
 function Get-IocList { return @{ Hashes = @{ 'deadbeef' = $true }; Ips = @{}; Domains = @{}; Names = @{} } }
 $Sysmon = $true
 New-Item -ItemType Directory -Path $MemDir -Force | Out-Null
-$allCovCsvs = @('flash_process_scored','flash_public_connections','autoruns_runkeys','hayabusa_timeline','amcache','prefetch_index','usn_write_bursts','mft_recent','asep_sweep','browser_files','defender_status','yara_scanned','sysmon_dns','entities_binaries','hunt_findings','svchost_audit','remote_access','security_proc_events','sysmon_remote_thread','security_kerberos','iis_requests','session_activity','wer_reports','loldrivers_hits','recyclebin_index','shellbags','jumplist_parsed','wmi_activity','audit_cve')
+$allCovCsvs = @('flash_process_scored','flash_public_connections','autoruns_runkeys','hayabusa_timeline','amcache','prefetch_index','usn_write_bursts','mft_recent','asep_sweep','browser_files','defender_status','yara_scanned','sysmon_dns','entities_binaries','hunt_findings','svchost_audit','remote_access','security_proc_events','sysmon_remote_thread','security_kerberos','iis_requests','session_activity','session_stories','wer_reports','loldrivers_hits','recyclebin_index','shellbags','jumplist_parsed','wmi_activity','audit_cve')
 
-# A7a: 12 sources uncovered -> 21/34 collected, 133/176 weight -> 76% (old capped sum said 100%)
+# A7a: 14 sources uncovered -> 21/35 collected, 133/177 weight -> 75% (old capped sum said 100%)
 $script:fixtureRows = @{}
 $script:presentCsvs = @('flash_process_scored','autoruns_runkeys','hayabusa_timeline','amcache','prefetch_index','usn_write_bursts','asep_sweep','defender_status','yara_scanned','entities_binaries','hunt_findings','svchost_audit','remote_access','security_proc_events','wer_reports','loldrivers_hits')
 $vA7a = Get-CompromiseVerdict
-Check "A7: 12 sources uncovered -> coverage 76% (133/175 rounded), not the old capped 100%" ($vA7a.ConfidencePercent -eq 76 -and $vA7a.CoveragePercentUnadjusted -eq 76)
-Check "A7: verdict object carries N/M sources (21/34)" ($vA7a.CoverageSourcesCollected -eq 21 -and $vA7a.CoverageSourcesTotal -eq 34)
+Check "A7: 14 sources uncovered -> coverage 75% (133/177 rounded), not the old capped 100%" ($vA7a.ConfidencePercent -eq 75 -and $vA7a.CoveragePercentUnadjusted -eq 75)
+Check "A7: verdict object carries N/M sources (21/35)" ($vA7a.CoverageSourcesCollected -eq 21 -and $vA7a.CoverageSourcesTotal -eq 35)
 
 # A7b: every source collected -> 100
 $script:presentCsvs = $allCovCsvs
 $vA7b = Get-CompromiseVerdict
-Check "A7: all 34 sources collected -> 100%" ($vA7b.ConfidencePercent -eq 100 -and $vA7b.CoverageSourcesCollected -eq 34 -and $vA7b.CoverageSourcesTotal -eq 34)
+Check "A7: all 35 sources collected -> 100%" ($vA7b.ConfidencePercent -eq 100 -and $vA7b.CoverageSourcesCollected -eq 35 -and $vA7b.CoverageSourcesTotal -eq 35)
 
 # A7c: non-admin -15 applies to the collected sum BEFORE the division. The evtx export dir
 # is set aside so tiny coverage is reachable (the stubs still give IOC 2 + Sysmon 5 + RAM 3).
@@ -272,7 +272,7 @@ $CsvDir = Join-Path $tmp 'csv'
 $script:Verdict = $vA7a
 $draftA7 = @(Get-CaseNarrative)
 $assessA7 = @($draftA7 | Where-Object { $_ -like 'ASSESSMENT*' })[0]
-Check "A7 draft line exact-string: same 76% fraction + 21/34 sources + v2.55 wording" ($assessA7 -eq 'ASSESSMENT: NO EVIDENCE OF COMPROMISE (evidence coverage 76% of expected sources - 21/34 sources, not a probability of compromise). No signs of compromise were found.')
+Check "A7 draft line exact-string: same 75% fraction + 21/35 sources + v2.55 wording" ($assessA7 -eq 'ASSESSMENT: NO EVIDENCE OF COMPROMISE (evidence coverage 75% of expected sources - 21/35 sources, not a probability of compromise). No signs of compromise were found.')
 
 # ---- A8: clean-check predicates align to the post-Task-1/2 verdict signal inputs ----
 $m8 = [regex]::Match($src, "(?s)function Get-CleanCheckSummary \{.*?\r?\n\}")
@@ -359,7 +359,7 @@ Remove-Item -LiteralPath $capFile -Force -ErrorAction SilentlyContinue
 # I2/I3: inline (top-level, the way the real script sets the $LogHours param - same storage slot)
 function Get-ToolsDir { return $toolsDir }
 $script:hayArgsCap = New-Object System.Collections.Generic.List[string]
-function Invoke-NativeTool { param([string]$ExePath, [string[]]$ToolArgs, [string]$WorkingDirectory) $script:hayArgsCap.Add(($ToolArgs -join ' ')) }
+function Invoke-NativeTool { param([string]$_ExePath, [string[]]$ToolArgs, [string]$_WorkingDirectory) $script:hayArgsCap.Add(($ToolArgs -join ' ')) }
 
 $LogHours = 24; $script:LogStartDT = $null; $script:LogEndDT = $null
 $script:hayArgsCap.Clear()
