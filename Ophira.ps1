@@ -1,5 +1,5 @@
 ﻿<#
-Ophira v6.4  -  Windows Endpoint Triage Toolkit
+Ophira v6.5  -  Windows Endpoint Triage Toolkit
 READ-ONLY by design: never modifies the system, only reads and copies data
 into its own output folder. Intended to be handed to a system owner or run
 by a responder during early triage / threat hunting.
@@ -391,7 +391,7 @@ param(
     [switch]$ShareZip
 )
 
-$ScriptVersion = "6.4"
+$ScriptVersion = "6.5"
 $ErrorActionPreference = 'Continue'
 $ProgressPreference = 'SilentlyContinue'
 
@@ -12656,6 +12656,81 @@ function New-HuntFindings {
         & $find 'Scheduled task with suspicious action' 'medium' $r67tn "task installed/updated ($r67why, by $($r67.Account)): $r67ev" 'T1053.005'
     }
     & $trace 'R67' 'scheduled task suspicious action' "security_task_install: $($r67Seen.Count) task(s) flagged"
+    # ---------- R68 (v6.5): 7045 service install with suspicious binary ----------
+    # A new service whose executable is a LOLBin leaf or lives in a user-writable path
+    # is persistence/lateral staging (atexec-style services, dropped binaries
+    # registered as services; Sigma service-install family). System32/Program Files
+    # service binaries never flag - the FP surface is vendor one-shot installers, so
+    # the LOLBin branch is the loud one (high, huntHi) and user-writable is medium.
+    $r68Seen = @{}
+    foreach ($r68 in @(Import-CaseCsv 'system_new_services')) {
+        $r68bin = ("$($r68.Binary)" -replace '\s+', ' ').Trim()
+        if (-not $r68bin) { continue }
+        $r68first = ($r68bin -split ' ')[0].Trim('"')
+        $r68leaf = ''
+        try { $r68leaf = (Split-Path $r68first -Leaf) } catch { $r68leaf = $r68first }
+        $r68kind = ''
+        if ($r68leaf -match '(?i)^(powershell|pwsh|cmd|rundll32|mshta|regsvr32|wscript|cscript|msbuild|installutil|certutil)(\.exe)?$') { $r68kind = 'LOLBin' }
+        elseif ($r68first -match '\\' -and (Test-IsUserWritablePath $r68first)) { $r68kind = 'Writable' }
+        if (-not $r68kind) { continue }
+        $r68sn = "$($r68.Service)"
+        if (-not $r68sn -or $r68Seen.ContainsKey($r68sn)) { continue }
+        $r68Seen[$r68sn] = $true
+        # literal rule names: the test harness extracts & $find literals for its high-rule pins
+        if ($r68kind -eq 'LOLBin') { & $find 'LOLBin service binary (7045)' 'high' $r68sn "new service '$r68sn' ($($r68.Type)): $r68bin" 'T1543.003' }
+        else { & $find 'Service binary from user-writable path (7045)' 'medium' $r68sn "new service '$r68sn' ($($r68.Type)): $r68bin" 'T1543.003' }
+    }
+    & $trace 'R68' 'service install suspicious binary' "system_new_services: $($r68Seen.Count) service(s) flagged"
+    # ---------- R69 (v6.5): Run-key autostart with LOLBin command + tell ----------
+    # A Run/RunOnce value that both launches a LOLBin head AND carries a secondary
+    # tell (encoded/hidden flags, web or UNC payload, payload path in AppData/Temp/
+    # ProgramData) is classic autostart persistence (Sigma run-key family). A bare
+    # LOLBin without a tell stays silent - vendor scripts do launch cmd/powershell
+    # from Run keys legitimately, and honesty over signal volume is the house rule.
+    $r69Seen = @{}
+    foreach ($r69 in @(Import-CaseCsv 'autoruns_runkeys')) {
+        $r69val = "$($r69.Value)"
+        if (-not $r69val) { continue }
+        $r69first = ($r69val -split ' ')[0].Trim('"')
+        $r69leaf = ''
+        try { $r69leaf = (Split-Path $r69first -Leaf) } catch { $r69leaf = $r69first }
+        if ($r69leaf -notmatch '(?i)^(powershell|pwsh|cmd|mshta|rundll32|regsvr32|wscript|cscript)(\.exe)?$') { continue }
+        if ($r69val -notmatch '(?i)(-enc|-w hidden|-nop|-noni|https?://|\\\\|\\appdata\\|\\temp\\|\\programdata\\)') { continue }
+        $r69key = "$($r69.Location)|$($r69.Name)"
+        if ($r69Seen.ContainsKey($r69key)) { continue }
+        $r69Seen[$r69key] = $true
+        $r69ev = if ($r69val.Length -gt 160) { $r69val.Substring(0, 160) } else { $r69val }
+        & $find 'Autostart Run key with suspicious command' 'medium' $r69leaf.ToLower() "'$($r69.Name)' at $($r69.Location) ($($r69.Hive)): $r69ev" 'T1547.001'
+    }
+    & $trace 'R69' 'run key suspicious command' "autoruns_runkeys: $($r69Seen.Count) entry(ies) flagged"
+    # ---------- R70 (v6.5): DCOM lateral-movement command surface ----------
+    # MMC20.Application / RunHTA / ExecuteShellCommand on a command line or script
+    # block are DCOM remote-execution primitives (Elastic dcom_mmc20 / dcom_hta).
+    # Single string matches - medium, no verdict door (an admin could run these by
+    # hand; the evidence carries the command so the analyst decides).
+    $r70Pats = @(
+        [pscustomobject]@{ Pat = '(?i)MMC20\.Application'; Sev = 'medium'; Name = 'DCOM MMC20.Application lateral command surface'; Why = 'MMC20.Application COM automation invoked - DCOM lateral-movement execution shape (verify the operator)'; Attck = 'T1021.003' }
+        [pscustomobject]@{ Pat = '(?i)\bRunHTA\b'; Sev = 'medium'; Name = 'DCOM RunHTA lateral command surface'; Why = 'RunHTA invoked - ShellWindows/DCOM-style lateral execution staging'; Attck = 'T1021.003' }
+        [pscustomobject]@{ Pat = '(?i)ExecuteShellCommand'; Sev = 'medium'; Name = 'DCOM ExecuteShellCommand lateral command surface'; Why = 'ExecuteShellCommand invoked - DCOM shell-command execution staging'; Attck = 'T1021.003' }
+    )
+    $r70Seen = @{}
+    foreach ($r70src in @('security_proc_events', 'sysmon_proc_create', 'powershell_events')) {
+        foreach ($r70c in @(Import-CaseCsv $r70src)) {
+            if ($r70src -eq 'powershell_events' -and "$($r70c.Id)" -ne '4104') { continue }
+            $r70cmd = if ($r70src -eq 'powershell_events') { "$($r70c.Message)" } else { "$($r70c.CommandLine)" }
+            if (-not $r70cmd) { continue }
+            foreach ($r70p in $r70Pats) {
+                if ($r70cmd -notmatch $r70p.Pat) { continue }
+                $r70key = "$($r70p.Name)|$r70src"
+                if ($r70Seen.ContainsKey($r70key)) { continue }
+                $r70Seen[$r70key] = $true
+                $r70ev = if ($r70cmd.Length -gt 160) { $r70cmd.Substring(0, 160) } else { $r70cmd }
+                & $find $r70p.Name $r70p.Sev $r70src "$($r70p.Why) - $r70ev" $r70p.Attck
+                break
+            }
+        }
+    }
+    & $trace 'R70' 'DCOM lateral command surface' "proc + powershell command surfaces -> $($r70Seen.Count) pattern/source hit(s)"
 
     # v2.87 storm guard: one broken source can flood one rule with hundreds of rows and
     # drown both the report and the verdict - cap each rule+severity at 15 rows and
@@ -12972,7 +13047,7 @@ function Get-CompromiseVerdict {
     $postureBad = @($posture | Where-Object { "$($_.Status)" -eq 'BAD' })
     $credSweep = Import-CaseCsv 'credential_sweep'
     $hunt = Import-CaseCsv 'hunt_findings'
-    $huntHi = @($hunt | Where-Object { "$($_.Severity)" -eq 'high' -and "$($_.Rule)" -match 'Renamed LOLBin|side-load|Downloaded then executed|LSASS access|LSASS dump|secretsdump|ntdsutil|RunAsPPL|Office app spawned|proxy-execution|Admin-share|Defender (real-time|exclusion)|DCSync|Password spray|Web server spawned|Remote-access tunnel|ServiceDll tamper|authorized_keys|Svchost masquerade|Cross-process injection|C2-style named pipe|image tampering|Direct volume access|WMI event subscription|Sysmon configuration changed|Lookalike system binary|Misplaced system binary|Known-bad name pattern' })   # v6.4: +LSASS dump/secretsdump/ntdsutil/RunAsPPL (R64-R66 credential-dump family)
+    $huntHi = @($hunt | Where-Object { "$($_.Severity)" -eq 'high' -and "$($_.Rule)" -match 'Renamed LOLBin|side-load|Downloaded then executed|LSASS access|LSASS dump|secretsdump|ntdsutil|RunAsPPL|LOLBin service binary|Office app spawned|proxy-execution|Admin-share|Defender (real-time|exclusion)|DCSync|Password spray|Web server spawned|Remote-access tunnel|ServiceDll tamper|authorized_keys|Svchost masquerade|Cross-process injection|C2-style named pipe|image tampering|Direct volume access|WMI event subscription|Sysmon configuration changed|Lookalike system binary|Misplaced system binary|Known-bad name pattern' })   # v6.5: +LOLBin service binary (R68); v6.4: +LSASS dump/secretsdump/ntdsutil/RunAsPPL (R64-R66 credential-dump family)
     # v2.64: EcsConfigs-only 5007 exclusion - Features\EcsConfigs is Defender's tamper-protected,
     # platform-managed cloud-config key (rewritten on every engine sync), NOT a user-set exclusion.
     # A 'Defender exclusion configuration changed' finding that only touches EcsConfigs paths is

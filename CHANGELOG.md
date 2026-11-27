@@ -1,3 +1,12 @@
+## v6.5 - service / run-key / DCOM hunt rules (Tier 2)
+
+Three hunt rules covering persistence and lateral-movement surfaces that were report-only until now.
+
+- **R68 7045 service-binary triage** (high/medium, T1543.003): new-service installs whose binary's first token is a LOLBin (powershell/cmd/rundll32/mshta/regsvr32/wscript/cscript/msbuild/installutil/certutil) flag HIGH; binaries under user-writable paths flag MEDIUM; legit System32 and quoted-vendor paths stay silent. Dedup per service name; 'LOLBin service binary' joined the floor-3 credential-dump regex.
+- **R69 Run-key autostart LOLBin+tell** (medium, T1547.001): Run/RunOnce values whose command starts with a LOLBin AND carries a tell (encoded/hidden/nop flags, http(s), UNC payload, appdata/temp/programdata path). Bare LOLBin without a tell stays silent - the OneDrive-shaped vendor entries this box ships never flag.
+- **R70 DCOM lateral command surface** (medium, T1021.003): MMC20.Application / RunHTA / ExecuteShellCommand strings across 4688 command lines, Sysmon EID 1, and PowerShell 4104 scriptblocks; dedup per pattern+source.
+- tests: test_v66.ps1 (26 checks: per-rule severity/entity/evidence, dedup + filter negatives, kind mapping, wiring pins); test_v279 trace blocks 58->61; test_v280a literal-highs 30->31; test_v220 huntHi regex pin extended; version sweep covered the 4 escaped-regex test files (v46/v47/v48/v49).
+
 ## v6.4 - credential-dump + lateral-intro hunt rules (Tier 1)
 
 Five hunt rules from the R&D backlog, all running on data Ophira already collects.
