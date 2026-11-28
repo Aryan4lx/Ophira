@@ -88,7 +88,7 @@ Check 'P3: shellbags user from UsrClass.dat leaf' ($src.Contains('_UsrClass\.dat
 Check 'P3: ::ffff: strip comment pinned' ($src.Contains('IPv4-mapped IPv6 forms'))
 Check 'P3: jump-list h3 + import wired' ($src.Contains('Recent file targets (jump lists)') -and $src.Contains("Import-CaseCsv 'jumplist_parsed_AutomaticDestinations'"))
 Check 'P3: jump-list sort falls back to CreationTime' ($src.Contains('else { $_.CreationTime }'))
-Check 'P3: version 6.3' ($src.Contains('Ophira v6.7') -and $src.Contains('$ScriptVersion = "6.7"'))
+Check 'P3: version 6.3' ($src.Contains('Ophira v6.8') -and $src.Contains('$ScriptVersion = "6.8"'))
 
 Write-Host ''
 if ($script:fail -gt 0) { Write-Host "v4.4: $($script:pass) passed, $($script:fail) FAILED" -ForegroundColor Red; exit 1 }
