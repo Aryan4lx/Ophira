@@ -1,4 +1,4 @@
-﻿# tests\test_v294.ps1 - v2.96 D-group: joins, parsers, normalizers, honesty
+# tests\test_v294.ps1 - v2.96 D-group: joins, parsers, normalizers, honesty
 $ErrorActionPreference = 'Stop'
 $repo = Split-Path -Parent $PSScriptRoot
 $srcPath = Join-Path $repo 'Ophira.ps1'
@@ -122,7 +122,7 @@ Check 'D7f: mapped-prefix strip count' (([regex]::Matches($src, [regex]::Escape(
 
 # ---- P7: version
 Check 'version: header bumped' ($src.Contains('Ophira v6.'))
-Check 'version: ScriptVersion 3.x' ($src.Contains('$ScriptVersion = "6.6"'))
+Check 'version: ScriptVersion 3.x' ($src.Contains('$ScriptVersion = "6.7"'))
 
 Write-Host ''
 Write-Host "v294: $script:pass passed, $script:fail failed" -ForegroundColor $(if ($script:fail -eq 0) { 'Green' } else { 'Red' })

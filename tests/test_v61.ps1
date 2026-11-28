@@ -1,4 +1,4 @@
-﻿# test_v61.ps1 - v6.2 t-corr upgrades: top-3 ranked candidates, IOC/YARA seeds, candidate-flagged bond.
+# test_v61.ps1 - v6.2 t-corr upgrades: top-3 ranked candidates, IOC/YARA seeds, candidate-flagged bond.
 $ErrorActionPreference = 'Stop'
 $src = Get-Content (Join-Path $PSScriptRoot '..\Ophira.ps1') -Raw
 $fails = 0
@@ -91,7 +91,7 @@ Check 'fleet_tcorr csv written' ($src.Contains("fleet_tcorr.csv"))
 Check 'fleet t-corr console line' ($src.Contains('FLEET T-CORR SPREAD'))
 Check 'fleet per-host exec_tcorr load' ($src.Contains("Join-Path `$csvDir 'exec_tcorr.csv'"))
 Check 'fleet report h2' ($src.Contains('Fleet t-corr spread'))
-Check 'version 6.3' ($src.Contains('$ScriptVersion = "6.6"'))
+Check 'version 6.3' ($src.Contains('$ScriptVersion = "6.7"'))
 
 Write-Host "test_v61: $(16 - $fails) checks passed, $fails failed"
 if ($fails -gt 0) { exit 1 } else { exit 0 }

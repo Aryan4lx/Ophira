@@ -1,3 +1,15 @@
+## v6.7 - fleet campaign ties v2 (accounts, source IPs, USB, spans)
+
+Campaign stitching (which hosts are ONE intrusion?) now uses every identity surface the toolkit collects, not just lateral/hash/indicator/wave edges.
+
+- **Three new tie types** in New-FleetCampaigns: same-account sign-ins across hosts (from session stories - machine/SYSTEM/DWM/UMFD/Window Manager accounts excluded), shared source IPs (session sign-in source + lateral SourceIp -> target host; LOCAL/'-'/empty/127.*/::1/169.254.* never tie), and the same USB storage serial on multiple hosts (serial-less/'0' rows skipped).
+- **Campaigns gain a Span** (activity window = min to max of every tie-evidence time in the cluster; time-less ties leave it empty) and a **Flagged count** (n of m host(s) at SUSPICIOUS or above).
+- **Fleet report**: campaigns table renders the span and the flagged count next to the worst verdict; the meta line and the campaign story card document all 7 tie types and the activity window.
+- Host/user matching stays case/whitespace-normalized (JSmith = jsmith, WS-01 = ws-02); the MSSP cross-client guard holds for every new edge type (cross-client ties recorded, never merged).
+- Fleet harvest reads csv\context\usb_devices.csv per case (cap 5000 rows).
+- No verdict weight change - campaigns remain aggregation of existing per-host verdicts.
+- tests: test_v68.ps1 (27 checks: 3 new edge types + exclusions, span min-max/empty, flagged roll-up, client guard, case-normalization, evidence dedupe, harvest + report wiring pins).
+
 ## v6.6 - session stories (per-session investigation narrative)
 
 The report now reconstructs what each interactive account DID between logon and logoff, as a card per session: logon (type/source), lock/unlock and fast-user-switch bookends, in-session activity, and how the session ended.

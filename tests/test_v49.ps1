@@ -1,4 +1,4 @@
-﻿# test_v49.ps1 - fleet deployment waves (v4.9 Track 4)
+# test_v49.ps1 - fleet deployment waves (v4.9 Track 4)
 $ErrorActionPreference = 'Stop'
 . (Join-Path $PSScriptRoot '_casehelpers.ps1')
 $script:checks = 0; $script:fails = 0
@@ -50,7 +50,7 @@ $r4 = @(New-FleetWaveRows (New-Object 'System.Collections.Generic.List[object]')
 Check 'empty input' ($r4.Count -eq 0) ''
 
 # wiring pins
-Check 'version bumped' ($src -match 'Ophira v6\.6' -and $src -match '\$ScriptVersion = "6\.6"') ''
+Check 'version bumped' ($src -match 'Ophira v6\.7' -and $src -match '\$ScriptVersion = "6\.7"') ''
 Check 'merge ingests amcache stamps' ($src.Contains("foreach (`$cn in @('FileKeyLastWriteTimestamp', 'KeyLastWriteTimestamp', 'LastWriteTimestamp'))")) ''
 Check 'waves csv exported' ($src.Contains("fleet_waves.csv")) ''
 Check 'report h2 present' ($src.Contains('Deployment waves (coordinated first-seen across hosts)')) ''

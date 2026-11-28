@@ -1,5 +1,5 @@
-﻿<#
-Ophira v6.6  -  Windows Endpoint Triage Toolkit
+<#
+Ophira v6.7  -  Windows Endpoint Triage Toolkit
 READ-ONLY by design: never modifies the system, only reads and copies data
 into its own output folder. Intended to be handed to a system owner or run
 by a responder during early triage / threat hunting.
@@ -391,7 +391,7 @@ param(
     [switch]$ShareZip
 )
 
-$ScriptVersion = "6.6"
+$ScriptVersion = "6.7"
 $ErrorActionPreference = 'Continue'
 $ProgressPreference = 'SilentlyContinue'
 
@@ -2432,7 +2432,7 @@ a{color:#7aa2f7;text-decoration:none}a:hover{color:#9ec1f0}.foot{margin-top:40px
         }
         $null = $fsb.AppendLine("</table><div class='meta'>Union-find over every cross-host tie this report found (lateral chains, shared binary hashes, shared indicators, deployment waves, same-account sign-ins, shared source IPs, shared USB devices): hosts linked by ANY of those land in the same campaign row. A cluster is one investigation, not N separate hosts. Full list: fleet_campaigns.csv.</div>")
         # v6.1: campaign narrative - the top cluster reads as one story, not a table row
-        $topC = @($campaignRows | Sort-Object { [int]"$($_.HostCount)" } -Descending | Select-Object -First 1)
+        $topC = @($campaignRows | Sort-Object { ConvertTo-SafeInt $_.HostCount } -Descending | Select-Object -First 1)
         if ($topC.Count -gt 0) {
             $tc = $topC[0]
             $firstEv = (("$($tc.Evidence)" -split '; ')[0])

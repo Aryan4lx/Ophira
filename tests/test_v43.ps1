@@ -1,4 +1,4 @@
-﻿# test_v43.ps1 - v4.6 BAM attribution: profile_list join, ran-as tags, useract BAM rollup
+# test_v43.ps1 - v4.6 BAM attribution: profile_list join, ran-as tags, useract BAM rollup
 $ErrorActionPreference = 'Stop'
 Set-StrictMode -Version 2.0
 $script:fails = 0
@@ -95,7 +95,7 @@ Check "P4: no evidence -> '-' and counter incremented" ("$rt3" -eq '-' -and $noR
 Check "P5: CsvCatMap profile_list" ($src -match "'profile_list' = 'volatile'")
 Check "P5: emptyWhy profile_list" ($src -match "'profile_list'\s+= 'no interactive-user profiles")
 Check "P5: desc map profile_list" ($src -match "'profile_list'\s+= 'SID to profile map")
-Check "P5: version 6.3" ($src.Contains('Ophira v6.6') -and $src.Contains('$ScriptVersion = "6.6"'))
+Check "P5: version 6.3" ($src.Contains('Ophira v6.7') -and $src.Contains('$ScriptVersion = "6.7"'))
 Check "P5: ranTxt BAM merge present" ($src -match 'bamByLeaf\.ContainsKey\(\$lnE\)')
 
 Write-Host ''

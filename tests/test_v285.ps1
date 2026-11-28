@@ -1,4 +1,4 @@
-﻿# test_v285.ps1 - v2.85: recon-session clustering (SANS-2017 recon-scan) + temporal
+# test_v285.ps1 - v2.85: recon-session clustering (SANS-2017 recon-scan) + temporal
 # execution correlation (t-corr) + R51 verdict wiring.
 # Part 1: New-ReconSessions - discovery-tool clustering, PS 4104 join, cmdletization out.
 # Part 2: New-TCorr - decay weighting, +-30 min gate, bidirectional bond.
@@ -146,7 +146,7 @@ Check "wire: report recon h3 present" ($src.Contains('Recon sessions - clustered
 Check "wire: report t-corr h3 present" ($src.Contains('Temporal execution correlation (t-corr)'))
 Check "wire: report imports for the two artifacts" ($src.Contains("Import-CaseCsv 'recon_sessions.csv'") -and $src.Contains("Import-CaseCsv 'exec_tcorr.csv'"))
 Check "wire: nav hunt count includes both" ($src.Contains('hunt = $huntRows.Count + $liveScan.Count + $reconSessions.Count + $tcorrRows.Count'))
-Check "wire: version bumped to 6.3" ($src.Contains('$ScriptVersion = "6.6"'))
+Check "wire: version bumped to 6.3" ($src.Contains('$ScriptVersion = "6.7"'))
 
 # ============================================================================
 Write-Host ""

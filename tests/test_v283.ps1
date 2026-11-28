@@ -1,4 +1,4 @@
-﻿# test_v283.ps1 - v2.83: shimcache executed-flag decode + ghost/hidden TaskCache checks +
+# test_v283.ps1 - v2.83: shimcache executed-flag decode + ghost/hidden TaskCache checks +
 #                  ESENT ntds.dit access + RADAR + AppSwitched
 # Part 1: Get-RegKeyLastWrite P/Invoke (real key + missing key degrade).
 # Part 2: Get-RadarRows / Get-AppSwitchedRows / Get-TaskDeletionRows / Get-EsentNtdsRows.
@@ -230,7 +230,7 @@ Check "wire: report radar h3 present" ($src.Contains('RADAR diagnosed applicatio
 Check "wire: report appswitched h3 present" ($src.Contains('App focus switches (taskbar FeatureUsage)'))
 Check "wire: report shimcache exec h3 present" ($src.Contains('Shimcache executed-flag (Win10+ records'))
 Check "wire: report imports for the six artifacts" ($src.Contains("Import-CaseCsv 'scheduled_taskcache.csv'") -and $src.Contains("Import-CaseCsv 'task_deletions.csv'") -and $src.Contains("Import-CaseCsv 'esent_ntds.csv'") -and $src.Contains("Import-CaseCsv 'shimcache_exec.csv'") -and $src.Contains("Import-CaseCsv 'radar_exec.csv'") -and $src.Contains("Import-CaseCsv 'appswitched.csv'"))
-Check "wire: version bumped to 6.3" ($src.Contains('$ScriptVersion = "6.6"'))
+Check "wire: version bumped to 6.3" ($src.Contains('$ScriptVersion = "6.7"'))
 
 # ============================================================================
 Write-Host ""

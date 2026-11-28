@@ -1,4 +1,4 @@
-﻿# test_v60.ps1 - v6.0 user MRU artifacts (Get-UserMruRows + R60 hunt + verdict door)
+# test_v60.ps1 - v6.0 user MRU artifacts (Get-UserMruRows + R60 hunt + verdict door)
 $ErrorActionPreference = 'Stop'
 $src = Get-Content (Join-Path $PSScriptRoot '..\Ophira.ps1') -Raw
 $checks = 0; $failed = 0
@@ -119,7 +119,7 @@ Check 'T5: SharedFunctions rehydrates Get-UserMruRows' ($src.Contains("'Get-User
 Check 'T5: CsvCatMap + emptyWhy + desc entries' ($src.Contains("'user_mru' = 'artifacts'") -and $src.Contains("'user_mru'                        = 'no MRU rows"))
 Check 'T5: snapshot h3 + verdict door wired' ($src.Contains('User MRU artifacts (typed commands') -and $src.Contains("Add-Signal 'Hands-on-keyboard typed execution (RunMRU/TypedPaths)' 2"))
 Check 'T5: nav snapshot count includes mruRows' ($src.Contains('+ $aswRows.Count + $mruRows.Count'))
-Check 'T5: version 6.3' ($src.Contains('$ScriptVersion = "6.6"'))
+Check 'T5: version 6.3' ($src.Contains('$ScriptVersion = "6.7"'))
 
 Write-Host ''
 Write-Host "test_v60: $checks checks, $failed failed"
