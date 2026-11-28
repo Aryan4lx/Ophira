@@ -58,7 +58,7 @@ $script:caseCsv['system_new_services'] = @()
 $script:caseCsv['security_auth_events'] = @()
 $allF = Invoke-Hunt
 $r72 = @($allF | Where-Object { "$($_.Rule)" -match 'Vulnerable driver blocklist' })
-Check 'R72-1 registry zero-write flagged high (T1685)' (@($r72 | Where-Object { "$($_.Rule)" -eq 'Vulnerable driver blocklist disabled (registry)' -and "$($_.Severity)" -eq 'high' -and "$($_.Attck)" -eq 'T1685' }).Count -eq 1)
+Check 'R72-1 registry zero-write flagged high (T1112)' (@($r72 | Where-Object { "$($_.Rule)" -eq 'Vulnerable driver blocklist disabled (registry)' -and "$($_.Severity)" -eq 'high' -and "$($_.Attck)" -eq 'T1112' }).Count -eq 1)
 Check 'R72-2 re-enable (0x1) and key-open silent' (@($r72 | Where-Object { "$($_.Rule)" -eq 'Vulnerable driver blocklist disabled (registry)' }).Count -eq 1)
 Check 'R72-3 command-line write flagged, query silent' (@($r72 | Where-Object { "$($_.Rule)" -eq 'Vulnerable driver blocklist write attempt (command line)' }).Count -eq 1)
 Check 'R72-4 huntHi regex carries the term' ($script:src -match '\|vulnerable driver blocklist')

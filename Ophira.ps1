@@ -13166,7 +13166,7 @@ function New-HuntFindings {
             try { $r72val = [Convert]::ToInt64($Matches[2], 16) } catch { $r72val = -1 }
             if ($r72val -eq 0) {
                 $r72N++
-                & $find 'Vulnerable driver blocklist disabled (registry)' 'high' "$($r72r.Image)" "$r72t = $("$($r72r.Details)".Trim()) (BYOVD protection off)" 'T1685'
+                & $find 'Vulnerable driver blocklist disabled (registry)' 'high' "$($r72r.Image)" "$r72t = $("$($r72r.Details)".Trim()) (BYOVD protection off)" 'T1112'
             }
         }
     }
@@ -13176,7 +13176,7 @@ function New-HuntFindings {
             $r72c = if ("$r72s" -eq 'powershell_events') { "$($r72p.Message)" } else { "$($r72p.CommandLine)" }
             if ($r72c -match '(?i)VulnerableDriverBlocklistEnable' -and $r72c -match '(?i)/d\s+"?0+"?(\s|/|$)' -and $r72c -match '(?i)\badd\b') {
                 $r72N++
-                & $find 'Vulnerable driver blocklist write attempt (command line)' 'high' "$r72s" "command surface: $($r72c.Substring(0, [Math]::Min(160, $r72c.Length)))" 'T1685'
+                & $find 'Vulnerable driver blocklist write attempt (command line)' 'high' "$r72s" "command surface: $($r72c.Substring(0, [Math]::Min(160, $r72c.Length)))" 'T1112'
             }
         }
     }
