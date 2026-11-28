@@ -2017,6 +2017,7 @@ $signerRows = @()
 $leafStamps = New-Object 'System.Collections.Generic.List[object]'
 $fleetTc = New-Object System.Collections.Generic.List[object]   # v6.2: per-host t-corr pairs for cross-host spread
 $fleetSess = New-Object System.Collections.Generic.List[object] # v6.6: per-host session-story headers for the fleet view
+$fleetUsb = New-Object System.Collections.Generic.List[object]  # v6.7: per-host USB storage rows for cross-host device ties
     $extractWorker = {
         param($zipPath, $tmp)
         Add-Type -AssemblyName System.IO.Compression.FileSystem
@@ -2195,6 +2196,18 @@ $fleetSess = New-Object System.Collections.Generic.List[object] # v6.6: per-host
                     }
                 } catch { }
             }
+            # v6.7 fleet USB ties: storage-device serials seen on this host
+            $usC = Join-Path $csvDir 'usb_devices.csv'
+            if (-not (Test-Path $usC)) { $usC = Join-Path $csvDir (Get-CaseCsvPath 'usb_devices.csv') }
+            if ((Test-Path $usC) -and $fleetUsb.Count -lt 5000) {
+                try {
+                    foreach ($r in (Import-Csv $usC)) {
+                        $sn = ("$($r.Serial)").Trim()
+                        if (-not $sn -or $sn -eq '0') { continue }
+                        $null = $fleetUsb.Add([pscustomobject]@{ Host = $host_; Serial = $sn; FriendlyName = "$($r.FriendlyName)"; Stamp = "$($r.LastWrite)" })
+                    }
+                } catch { }
+            }
         }
         $e = Join-Path $dir 'raw\evtx'
         if (Test-Path $e) { $evtxDirs += $e }
@@ -2301,7 +2314,7 @@ $fleetSess = New-Object System.Collections.Generic.List[object] # v6.6: per-host
         foreach ($h in $hosts) { $vMap[$h.Host] = "$($h.Verdict)" }
         $clientBy = @{}
         foreach ($h in $hosts) { if ("$($h.Client)") { $clientBy[("$($h.Host)").Trim().ToLower()] = "$($h.Client)" } }
-        $campaignRows = @(New-FleetCampaigns -HashRows $fleetHashRows -CrossRows $crossHost -Lateral $lateral.ToArray() -Waves $waveRows -AllHosts @($hosts | ForEach-Object { $_.Host }) -Verdicts $vMap -ClientBy $clientBy)
+        $campaignRows = @(New-FleetCampaigns -HashRows $fleetHashRows -CrossRows $crossHost -Lateral $lateral.ToArray() -Waves $waveRows -AllHosts @($hosts | ForEach-Object { $_.Host }) -Verdicts $vMap -ClientBy $clientBy -SessionRows $fleetSess.ToArray() -UsbRows $fleetUsb.ToArray())
         if ($campaignRows.Count -gt 0) {
             $campaignRows | Export-Csv -LiteralPath (Join-Path $OutFolder 'fleet_campaigns.csv') -NoTypeInformation -Encoding UTF8
             Write-Host "`n  CAMPAIGNS: $($campaignRows.Count) host cluster(s) tied by shared indicators/lateral movement -> fleet_campaigns.csv" -ForegroundColor Red

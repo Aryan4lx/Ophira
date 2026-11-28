@@ -103,6 +103,11 @@ $ev7 = if ($t7) { "$($t7[0].Evidence)" } else { '' }
 $cnt7 = [regex]::Matches($ev7, [regex]::Escape('account: jsmith on')).Count
 Check 'T7 account tie line deduped to one' ($cnt7 -eq 1)
 
+Write-Host '--- T8: fleet harvest wiring pins (Analyze-mode plumbing) ---'
+Check 'T8 $fleetUsb list initialized' ($script:src -match [regex]::Escape('$fleetUsb = New-Object System.Collections.Generic.List[object]'))
+Check 'T8 usb_devices harvest with cap + serial filter' ($script:src -match [regex]::Escape('Join-Path $csvDir ''usb_devices.csv''') -and $script:src -match '\$fleetUsb\.Count -lt 5000' -and $script:src -match [regex]::Escape('$sn -eq ''0'''))
+Check 'T8 stitcher call wires SessionRows + UsbRows' ($script:src -match [regex]::Escape('-SessionRows $fleetSess.ToArray() -UsbRows $fleetUsb.ToArray()'))
+
 Write-Host ''
 Write-Host ("{0} passed, {1} failed" -f $script:pass, $script:fail)
 if ($script:fail -gt 0) { exit 1 }
