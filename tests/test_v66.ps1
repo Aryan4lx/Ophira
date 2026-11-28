@@ -27,7 +27,7 @@ $script:caseCsv['system_new_services'] = @(
     # LOLBin binary -> high
     [pscustomobject]@{ Time = '2026-11-26 10:00:00'; Service = 'CmdSvc'; Binary = 'C:\Windows\System32\cmd.exe /c powershell -enc AAAA'; Type = 'NewService' }
     # user-writable binary -> medium
-    [pscustomobject]@{ Time = '2026-11-26 10:01:00'; Service = 'EvSvc'; Binary = 'C:\Users\aryan\AppData\evil.exe -k net'; Type = 'NewService' }
+    [pscustomobject]@{ Time = '2026-11-26 10:01:00'; Service = 'EvSvc'; Binary = 'C:\Users\jsmith\AppData\evil.exe -k net'; Type = 'NewService' }
     # legit System32 binary -> silent
     [pscustomobject]@{ Time = '2026-11-26 10:02:00'; Service = 'LegitSvc'; Binary = 'C:\Windows\System32\svchost.exe -k netsvcs'; Type = 'NewService' }
     # vendor path, quoted -> silent (not user-writable per stub)
@@ -46,16 +46,16 @@ $script:caseCsv['autoruns_runkeys'] = @(
     # LOLBin head, NO tell -> silent (the cmd /c sc delete vendor shape)
     [pscustomobject]@{ Location = 'HKLM\SOFTWARE\Microsoft\Windows\CurrentVersion\Run'; Hive = 'HKLM'; User = ''; Name = 'PlainCmd'; Value = 'cmd.exe /c sc delete APSPDriver' }
     # user path but not a LOLBin head -> silent (the OneDrive FP case)
-    [pscustomobject]@{ Location = 'HKU\S-1-5-21-1\Software\Microsoft\Windows\CurrentVersion\Run'; Hive = 'HKU'; User = 'S-1-5-21-1'; Name = 'OneDrive'; Value = 'C:\Users\aryan\AppData\Local\Microsoft\OneDrive\OneDrive.exe /background' }
+    [pscustomobject]@{ Location = 'HKU\S-1-5-21-1\Software\Microsoft\Windows\CurrentVersion\Run'; Hive = 'HKU'; User = 'S-1-5-21-1'; Name = 'OneDrive'; Value = 'C:\Users\jsmith\AppData\Local\Microsoft\OneDrive\OneDrive.exe /background' }
     # duplicate Updater -> deduped per Location|Name
     [pscustomobject]@{ Location = 'HKU\S-1-5-21-1\Software\Microsoft\Windows\CurrentVersion\Run'; Hive = 'HKU'; User = 'S-1-5-21-1'; Name = 'Updater'; Value = 'C:\Windows\System32\WindowsPowerShell\v1.0\powershell.exe -w hidden -nop -enc SQBFAFgA' }
 )
 # R70: DCOM lateral command surface
 $script:caseCsv['security_proc_events'] = @(
-    [pscustomobject]@{ Time = '2026-11-26 11:00:00'; Account = 'aryan'; NewProcess = 'C:\Windows\System32\rundll32.exe'; ParentProcess = 'C:\Windows\System32\cmd.exe'; CommandLine = 'rundll32.exe doc.RunHTA payload' }
-    [pscustomobject]@{ Time = '2026-11-26 11:01:00'; Account = 'aryan'; NewProcess = 'C:\Windows\System32\notepad.exe'; ParentProcess = 'C:\Windows\System32\explorer.exe'; CommandLine = 'notepad.exe' }
+    [pscustomobject]@{ Time = '2026-11-26 11:00:00'; Account = 'jsmith'; NewProcess = 'C:\Windows\System32\rundll32.exe'; ParentProcess = 'C:\Windows\System32\cmd.exe'; CommandLine = 'rundll32.exe doc.RunHTA payload' }
+    [pscustomobject]@{ Time = '2026-11-26 11:01:00'; Account = 'jsmith'; NewProcess = 'C:\Windows\System32\notepad.exe'; ParentProcess = 'C:\Windows\System32\explorer.exe'; CommandLine = 'notepad.exe' }
     # duplicate RunHTA in the same source -> deduped per pattern|source
-    [pscustomobject]@{ Time = '2026-11-26 11:02:00'; Account = 'aryan'; NewProcess = 'C:\Windows\System32\rundll32.exe'; ParentProcess = 'C:\Windows\System32\cmd.exe'; CommandLine = 'rundll32.exe doc.RunHTA again' }
+    [pscustomobject]@{ Time = '2026-11-26 11:02:00'; Account = 'jsmith'; NewProcess = 'C:\Windows\System32\rundll32.exe'; ParentProcess = 'C:\Windows\System32\cmd.exe'; CommandLine = 'rundll32.exe doc.RunHTA again' }
 )
 $script:caseCsv['sysmon_proc_create'] = @(
     [pscustomobject]@{ Time = '2026-11-26 11:05:00'; Image = 'C:\Windows\System32\cmd.exe'; ParentImage = 'C:\Windows\System32\wmiprvse.exe'; OriginalFileName = 'cmd.exe'; CommandLine = 'cmd.exe /c tool ExecuteShellCommand whoami' }

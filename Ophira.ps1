@@ -7047,8 +7047,8 @@ a[name]{scroll-margin-top:66px}html{overflow-x:clip}[data-theme=light] .nav a.ac
         if (@('4624', '4625') -notcontains "$($a2.EventId)") { continue }
         $disp2 = "$(if ("$($a2.AccountDomain)" -and "$($a2.AccountDomain)" -ne '-') { "$($a2.AccountDomain)\" })$($a2.Account)".Trim('\')
         if (-not $disp2 -or @('', '-', '$') -contains "$($a2.Account)") { continue }
-        # v2.90: key on the account LEAF so 'DESKTOP-88Q1H74\aryan', bare 'aryan' (4688)
-        # and the C:\Users\aryan profile bucket are ONE user, not three rows; display keeps
+        # v2.90: key on the account LEAF so 'DESKTOP-EX01\jsmith', bare 'jsmith' (4688)
+        # and the C:\Users\jsmith profile bucket are ONE user, not three rows; display keeps
         # the most-qualified (domain-qualified) name seen
         $k2 = ("$disp2" -split '\\')[-1].ToLower()
         if (-not $userAct.Contains($k2)) { $userAct[$k2] = @{ Name = $disp2; Logons = 0; Failed = 0; Types = @{}; Ips = @{}; Procs = @{}; ProcN = 0; Files = 0; Last = '' } }
@@ -14434,7 +14434,7 @@ function Invoke-RegenerateOutputs {
     }
 
     # v2.58: remove v2.53-era SBECmd orphan strays - the old module 8.8 leaked per-hive
-    # outputs (e.g. Aryan_NTUSER.csv, 0_Aryan_Aryan_UsrClass.csv) into the csv root, and
+    # outputs (e.g. jsmith_NTUSER.csv, 0_jsmith_jsmith_UsrClass.csv) into the csv root, and
     # cases collected before the v2.54 fix keep carrying them as nameless 0-row unknowns
     # in the evidence index. shellbags.csv (the merged artifact) is never matched.
     foreach ($orphan in @(Get-ChildItem -LiteralPath $script:CsvDir -File -Filter '*.csv' -ErrorAction SilentlyContinue)) {
@@ -15302,7 +15302,7 @@ function New-RedactedCopy {
     foreach ($m2 in [regex]::Matches($html, '(?i)\b[a-z0-9][a-z0-9-]{1,31}\.(?:local|lan|internal|corp|localdomain)\b')) { $null = & $addTok 'HOST' $m2.Value }
     if ($tokens.Count -eq 0) { Write-CaseLog '    redact: nothing to redact found (report left as-is)' 'DarkYellow'; return }
     foreach ($orig in @($tokens.Keys | Sort-Object -Property @{Expression = { $_.Length }; Descending = $true })) {
-        # case-insensitive: evidence stores 'Aryan', 'aryan', 'ARYAN' for the same identity
+        # case-insensitive: evidence stores 'jsmith', 'JSMITH', 'JsMith' for the same identity
         $html = [regex]::Replace($html, [regex]::Escape($orig), $tokens[$orig], [System.Text.RegularExpressions.RegexOptions]::IgnoreCase)
     }
     $html = $html -replace '(?i)(<body[^>]*>)', '$1<div style="border:1px dashed #e0af68;padding:8px 12px;margin:10px 20px;font-size:12px"><b>REDACTED COPY</b> - hostnames, usernames, internal IPs and MACs are tokenized (HOST-N/USER-N/IP-INT-N/MAC-N). Public/attacker indicators are unmodified. The original-to-token map stays with the analyst (redact_map.csv).</div>'

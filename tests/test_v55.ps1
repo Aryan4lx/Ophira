@@ -30,7 +30,7 @@ $Preset = 'Standard'
 $script:HostRole = 'Workstation'
 $script:ClientName = 'Contoso Ltd'
 $script:CurrentCaseID = 'INC-TEST-42'
-$script:CurrentAnalyst = 'aryan'
+$script:CurrentAnalyst = 'jsmith'
 $script:Verdict = [pscustomobject]@{
     Level = 'SUSPICIOUS'; LevelRank = 2; ConfidencePercent = 85; OwnerLine = 'test owner line'
     Signals = @([pscustomobject]@{ Signal = 'Test signal'; Weight = 2; Count = 3; Detail = 'detail text' })
@@ -41,8 +41,8 @@ $script:Verdict = [pscustomobject]@{
         [pscustomobject]@{ Source = 'Live memory triage'; Collected = $false; Weight = 15 }
     )
 }
-[IO.File]::WriteAllText((Join-Path $tmp 'case.json'), '{"Computer":"LAB-HOST-01","CaseID":"INC-TEST-42","Analyst":"aryan","ClientName":"Contoso Ltd","Preset":"Standard","StartedUTC":"2026-11-24T08:00:00.0000000Z"}')
-[IO.File]::WriteAllText((Join-Path $tmp 'report.html'), "<html><body><h1>report for LAB-HOST-01</h1><p>user aryan did things</p><p>alice and bob ran tools</p><p>10.1.2.3 and 8.8.8.8 and 192.168.5.6</p><p>MAC aa:bb:cc:dd:ee:ff here</p><p>intranet.corp and evil.example.com</p><p>NT VIRTUAL MACHINE sessions; SYSTEM stays</p></body></html>")
+[IO.File]::WriteAllText((Join-Path $tmp 'case.json'), '{"Computer":"LAB-HOST-01","CaseID":"INC-TEST-42","Analyst":"jsmith","ClientName":"Contoso Ltd","Preset":"Standard","StartedUTC":"2026-11-24T08:00:00.0000000Z"}')
+[IO.File]::WriteAllText((Join-Path $tmp 'report.html'), "<html><body><h1>report for LAB-HOST-01</h1><p>user jsmith did things</p><p>alice and bob ran tools</p><p>10.1.2.3 and 8.8.8.8 and 192.168.5.6</p><p>MAC aa:bb:cc:dd:ee:ff here</p><p>intranet.corp and evil.example.com</p><p>NT VIRTUAL MACHINE sessions; SYSTEM stays</p></body></html>")
 $script:caseCsv['entities_accounts'] = @(
     [pscustomobject]@{ Account = 'DESKTOP-LAB-01\alice' },
     [pscustomobject]@{ Account = 'bob' },
@@ -122,7 +122,7 @@ Check 'P3 redacted file written' (Test-Path (Join-Path $tmp 'report_redacted.htm
 Check 'P3 banner present' ($red -match 'REDACTED COPY')
 Check 'P3 host tokenized' ($red -notmatch 'LAB-HOST-01' -and $red -match 'HOST-1')
 Check 'P3 user tokenized' ($red -notmatch '\balice\b' -and $red -match 'USER-2')
-Check 'P3 analyst tokenized as user' ($red -notmatch '\baryan\b' -and $red -match 'USER-1')
+Check 'P3 analyst tokenized as user' ($red -notmatch '\bjsmith\b' -and $red -match 'USER-1')
 Check 'P3 bare user tokenized' ($red -notmatch '\bbob\b' -and $red -match 'USER-3')
 Check 'P3 internal IP tokenized' ($red -notmatch '10\.1\.2\.3' -and $red -notmatch '192\.168\.5\.6' -and $red -match 'IP-INT-1' -and $red -match 'IP-INT-2')
 Check 'P3 public IP untouched' ($red -match '8\.8\.8\.8')

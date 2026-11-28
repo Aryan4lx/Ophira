@@ -31,7 +31,7 @@ $sb2 = [scriptblock]::Create((Get-Extracted 'Get-SidName'))
 $sysName = Get-SidName 'S-1-5-18'
 Check 'D4: S-1-5-18 resolves' ("$sysName" -match 'SYSTEM')
 Check 'D4: unresolvable SID returns empty' ((Get-SidName 'S-1-5-21-9999999999-9999999999-9999999999-999999') -eq '')
-Check 'D4: non-SID passes through' ((Get-SidName 'Aryan') -eq 'Aryan')
+Check 'D4: non-SID passes through' ((Get-SidName 'jsmith') -eq 'jsmith')
 
 # ---- P3: recyclebin $I binary parse (D7a) via module 8.1 extraction
 $m81 = [regex]::Match($src, "(?s)Id = '8\.1';.*?Run = \{(.*?)\r?\n        \} \}\r?\n    \[pscustomobject\]@\{ Id = '8\.2'")

@@ -27,7 +27,7 @@ foreach ($n in @('Get-EventDataRows')) {
 Invoke-Expression $defs41
 function Get-LogStart { $null }
 function Get-FilteredEvents { param($LogName, $Ids, $Start, $MaxMsg)
-    $msg = 'An account was successfully logged on. Subject: Security ID: S-1-5-18 Account Name: DESKTOP-88Q1H74$ Account Domain: WORKGROUP Logon ID: 0x3E7 New Logon: Security ID: S-1-5-21-1 Account Name: Aryan Account Domain: DESKTOP-88Q1H74 Logon ID: 0x52609325 Linked Logon ID: 0x52609361 Network Account Name: - Network Account Domain: - Logon GUID: - Process Information: New Process ID: 0x1 Process Name: - Network Information: Workstation Name: DESKTOP-88Q1H74 Source Network Address: 192.168.1.50 Source Port: 0 Detailed Authentication Information: Logon Type: 2'
+    $msg = 'An account was successfully logged on. Subject: Security ID: S-1-5-18 Account Name: DESKTOP-EX01$ Account Domain: WORKGROUP Logon ID: 0x3E7 New Logon: Security ID: S-1-5-21-1 Account Name: jsmith Account Domain: DESKTOP-EX01 Logon ID: 0x52609325 Linked Logon ID: 0x52609361 Network Account Name: - Network Account Domain: - Logon GUID: - Process Information: New Process ID: 0x1 Process Name: - Network Information: Workstation Name: DESKTOP-EX01 Source Network Address: 192.168.1.50 Source Port: 0 Detailed Authentication Information: Logon Type: 2'
     @(, [pscustomobject]@{ TimeCreated = (Get-Date '2026-10-05 13:00:00'); Id = 4624; Message = $msg })
 }
 function Export-Evtx { param($LogName, $FileName) }
@@ -39,9 +39,9 @@ function Get-TaskDeletionRows { param($Start) return @() }
 $mod41 = [pscustomobject]@{ Id = '4.1'; Name = 'Security log'; Run = [scriptblock]::Create($m41.Groups[1].Value) }
 & $mod41.Run
 $a = @($saved['security_auth_events'])[0]
-Check "4624 collapsed: Account = 'Aryan' (not the whole message)" ("$($a.Account)" -eq 'Aryan')
-Check "4624 collapsed: AccountDomain = 'DESKTOP-88Q1H74'" ("$($a.AccountDomain)" -eq 'DESKTOP-88Q1H74')
-Check "4624 collapsed: SubjectAccount = 'DESKTOP-88Q1H74`$' (first match)" ("$($a.SubjectAccount)" -eq 'DESKTOP-88Q1H74$')
+Check "4624 collapsed: Account = 'jsmith' (not the whole message)" ("$($a.Account)" -eq 'jsmith')
+Check "4624 collapsed: AccountDomain = 'DESKTOP-EX01'" ("$($a.AccountDomain)" -eq 'DESKTOP-EX01')
+Check "4624 collapsed: SubjectAccount = 'DESKTOP-EX01`$' (first match)" ("$($a.SubjectAccount)" -eq 'DESKTOP-EX01$')
 Check "4624 collapsed: LogonId = New Logon session 0x52609325" ("$($a.LogonId)" -eq '0x52609325')
 Check "4624 collapsed: LogonType + SourceIp" ("$($a.LogonType)" -eq '2' -and "$($a.SourceIp)" -eq '192.168.1.50')
 

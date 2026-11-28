@@ -28,7 +28,7 @@ $script:caseCsv['audit_cve'] = @(
 )
 $script:caseCsv['security_proc_events'] = @(
     # violation: core system proc, parent outside System32
-    [pscustomobject]@{ NewProcess = 'C:\Windows\svchost.exe'; ParentProcess = 'C:\Users\aryan\AppData\evil.exe'; CommandLine = 'svchost.exe -k evil' }
+    [pscustomobject]@{ NewProcess = 'C:\Windows\svchost.exe'; ParentProcess = 'C:\Users\jsmith\AppData\evil.exe'; CommandLine = 'svchost.exe -k evil' }
     # filtered: System32 parent
     [pscustomobject]@{ NewProcess = 'C:\Windows\System32\svchost.exe'; ParentProcess = 'C:\Windows\System32\services.exe'; CommandLine = '' }
     # filtered: MsMpEng leaf (Defender filter)
@@ -40,11 +40,11 @@ $script:caseCsv['security_proc_events'] = @(
     # filtered: empty parent
     [pscustomobject]@{ NewProcess = 'C:\Windows\System32\winlogon.exe'; ParentProcess = ''; CommandLine = '' }
     # violation again via second source (same pair -> deduped to ONE finding)
-    [pscustomobject]@{ NewProcess = 'C:\Windows\svchost.exe'; ParentProcess = 'C:\Users\aryan\AppData\evil.exe'; CommandLine = 'svchost.exe -k evil' }
+    [pscustomobject]@{ NewProcess = 'C:\Windows\svchost.exe'; ParentProcess = 'C:\Users\jsmith\AppData\evil.exe'; CommandLine = 'svchost.exe -k evil' }
 )
 $script:caseCsv['sysmon_proc_create'] = @(
     # violation: lsass spawned by user-path implant
-    [pscustomobject]@{ Image = 'C:\Windows\System32\lsass.exe'; ParentImage = 'C:\Users\aryan\implant.exe'; OriginalFileName = 'lsass.exe'; CommandLine = 'lsass.exe' }
+    [pscustomobject]@{ Image = 'C:\Windows\System32\lsass.exe'; ParentImage = 'C:\Users\jsmith\implant.exe'; OriginalFileName = 'lsass.exe'; CommandLine = 'lsass.exe' }
     # filtered: SysWOW64 parent
     [pscustomobject]@{ Image = 'C:\Windows\SysWOW64\services.exe'; ParentImage = 'C:\Windows\SysWOW64\wininit.exe'; OriginalFileName = 'services.exe'; CommandLine = '' }
 )

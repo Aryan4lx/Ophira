@@ -35,7 +35,7 @@ New-Item -ItemType Directory -Path $script:kitRoot -Force | Out-Null
 function New-Case([string]$dir) {
     New-Item -ItemType Directory -Path (Join-Path $dir 'csv\volatile') -Force | Out-Null
     New-Item -ItemType Directory -Path (Join-Path $dir 'raw') -Force | Out-Null
-    Set-Content (Join-Path $dir 'case.json') '{"Computer":"HOSTX","CaseID":"C-1","Analyst":"aryan","ClientName":"acme"}' -Encoding UTF8
+    Set-Content (Join-Path $dir 'case.json') '{"Computer":"HOSTX","CaseID":"C-1","Analyst":"jsmith","ClientName":"acme"}' -Encoding UTF8
     Set-Content (Join-Path $dir 'report.html') '<html>ORIGINAL</html>' -Encoding UTF8
     Set-Content (Join-Path $dir 'ophira_findings.json') '{"schema":"ophira-findings/1"}' -Encoding UTF8
     Set-Content (Join-Path $dir 'ANALYST-START-HERE.txt') 'start here' -Encoding UTF8

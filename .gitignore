@@ -26,3 +26,11 @@ attack_layer_fleet.json
 
 # -Mode Share client bundles (analyst-side originals stay in the case folders)
 share/
+
+# internal agent/working docs - local only, never publish
+/AGENTS.md
+/GLOSSARY.md
+/docs/adr/
+/docs/agents/
+/docs/research/
+/docs/superpowers/

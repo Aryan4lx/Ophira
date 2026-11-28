@@ -43,9 +43,9 @@ function Run-Mru {
 $script:regProps = @{
     'Registry::HKEY_USERS\S-1-5-21-1001\Software\Classes\Local Settings\Software\Microsoft\Windows\Shell\MuiCache' = [pscustomobject]@{
         'PSPath'                                                          = 'reg:path'
-        'C:\Users\Aryan\Downloads\tool.exe.FriendlyAppName'               = 'Tool Application'
+        'C:\Users\jsmith\Downloads\tool.exe.FriendlyAppName'               = 'Tool Application'
         'C:\Windows\System32\notepad.exe.FriendlyAppName'                 = 'Notepad'
-        'C:\Users\Aryan\Downloads\installer.exe.ApplicationCompany'       = 'ACME'
+        'C:\Users\jsmith\Downloads\installer.exe.ApplicationCompany'       = 'ACME'
         'LangID'                                                          = 'en-US'
     }
 }
@@ -54,8 +54,8 @@ $script:regExists = @{
 }
 $r = Run-Mru
 Check 'T1: muicache rows with suffix stripped (bare LangID dropped)' ((@($r | Where-Object { $_.Kind -eq 'muicache' }).Count) -eq 3)
-Check 'T1: friendly-name row entry + detail' ("$(($r | Where-Object { "$($_.Entry)" -eq 'C:\Users\Aryan\Downloads\tool.exe' })[0].Detail)" -eq 'Tool Application')
-Check 'T1: ApplicationCompany suffix also stripped' ((@($r | Where-Object { "$($_.Entry)" -eq 'C:\Users\Aryan\Downloads\installer.exe' }).Count) -eq 1)
+Check 'T1: friendly-name row entry + detail' ("$(($r | Where-Object { "$($_.Entry)" -eq 'C:\Users\jsmith\Downloads\tool.exe' })[0].Detail)" -eq 'Tool Application')
+Check 'T1: ApplicationCompany suffix also stripped' ((@($r | Where-Object { "$($_.Entry)" -eq 'C:\Users\jsmith\Downloads\installer.exe' }).Count) -eq 1)
 
 # ---- T2: RunMRU trims \1 sentinel, drops MRUList ----
 $script:regProps = @{
@@ -100,7 +100,7 @@ function Get-KnownBadRegexes { return @() }
 $script:caseCsv['user_mru'] = @(
     [pscustomobject]@{ User = 'S-1-5-21-1001'; Kind = 'runmru'; Entry = 'c:\users\public\evil.exe'; Detail = '' },
     [pscustomobject]@{ User = 'S-1-5-21-1001'; Kind = 'typedpath'; Entry = '\\fileserver\share'; Detail = '' },
-    [pscustomobject]@{ User = 'S-1-5-21-1001'; Kind = 'muicache'; Entry = 'C:\Users\Aryan\Downloads\setup.exe'; Detail = 'Setup' },
+    [pscustomobject]@{ User = 'S-1-5-21-1001'; Kind = 'muicache'; Entry = 'C:\Users\jsmith\Downloads\setup.exe'; Detail = 'Setup' },
     [pscustomobject]@{ User = 'S-1-5-21-1001'; Kind = 'muicache'; Entry = 'C:\Program Files\App\app.exe'; Detail = 'App' }
 )
 $hf = [scriptblock]::Create($hfBody)

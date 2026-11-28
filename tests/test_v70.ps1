@@ -45,11 +45,11 @@ Write-Host '--- v6.9 R74/R75/R76 (test_v70) ---'
 # ================= R74: run-key write window + hidden valuename =================
 Reset-Fixtures
 $script:caseCsv['sysmon_registry'] = @(
-    [pscustomobject]@{ Time = '2026-11-28 10:00:00'; EventType = 'SetValue'; TargetObject = 'HKU\S-1-5-21-1\Software\Microsoft\Windows\CurrentVersion\Run\Updater'; Details = 'C:\Users\aryan\AppData\evil.exe'; Image = 'C:\Users\aryan\AppData\evil.exe' }
+    [pscustomobject]@{ Time = '2026-11-28 10:00:00'; EventType = 'SetValue'; TargetObject = 'HKU\S-1-5-21-1\Software\Microsoft\Windows\CurrentVersion\Run\Updater'; Details = 'C:\Users\jsmith\AppData\evil.exe'; Image = 'C:\Users\jsmith\AppData\evil.exe' }
     [pscustomobject]@{ Time = '2026-11-28 10:01:00'; EventType = 'SetValue'; TargetObject = 'HKU\S-1-5-21-1\Software\Microsoft\Windows\CurrentVersion\Run\'; Details = 'C:\Windows\Temp\hid.exe'; Image = 'C:\Windows\Temp\hid.exe' }   # trailing backslash = hidden name
     [pscustomobject]@{ Time = '2026-11-28 10:02:00'; EventType = 'SetValue'; TargetObject = 'HKLM\SOFTWARE\Vendor\Key'; Details = '1'; Image = 'C:\Windows\setup.exe' }   # not a run path: silent
     [pscustomobject]@{ Time = '2026-11-28 10:03:00'; EventType = 'DeleteValue'; TargetObject = 'HKU\S-1-5-21-1\Software\Microsoft\Windows\CurrentVersion\Run\Old'; Details = ''; Image = 'C:\Windows\reg.exe' }   # delete: silent
-    [pscustomobject]@{ Time = '2026-11-28 10:04:00'; EventType = 'SetValue'; TargetObject = 'HKU\S-1-5-21-1\Software\Microsoft\Windows\CurrentVersion\Run\Updater'; Details = 'C:\Users\aryan\AppData\evil.exe'; Image = 'C:\Users\aryan\AppData\evil.exe' }   # dedup repeat
+    [pscustomobject]@{ Time = '2026-11-28 10:04:00'; EventType = 'SetValue'; TargetObject = 'HKU\S-1-5-21-1\Software\Microsoft\Windows\CurrentVersion\Run\Updater'; Details = 'C:\Users\jsmith\AppData\evil.exe'; Image = 'C:\Users\jsmith\AppData\evil.exe' }   # dedup repeat
 )
 $allF = Invoke-Hunt
 $r74 = @($allF | Where-Object { "$($_.Rule)" -match 'run-key' })
@@ -63,10 +63,10 @@ Check 'R74-6 huntHi regex carries the hidden-name term' ($script:src -match '\|h
 # ================= R75: kerberos port-88 join =================
 Reset-Fixtures
 $script:caseCsv['sysmon_network'] = @(
-    [pscustomobject]@{ Time = '2026-11-28 10:00:00'; Image = 'C:\Users\aryan\app\implant.exe'; DestIp = '10.0.0.10'; DestPort = '88'; DestPortName = ''; SourceIp = '10.1.1.5' }
+    [pscustomobject]@{ Time = '2026-11-28 10:00:00'; Image = 'C:\Users\jsmith\app\implant.exe'; DestIp = '10.0.0.10'; DestPort = '88'; DestPortName = ''; SourceIp = '10.1.1.5' }
     [pscustomobject]@{ Time = '2026-11-28 10:10:00'; Image = 'C:\Windows\System32\lsass.exe'; DestIp = '10.0.0.10'; DestPort = '88'; DestPortName = ''; SourceIp = '10.1.1.9' }   # lsass: silent
-    [pscustomobject]@{ Time = '2026-11-28 10:11:00'; Image = 'C:\Users\aryan\app\implant.exe'; DestIp = '10.0.0.10'; DestPort = '445'; DestPortName = ''; SourceIp = '10.1.1.5' }   # not 88: silent
-    [pscustomobject]@{ Time = '2026-11-28 10:12:00'; Image = 'C:\Users\aryan\app\implant.exe'; DestIp = '10.0.0.10'; DestPort = '88'; DestPortName = ''; SourceIp = '127.0.0.1' }   # loopback: silent
+    [pscustomobject]@{ Time = '2026-11-28 10:11:00'; Image = 'C:\Users\jsmith\app\implant.exe'; DestIp = '10.0.0.10'; DestPort = '445'; DestPortName = ''; SourceIp = '10.1.1.5' }   # not 88: silent
+    [pscustomobject]@{ Time = '2026-11-28 10:12:00'; Image = 'C:\Users\jsmith\app\implant.exe'; DestIp = '10.0.0.10'; DestPort = '88'; DestPortName = ''; SourceIp = '127.0.0.1' }   # loopback: silent
     [pscustomobject]@{ Time = '2026-11-28 10:13:00'; Image = 'C:\Windows\System32\klist.exe'; DestIp = '10.0.0.11'; DestPort = ''; DestPortName = 'kerberos'; SourceIp = '10.1.1.8' }   # portname path joins below
 )
 $script:caseCsv['security_kerberos'] = @(

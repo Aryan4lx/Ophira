@@ -200,9 +200,9 @@ Check "R36: missing user-writable absolute path = HIGH" (@($r36c | Where-Object 
 
 # run D (v5.3): user-writable path with VALID vendor signature -> LOW (nvm.exe case -
 # the vendor legitimately ships that name; only unsigned/broken near-names stay high)
-$script:sigByPath['c:\users\aryan\appdata\local\author software\nvm\nvm.exe'] = [pscustomobject]@{ Status = 'Valid'; SignerCertificate = [pscustomobject]@{ Subject = 'CN=nvm' } }
+$script:sigByPath['C:\Users\jsmith\appdata\local\author software\nvm\nvm.exe'] = [pscustomobject]@{ Status = 'Valid'; SignerCertificate = [pscustomobject]@{ Subject = 'CN=nvm' } }
 $script:caseCsv['amcache'] = @(
-    [pscustomobject]@{ FullPath = 'C:\Users\Aryan\AppData\Local\Author Software\nvm\nvm.exe' }
+    [pscustomobject]@{ FullPath = 'C:\Users\jsmith\AppData\Local\Author Software\nvm\nvm.exe' }
 )
 $script:saved = @{}
 New-HuntFindings

@@ -139,7 +139,7 @@ Check "A7: coverage table column renamed 'Importance'" ($htmlA7.Contains('<th>Ev
 Check "A7: no 'Weight' column header left" (-not $htmlA7.Contains('<th>Weight</th>'))
 Check "A7: coverage footer uses the honest both-numbers shape (same rounded number as the banner)" ($htmlA7.Contains('Coverage: 96% weighted (24/29 sources, 5 missing) - missing sources narrow what can be ruled out.'))
 Check "A7: Importance cells still carry the weight integers" ($htmlA7.Contains("<td>Volatile process inventory</td><td style='width:90px'><span class='cov-ok'>yes</span></td><td style='text-align:right;color:var(--tx3);font-variant-numeric:tabular-nums'>12</td>"))
-if ($fail -gt 0) { $iA7 = $htmlA7.IndexOf('Volatile process inventory'); if ($iA7 -ge 0) { [IO.File]::WriteAllText('E:\Projects\INC\logs\a7_row.html', $htmlA7.Substring([Math]::Max(0,$iA7-100), 400)) } else { [IO.File]::WriteAllText('E:\Projects\INC\logs\a7_row.html', 'ROW NOT FOUND; len=' + $htmlA7.Length) } }
+if ($fail -gt 0) { $iA7 = $htmlA7.IndexOf('Volatile process inventory'); if ($iA7 -ge 0) { [IO.File]::WriteAllText('C:\Proj\INC\logs\a7_row.html', $htmlA7.Substring([Math]::Max(0,$iA7-100), 400)) } else { [IO.File]::WriteAllText('C:\Proj\INC\logs\a7_row.html', 'ROW NOT FOUND; len=' + $htmlA7.Length) } }
 
 # ============================================================================
 # PART B - T7: signal order + rank labels + rules/findings wording + hunt stamps

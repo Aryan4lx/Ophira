@@ -48,7 +48,7 @@ $script:caseCsv = @{
         [pscustomobject]@{ Time = '2026-11-21 11:00:00'; EventId = 4688; Account = 'CORP\admin'; NewProcess = 'cmd.exe'; CommandLine = 'cmd.exe  /Q /c whoami /all > C:\Windows\Temp\out.txt 2>&1'; ParentProcess = 'wmiprvse.exe' },
         [pscustomobject]@{ Time = '2026-11-21 11:05:00'; EventId = 4688; Account = 'SYSTEM'; NewProcess = 'rundll32.exe'; CommandLine = 'C:\Windows\TEMP\1A2B3C4D.bat'; ParentProcess = 'schtasks.exe' },
         [pscustomobject]@{ Time = '2026-11-21 11:10:00'; EventId = 4688; Account = 'CORP\admin'; NewProcess = 'powershell.exe'; CommandLine = 'powershell -c Get-Process'; ParentProcess = 'wmiprvse.exe' },
-        [pscustomobject]@{ Time = '2026-11-21 11:15:00'; EventId = 4688; Account = 'Aryan'; NewProcess = 'cmd.exe'; CommandLine = 'cmd /c echo hello'; ParentProcess = 'explorer.exe' }
+        [pscustomobject]@{ Time = '2026-11-21 11:15:00'; EventId = 4688; Account = 'jsmith'; NewProcess = 'cmd.exe'; CommandLine = 'cmd /c echo hello'; ParentProcess = 'explorer.exe' }
     )
 }
 $script:saved.Clear()
@@ -67,7 +67,7 @@ $script:caseCsv = @{
         [pscustomobject]@{ Time = '2026-11-21 12:00:00'; EventId = 4624; Account = 'CORP\admin'; AccountDomain = 'CORP'; SubjectAccount = '-'; SourceIp = '10.0.0.50'; LogonType = '3'; LogonId = '0xABC123' },
         [pscustomobject]@{ Time = '2026-11-21 12:00:01'; EventId = 4672; Account = 'CORP\admin'; AccountDomain = 'CORP'; SubjectAccount = 'CORP\admin'; SourceIp = ''; LogonType = ''; LogonId = '0xABC123' },
         [pscustomobject]@{ Time = '2026-11-21 12:05:00'; EventId = 4624; Account = 'CORP\guest'; AccountDomain = 'CORP'; SubjectAccount = '-'; SourceIp = '10.0.0.51'; LogonType = '3'; LogonId = '0xDEF456' },
-        [pscustomobject]@{ Time = '2026-11-21 12:06:00'; EventId = 4624; Account = 'Aryan'; AccountDomain = 'DESKTOP'; SubjectAccount = '-'; SourceIp = ''; LogonType = '2'; LogonId = '0x111222' }
+        [pscustomobject]@{ Time = '2026-11-21 12:06:00'; EventId = 4624; Account = 'jsmith'; AccountDomain = 'DESKTOP'; SubjectAccount = '-'; SourceIp = ''; LogonType = '2'; LogonId = '0x111222' }
     )
 }
 $script:saved.Clear()

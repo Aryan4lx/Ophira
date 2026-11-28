@@ -43,14 +43,14 @@ $script:caseCsv['prefetch_parsed'] = @(
     [pscustomobject]@{ File = 'd.pf'; App = 'far.exe'; ExecutableName = 'far.exe'; Count = '1'; LastRun = '2026-11-26 18:00:00' }
 )
 $script:caseCsv['userassist'] = @(
-    [pscustomobject]@{ User = 'aryan'; Guid = 'x'; Kind = 'executable'; Entry = 'tool.exe'; RunCount = '3'; LastRun = '2026-11-26 12:10:00' }
+    [pscustomobject]@{ User = 'jsmith'; Guid = 'x'; Kind = 'executable'; Entry = 'tool.exe'; RunCount = '3'; LastRun = '2026-11-26 12:10:00' }
     # non-executable kind must be ignored even inside the window
-    [pscustomobject]@{ User = 'aryan'; Guid = 'y'; Kind = 'folder'; Entry = 'stuff'; RunCount = '0'; LastRun = '2026-11-26 12:09:00' }
+    [pscustomobject]@{ User = 'jsmith'; Guid = 'y'; Kind = 'folder'; Entry = 'stuff'; RunCount = '0'; LastRun = '2026-11-26 12:09:00' }
 )
 $script:caseCsv['sysmon_file_create'] = @(
     [pscustomobject]@{ Time = '2026-11-26 10:00:00'; Image = 'C:\Temp\dumpit.exe'; TargetFilename = 'C:\Temp\lsass_1234.dmp'; Hash = '' }
     # benign file
-    [pscustomobject]@{ Time = '2026-11-26 10:01:00'; Image = 'C:\Windows\System32\notepad.exe'; TargetFilename = 'C:\Users\aryan\Documents\report.docx'; Hash = '' }
+    [pscustomobject]@{ Time = '2026-11-26 10:01:00'; Image = 'C:\Windows\System32\notepad.exe'; TargetFilename = 'C:\Users\jsmith\Documents\report.docx'; Hash = '' }
     # duplicate lsass dump leaf (deduped)
     [pscustomobject]@{ Time = '2026-11-26 10:02:00'; Image = 'C:\Temp\dumpit.exe'; TargetFilename = 'C:\Windows\Temp\lsass_1234.dmp'; Hash = '' }
 )
@@ -58,13 +58,13 @@ $script:caseCsv['security_proc_events'] = @(
     # R64 command surface: comsvcs MiniDump
     [pscustomobject]@{ NewProcess = 'C:\Windows\System32\rundll32.exe'; ParentProcess = 'C:\Windows\System32\cmd.exe'; CommandLine = 'rundll32.exe C:\Windows\System32\comsvcs.dll, MiniDump 666 C:\Temp\d.bin full' }
     # R65: reg save
-    [pscustomobject]@{ NewProcess = 'C:\Windows\System32\cmd.exe'; ParentProcess = 'C:\Users\aryan\evil.exe'; CommandLine = 'cmd.exe /c reg save HKLM\SAM C:\Temp\sam.hive' }
+    [pscustomobject]@{ NewProcess = 'C:\Windows\System32\cmd.exe'; ParentProcess = 'C:\Users\jsmith\evil.exe'; CommandLine = 'cmd.exe /c reg save HKLM\SAM C:\Temp\sam.hive' }
     # R65: secretsdump (the PROCESS is python - the tool name is only on the command line)
-    [pscustomobject]@{ NewProcess = 'C:\Python\python.exe'; ParentProcess = 'C:\Windows\System32\cmd.exe'; CommandLine = 'python.exe C:\Users\aryan\impacket\examples\secretsdump.py DOMAIN/user@dc1' }
+    [pscustomobject]@{ NewProcess = 'C:\Python\python.exe'; ParentProcess = 'C:\Windows\System32\cmd.exe'; CommandLine = 'python.exe C:\Users\jsmith\impacket\examples\secretsdump.py DOMAIN/user@dc1' }
     # R65: ntdsutil
     [pscustomobject]@{ NewProcess = 'C:\Windows\System32\ntdsutil.exe'; ParentProcess = 'C:\Windows\System32\cmd.exe'; CommandLine = 'ntdsutil "ac i ntds" "ifm" "cr f C:\Temp\ntds" q q' }
     # R65 duplicate (same pattern + source -> deduped)
-    [pscustomobject]@{ NewProcess = 'C:\Windows\System32\cmd.exe'; ParentProcess = 'C:\Users\aryan\evil.exe'; CommandLine = 'cmd.exe /c reg save HKLM\SECURITY C:\Temp\sec.hive' }
+    [pscustomobject]@{ NewProcess = 'C:\Windows\System32\cmd.exe'; ParentProcess = 'C:\Users\jsmith\evil.exe'; CommandLine = 'cmd.exe /c reg save HKLM\SECURITY C:\Temp\sec.hive' }
 )
 $script:caseCsv['sysmon_proc_create'] = @(
     [pscustomobject]@{ Time = '2026-11-26 10:03:00'; Image = 'C:\Windows\System32\rundll32.exe'; ParentImage = 'C:\Windows\System32\cmd.exe'; CommandLine = ''; OriginalFileName = 'rundll32.exe' }
@@ -93,7 +93,7 @@ $script:caseCsv['sysmon_registry'] = @(
 )
 $script:caseCsv['security_task_install'] = @(
     # R67 hit: user-writable action path
-    [pscustomobject]@{ Time = '2026-11-26 10:20:00'; Account = 'aryan'; TaskName = 'SysUpdateB'; Command = 'C:\Users\aryan\AppData\update.exe /q' }
+    [pscustomobject]@{ Time = '2026-11-26 10:20:00'; Account = 'jsmith'; TaskName = 'SysUpdateB'; Command = 'C:\Users\jsmith\AppData\update.exe /q' }
     # R67 hit: LOLBin head
     [pscustomobject]@{ Time = '2026-11-26 10:21:00'; Account = 'SYSTEM'; TaskName = 'Enc'; Command = 'powershell.exe -nop -enc AAAAxxxx' }
     # skip: system32 binary
@@ -101,8 +101,8 @@ $script:caseCsv['security_task_install'] = @(
     # skip: empty action
     [pscustomobject]@{ Time = '2026-11-26 10:23:00'; Account = 'SYSTEM'; TaskName = 'NoCmd'; Command = '' }
     # R67 hit: rundll32 LOLBin, then same TaskName again (4702 update -> deduped)
-    [pscustomobject]@{ Time = '2026-11-26 10:24:00'; Account = 'SYSTEM'; TaskName = 'Loader'; Command = 'rundll32.exe C:\Users\aryan\pay.dll,Start' }
-    [pscustomobject]@{ Time = '2026-11-26 10:25:00'; Account = 'SYSTEM'; TaskName = 'Loader'; Command = 'rundll32.exe C:\Users\aryan\pay2.dll,Start' }
+    [pscustomobject]@{ Time = '2026-11-26 10:24:00'; Account = 'SYSTEM'; TaskName = 'Loader'; Command = 'rundll32.exe C:\Users\jsmith\pay.dll,Start' }
+    [pscustomobject]@{ Time = '2026-11-26 10:25:00'; Account = 'SYSTEM'; TaskName = 'Loader'; Command = 'rundll32.exe C:\Users\jsmith\pay2.dll,Start' }
 )
 # every other Import-CaseCsv name returns @() from the stub - earlier rules stay quiet.
 

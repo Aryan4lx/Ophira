@@ -79,8 +79,8 @@ $uaTicks = { param([string]$s) $d = [datetime]::MinValue; if ($s -and [datetime]
 foreach ($a in @(
     [pscustomobject]@{ Time = '11/1/2026 9:58:14 AM'; Acct = 'SYSTEM'; Dom = 'NT AUTHORITY'; Ev = '4624' },
     [pscustomobject]@{ Time = '11/1/2026 1:59:54 PM'; Acct = 'SYSTEM'; Dom = 'NT AUTHORITY'; Ev = '4624' },
-    [pscustomobject]@{ Time = '11/1/2026 12:00:00 PM'; Acct = 'DESKTOP-88Q1H74\Aryan'; Dom = ''; Ev = '4624' },
-    [pscustomobject]@{ Time = '11/1/2026 12:05:00 PM'; Acct = 'Aryan'; Dom = ''; Ev = '4688' }
+    [pscustomobject]@{ Time = '11/1/2026 12:00:00 PM'; Acct = 'DESKTOP-EX01\jsmith'; Dom = ''; Ev = '4624' },
+    [pscustomobject]@{ Time = '11/1/2026 12:05:00 PM'; Acct = 'jsmith'; Dom = ''; Ev = '4688' }
 )) {
     $disp = "$(if ("$($a.Dom)" -and "$($a.Dom)" -ne '-') { "$($a.Dom)\" })$($a.Acct)".Trim('\')
     $k = ("$disp" -split '\\')[-1].ToLower()
@@ -91,7 +91,7 @@ foreach ($a in @(
     if ((& $uaTicks "$($a.Time)") -gt (& $uaTicks "$($u.Last)")) { $u.Last = "$($a.Time)" }
 }
 Check "useract: SYSTEM one row, last seen is the PM event (not lexically-greater AM)" ($ua['system'].N -eq 2 -and $ua['system'].Last -eq '11/1/2026 1:59:54 PM')
-Check "useract: bare 4688 account merges into the domain-qualified row" ($ua['aryan'].N -eq 2 -and $ua['aryan'].Name -eq 'DESKTOP-88Q1H74\Aryan')
+Check "useract: bare 4688 account merges into the domain-qualified row" ($ua['jsmith'].N -eq 2 -and $ua['jsmith'].Name -eq 'DESKTOP-EX01\jsmith')
 
 Remove-Item -Recurse -Force $case -ErrorAction SilentlyContinue
 Write-Host ""

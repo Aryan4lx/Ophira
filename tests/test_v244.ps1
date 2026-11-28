@@ -1,5 +1,5 @@
 $repoScript = Join-Path (Split-Path -Parent $PSScriptRoot) "Ophira.ps1"
-# v2.44 - FP tuning from the first live case (OPHIRA_DESKTOP-88Q1H74_20261007_082342):
+# v2.44 - FP tuning from the first live case (OPHIRA_DESKTOP-EX01_20261007_082342):
 # (1) keylogger YARA rule proximity-gated (Electron bundles carried the strings megabytes apart),
 # (2) sigma-high single-rule storm carries no verdict weight (196 events / 1 rule on a dev box),
 # (3) R22 birth-attribute checks skip servicing/updater/Store paths and non-PE files,

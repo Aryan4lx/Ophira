@@ -49,8 +49,8 @@ function Import-CaseCsv { param([string]$Name) $k = "$Name" -replace '\.csv$', '
 # ================= P1: New-SrumAppTotals =================
 $script:rows = @{}
 $script:caseCsv = @{ 'srum_usage' = @(
-    [pscustomobject]@{ Timestamp = '2026-11-15 08:00:00'; Application = '\device\harddiskvolume3\tools\exfil.exe'; User = 'desktop\aryan';  BytesSent = '9437184'; BytesReceived = '1048576'; InterfaceType = 'ethernet' },
-    [pscustomobject]@{ Timestamp = '2026-11-15 09:00:00'; Application = '\device\harddiskvolume3\tools\exfil.exe'; User = 'DESKTOP\aryan';  BytesSent = '1048576';  BytesReceived = '524288';  InterfaceType = 'ethernet' },
+    [pscustomobject]@{ Timestamp = '2026-11-15 08:00:00'; Application = '\device\harddiskvolume3\tools\exfil.exe'; User = 'desktop\jsmith';  BytesSent = '9437184'; BytesReceived = '1048576'; InterfaceType = 'ethernet' },
+    [pscustomobject]@{ Timestamp = '2026-11-15 09:00:00'; Application = '\device\harddiskvolume3\tools\exfil.exe'; User = 'DESKTOP\jsmith';  BytesSent = '1048576';  BytesReceived = '524288';  InterfaceType = 'ethernet' },
     [pscustomobject]@{ Timestamp = '2026-11-15 08:00:00'; Application = 'C:\Program Files\backup.exe';            User = 'system';        BytesSent = '2048';     BytesReceived = '1024';    InterfaceType = 'ethernet' },
     [pscustomobject]@{ Timestamp = '2026-11-15 10:00:00'; Application = '';                                       User = '';              BytesSent = '1';        BytesReceived = '1';       InterfaceType = 'ethernet' },
     [pscustomobject]@{ Timestamp = '2026-11-15 11:00:00'; Application = 'weird.exe';                              User = 'svc';           BytesSent = 'not-a-number'; BytesReceived = 'x'; InterfaceType = '' }
@@ -61,7 +61,7 @@ Check 'P1: totals saved (empty app skipped)' ($tot.Count -eq 3)
 $ex = @($tot | Where-Object { $_.Leaf -eq 'exfil.exe' })[0]
 Check 'P1: bytes summed across rows' ("$($ex.BytesSent)" -eq '10485760' -and "$($ex.BytesReceived)" -eq '1572864')
 Check 'P1: rounds counted' ("$($ex.Rounds)" -eq '2')
-Check 'P1: users deduped case-insensitive' ("$($ex.Users)" -eq 'desktop\aryan')
+Check 'P1: users deduped case-insensitive' ("$($ex.Users)" -eq 'desktop\jsmith')
 Check 'P1: first/last seen picked' ("$($ex.FirstSeen)" -eq '2026-11-15 08:00:00' -and "$($ex.LastSeen)" -eq '2026-11-15 09:00:00')
 $up = [double]"$($ex.UploadRatio)"
 Check 'P1: upload ratio 2dp' ($up -eq 0.87)
@@ -77,9 +77,9 @@ Check 'P1: empty table -> empty artifact' ($script:rows['srum_app_totals'].Count
 # ================= P2: R56 rule in New-HuntFindings =================
 $script:rows = @{}; $script:caseCsv = @{}
 $script:caseCsv['srum_app_totals'] = @(
-    [pscustomobject]@{ Application = 'C:\Users\aryan\pub\drop.exe'; Leaf = 'drop.exe'; BytesSent = '9437184'; BytesReceived = '1048576'; TotalBytes = '10485760'; UploadRatio = '0.9'; Rounds = '5'; Users = 'u'; FirstSeen = ''; LastSeen = '' },
-    [pscustomobject]@{ Application = 'C:\Users\aryan\pub\balanced.exe'; Leaf = 'balanced.exe'; BytesSent = '5242880'; BytesReceived = '5242880'; TotalBytes = '10485760'; UploadRatio = '0.5'; Rounds = '5'; Users = 'u'; FirstSeen = ''; LastSeen = '' },
-    [pscustomobject]@{ Application = 'C:\Users\aryan\pub\small.exe'; Leaf = 'small.exe'; BytesSent = '917504'; BytesReceived = '1024'; TotalBytes = '918528'; UploadRatio = '1'; Rounds = '5'; Users = 'u'; FirstSeen = ''; LastSeen = '' },
+    [pscustomobject]@{ Application = 'C:\Users\jsmith\pub\drop.exe'; Leaf = 'drop.exe'; BytesSent = '9437184'; BytesReceived = '1048576'; TotalBytes = '10485760'; UploadRatio = '0.9'; Rounds = '5'; Users = 'u'; FirstSeen = ''; LastSeen = '' },
+    [pscustomobject]@{ Application = 'C:\Users\jsmith\pub\balanced.exe'; Leaf = 'balanced.exe'; BytesSent = '5242880'; BytesReceived = '5242880'; TotalBytes = '10485760'; UploadRatio = '0.5'; Rounds = '5'; Users = 'u'; FirstSeen = ''; LastSeen = '' },
+    [pscustomobject]@{ Application = 'C:\Users\jsmith\pub\small.exe'; Leaf = 'small.exe'; BytesSent = '917504'; BytesReceived = '1024'; TotalBytes = '918528'; UploadRatio = '1'; Rounds = '5'; Users = 'u'; FirstSeen = ''; LastSeen = '' },
     [pscustomobject]@{ Application = 'C:\Windows\System32\svchost.exe'; Leaf = 'svchost.exe'; BytesSent = '9437184'; BytesReceived = '1048576'; TotalBytes = '10485760'; UploadRatio = '0.9'; Rounds = '5'; Users = 'u'; FirstSeen = ''; LastSeen = '' },
     [pscustomobject]@{ Application = 'WinDefend'; Leaf = 'windefend'; BytesSent = '9437184'; BytesReceived = '1048576'; TotalBytes = '10485760'; UploadRatio = '0.9'; Rounds = '5'; Users = 'u'; FirstSeen = ''; LastSeen = '' },
     [pscustomobject]@{ Application = 'C:\Program Files\Dropbox\dropbox.exe'; Leaf = 'dropbox.exe'; BytesSent = '9437184'; BytesReceived = '1048576'; TotalBytes = '10485760'; UploadRatio = '0.9'; Rounds = '5'; Users = 'u'; FirstSeen = ''; LastSeen = '' }
@@ -89,7 +89,7 @@ New-HuntFindings
 $hf = $script:rows['hunt_findings']
 $r56 = @($hf | Where-Object { $_.Rule -eq 'Upload-dominant egress (SRUM)' })
 Check 'P2: exactly one R56 finding' ($r56.Count -eq 1)
-Check 'P2: entity is drop.exe path' ("$($r56[0].Entity)" -eq 'C:\Users\aryan\pub\drop.exe')
+Check 'P2: entity is drop.exe path' ("$($r56[0].Entity)" -eq 'C:\Users\jsmith\pub\drop.exe')
 Check 'P2: severity medium' ("$($r56[0].Severity)" -eq 'medium')
 Check 'P2: evidence has MB + percent' ("$($r56[0].Evidence)" -match '9 MB sent' -and "$($r56[0].Evidence)" -match '90% outbound')
 Check 'P2: ATT&CK T1041' ("$($r56[0].Attck)" -eq 'T1041')

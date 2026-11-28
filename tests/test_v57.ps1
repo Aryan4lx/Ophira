@@ -17,7 +17,7 @@ function Row { param($eid, $details) [pscustomobject]@{ EventID = $eid; Details 
 
 # P1: 5379 own-user vault read = routine
 $mod = 'Posh-SSH module body ' * 60
-& $Check '5379 own-user is routine' (Test-SigmaRoutineNoise (Row '5379' "PID: 33668 | SrcUser: Aryan | CredsReturned: 6 | SrcSID: S-1-5-21-3954351676-3366046813-382284764-1001"))
+& $Check '5379 own-user is routine' (Test-SigmaRoutineNoise (Row '5379' "PID: 33668 | SrcUser: jsmith | CredsReturned: 6 | SrcSID: S-1-5-21-3954351676-3366046813-382284764-1001"))
 & $Check '5379 SYSTEM is NOT routine' (-not (Test-SigmaRoutineNoise (Row '5379' "PID: 900 | SrcUser: SYSTEM | CredsReturned: 2 | SrcSID: S-1-5-18")))
 & $Check '5379 no src user is NOT routine' (-not (Test-SigmaRoutineNoise (Row '5379' 'PID: 900 | Tgt: machine account')))
 # P2: 4104 module-code = routine

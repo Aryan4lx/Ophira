@@ -27,24 +27,24 @@ Invoke-Expression $defs
 
 # ---- shared harness stubs ----
 function Save-Rows { param([string]$Name, $Rows) $script:rows[$Name] = @($Rows) }
-function Write-CaseLog { param([string]$Message, [string]$Color = 'Gray') }
-function QuietLog { param([string]$Message) }
-function Get-AuthenticodeSignature { param([string]$LiteralPath) return $null }
-function Test-Path { param([string]$LiteralPath, [string]$PathType, $ErrorAction) return ("$LiteralPath" -match 'UserSettings') }
+function Write-CaseLog { param([string]$Message, [string]$Color = 'Gray') $null = $Message, $Color }
+function QuietLog { param([string]$Message) $null = $Message }
+function Get-AuthenticodeSignature { param([string]$LiteralPath) $null = $LiteralPath; return $null }
+function Test-Path { param([string]$LiteralPath, [string]$PathType, $ErrorAction) $null = $PathType, $ErrorAction; return ("$LiteralPath" -match 'UserSettings') }
 function Test-CaseCsv([string]$n) { return $false }
 function Get-ToolsDir { return $null }
 function Get-Changes { return @() }
 function Invoke-RegenerateOutputs { }
-function Export-Evtx { param($LogName, $OutPath, $rest) }
+function Export-Evtx { param($LogName, $OutPath, $rest) $null = $LogName, $OutPath, $rest }
 function Get-LogStart { return (Get-InvariantDate '2026-11-10 00:00:00') }
-function Get-EventDataRows { param($LogName, $Id, $Start, $Cap, $Fields, $rest) return @() }
-function Get-FilteredEvents { param($LogName, $Ids, $Start, $rest) return $script:fakeEvents }
-function Get-TaskDeletionRows { param($Start) return @() }
-function Get-Item { param($Path, $LiteralPath, $rest) return $null }
-function New-Item { param($Path, $ItemType, $Force, $LiteralPath, $rest) }
-function Copy-Item { param($LiteralPath, $Destination, $Force, $Path, $ErrorAction, $rest) }
-function Get-ChildItem { param($Path, $Filter, $File, $Recurse, $ErrorAction, $rest) if ("$Path" -match 'UserSettings') { return @($script:sidObj) }; return @() }
-function Get-ItemProperty { param($LiteralPath, $ErrorAction, $rest) if ("$LiteralPath" -match 'UserSettings') { return $script:propsObj }; return $null }
+function Get-EventDataRows { param($LogName, $Id, $Start, $Cap, $Fields, $rest) $null = $LogName, $Id, $Start, $Cap, $Fields, $rest; return @() }
+function Get-FilteredEvents { param($LogName, $Ids, $Start, $rest) $null = $LogName, $Ids, $Start, $rest; return $script:fakeEvents }
+function Get-TaskDeletionRows { param($Start) $null = $Start; return @() }
+function Get-Item { param($Path, $LiteralPath, $rest) $null = $Path, $LiteralPath, $rest; return $null }
+function New-Item { param($Path, $ItemType, $Force, $LiteralPath, $rest) $null = $Path, $ItemType, $Force, $LiteralPath, $rest }
+function Copy-Item { param($LiteralPath, $Destination, $Force, $Path, $ErrorAction, $rest) $null = $LiteralPath, $Destination, $Force, $Path, $ErrorAction, $rest }
+function Get-ChildItem { param($Path, $Filter, $File, $Recurse, $ErrorAction, $rest) $null = $Filter, $File, $Recurse, $ErrorAction, $rest; if ("$Path" -match 'UserSettings') { return @($script:sidObj) }; return @() }
+function Get-ItemProperty { param($LiteralPath, $ErrorAction, $rest) $null = $ErrorAction, $rest; if ("$LiteralPath" -match 'UserSettings') { return $script:propsObj }; return $null }
 $script:rows = @{}
 $script:fakeEvents = @()
 $script:caseCsv = @{}
@@ -60,12 +60,12 @@ $script:sidObj = [pscustomobject]@{ PSPath = 'Microsoft.PowerShell.Core\Registry
 $script:propsObj = [pscustomobject]@{ }
 $script:propsObj | Add-Member NoteProperty 'Version' 1
 $script:propsObj | Add-Member NoteProperty 'SequenceNumber' 2
-$script:propsObj | Add-Member NoteProperty 'C:\Users\Aryan\AppData\Local\evil.exe' $bamVal
+$script:propsObj | Add-Member NoteProperty 'C:\Users\jsmith\AppData\Local\evil.exe' $bamVal
 $RawDir = $env:TEMP
 & ([ScriptBlock]::Create($m811.Groups[1].Value))
 $bam = @($script:rows['bam_lastexec'])
 Check "P1: bam rows emitted" ($bam.Count -ge 1)
-Check "P1: Executable = value NAME (path)" ($bam.Count -gt 0 -and "$($bam[0].Executable)" -eq 'C:\Users\Aryan\AppData\Local\evil.exe')
+Check "P1: Executable = value NAME (path)" ($bam.Count -gt 0 -and "$($bam[0].Executable)" -eq 'C:\Users\jsmith\AppData\Local\evil.exe')
 Check "P1: Executable is NOT the byte blob" ($bam.Count -gt 0 -and "$($bam[0].Executable)" -notmatch '^\d')
 Check "P1: LastWrite decoded from FILETIME bytes" ($bam.Count -gt 0 -and "$($bam[0].LastWrite)" -eq "$ft")
 Check "P1: Sid captured" ($bam.Count -gt 0 -and "$($bam[0].Sid)" -eq 'S-1-5-21-1')
@@ -78,7 +78,7 @@ $collapsed = 'Service Name: Windows Font Cache  Service  Service File Name: C:\W
 $script:fakeEvents = @(
     [pscustomobject]@{ TimeCreated = $ft; Id = 7045; Provider = 'Service Control Manager'; Level = 4; Message = $collapsed }
 )
-function Get-FilteredEvents { param($LogName, $Ids, $Start) return $script:fakeEvents }
+function Get-FilteredEvents { param($LogName, $Ids, $Start) $null = $LogName, $Ids, $Start; return $script:fakeEvents }
 & ([ScriptBlock]::Create($m45.Groups[1].Value))
 $svc = @($script:rows['system_new_services'])
 Check "P2: 7045 row emitted" ($svc.Count -eq 1)
@@ -87,7 +87,7 @@ Check "P2: Binary = File Name value" ($svc.Count -eq 1 -and "$($svc[0].Binary)" 
 
 # ================= P3+P4+P7: New-HuntFindings (R37 gate, R53 args, ransom regex) =================
 $script:rows = @{}
-$toolPath = 'C:\Users\Aryan\AppData\Local\Temp\tool.exe'
+$toolPath = 'C:\Users\jsmith\AppData\Local\Temp\tool.exe'
 $evilPath = 'C:\Users\Public\evil.exe'
 function ShimRaw([string]$path, [int]$pos, [string]$ts, [string]$flagByte) {
     "$path"
@@ -125,8 +125,8 @@ Check "P4: R53 ATT&CK tag intact (not '+')" ($r53.Count -eq 1 -and "$($r53[0].At
 $ransom = @($hf | Where-Object { "$($_.Rule)" -match 'Known-bad name pattern' -and "$($_.Evidence)" -match 'ransom-note' })
 Check "P7: no ransom finding for plain names" ($ransom.Count -eq 0)
 $script:caseCsv['amcache'] = @(
-    [pscustomobject]@{ FullPath = 'C:\Users\Aryan\Documents\readme.txt'; Name = 'readme.txt' },
-    [pscustomobject]@{ FullPath = 'C:\Users\Aryan\Documents\readme_decrypt.html'; Name = 'readme_decrypt.html' }
+    [pscustomobject]@{ FullPath = 'C:\Users\jsmith\Documents\readme.txt'; Name = 'readme.txt' },
+    [pscustomobject]@{ FullPath = 'C:\Users\jsmith\Documents\readme_decrypt.html'; Name = 'readme_decrypt.html' }
 )
 $script:rows = @{}
 New-HuntFindings

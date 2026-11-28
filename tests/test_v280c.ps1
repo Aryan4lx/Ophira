@@ -114,7 +114,7 @@ $null = New-SuperTimeline
 $tlOut2 = @(Import-Csv -LiteralPath $st)
 Check "I1: under-cap source keeps all rows (no off-by-one)" (@($tlOut2 | Where-Object { $_.Source -eq 'sysmon_file_delete' }).Count -eq 2)
 $script:fixtureRows = @{ srum_usage = @(
-    [pscustomobject]@{ Timestamp = '2026-09-01 03:11:00'; Application = 'tool.exe'; User = 'aryan'; BytesSent = '5000'; BytesReceived = '3000'; InterfaceType = '' }
+    [pscustomobject]@{ Timestamp = '2026-09-01 03:11:00'; Application = 'tool.exe'; User = 'jsmith'; BytesSent = '5000'; BytesReceived = '3000'; InterfaceType = '' }
 ) }
 $null = New-SuperTimeline
 $tlOut1 = @(Import-Csv -LiteralPath $st)

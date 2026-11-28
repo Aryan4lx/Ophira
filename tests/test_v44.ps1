@@ -27,7 +27,7 @@ foreach ($name in @('ConvertTo-HtmlEsc','ConvertTo-SafeInt','ConvertTo-SafeDbl',
 $script:caseCsv = @{
     'hunt_findings.csv' = @()
     'srum_app_totals.csv' = @(
-        [pscustomobject]@{ Application = '\device\harddiskvolume4\apps\xray\xray.exe'; Leaf = 'xray.exe'; BytesSent = '5000000000'; BytesReceived = '1000000000'; TotalBytes = '6000000000'; UploadRatio = '0.83'; Rounds = '100'; Users = 'aryan'; FirstSeen = '2026-09-17 16:46:00'; LastSeen = '2026-11-16 16:42:00' },
+        [pscustomobject]@{ Application = '\device\harddiskvolume4\apps\xray\xray.exe'; Leaf = 'xray.exe'; BytesSent = '5000000000'; BytesReceived = '1000000000'; TotalBytes = '6000000000'; UploadRatio = '0.83'; Rounds = '100'; Users = 'jsmith'; FirstSeen = '2026-09-17 16:46:00'; LastSeen = '2026-11-16 16:42:00' },
         [pscustomobject]@{ Application = 'VMware NAT Service'; Leaf = 'vmware nat service'; BytesSent = '1000000'; BytesReceived = '9000000000'; TotalBytes = '9001000000'; UploadRatio = '0.01'; Rounds = '50'; Users = 'system'; FirstSeen = '2026-09-20 12:17:00'; LastSeen = '2026-10-23 14:02:00' }
     )
     'userassist.csv' = @(
@@ -35,10 +35,10 @@ $script:caseCsv = @{
         [pscustomobject]@{ User = 'S-1-5-21-1-2-3-1001'; Guid = '{B}'; Kind = 'executable'; Entry = 'UEME_CTLSESSION'; RunCount = '4'; LastRun = '' }
     )
     'shellbags.csv' = @(
-        [pscustomobject]@{ BagPath = 'BagMRU'; Slot = '0'; NodeSlot = '0'; MRUPosition = '2'; AbsolutePath = 'Desktop\USB-DISK'; ShellType = 'Volume'; Value = 'USB-DISK'; CreatedOn = ''; ModifiedOn = ''; AccessedOn = ''; LastWriteTime = '2026-11-10 08:00:00'; FirstInteracted = '2026-11-10 08:00:00'; LastInteracted = '2026-11-15 21:30:00'; SourceFile = 'X:\raw\registry\users\aryan_UsrClass.dat' }
+        [pscustomobject]@{ BagPath = 'BagMRU'; Slot = '0'; NodeSlot = '0'; MRUPosition = '2'; AbsolutePath = 'Desktop\USB-DISK'; ShellType = 'Volume'; Value = 'USB-DISK'; CreatedOn = ''; ModifiedOn = ''; AccessedOn = ''; LastWriteTime = '2026-11-10 08:00:00'; FirstInteracted = '2026-11-10 08:00:00'; LastInteracted = '2026-11-15 21:30:00'; SourceFile = 'X:\raw\registry\users\jsmith_UsrClass.dat' }
     )
     'profile_list.csv' = @(
-        [pscustomobject]@{ Sid = 'S-1-5-21-1-2-3-1001'; Path = 'C:\Users\aryan'; Account = 'aryan'; Loaded = 'True' }
+        [pscustomobject]@{ Sid = 'S-1-5-21-1-2-3-1001'; Path = 'C:\Users\jsmith'; Account = 'jsmith'; Loaded = 'True' }
     )
 }
 function Import-CaseCsv { param($Name)
@@ -58,7 +58,7 @@ if ($mSrum.Success) {
     Check 'P2: xray bar flagged bad (ratio 0.83 >= 0.5)' ($html.Contains('barfill bad'))
     Check 'P2: humanized GB + upload pct' ($html.Contains('GB up83%'))
     Check 'P2: low-ratio row unflagged' ($html.Contains('vmware nat service') -and $html -notmatch 'VMware[^<]*</span><span class=.bartr.><span class=.barfill bad')
-    Check 'P2: hover carries user + window' ($html.Contains('aryan | 2026-09-17'))
+    Check 'P2: hover carries user + window' ($html.Contains('jsmith | 2026-09-17'))
 }
 
 $mUa = [regex]::Match($src, "(?s)# v4\.4: per-user program counters.*?(?=\r?\n    # ---------- connections: correlated entities)")
@@ -67,13 +67,13 @@ if ($mUa.Success) {
     $sbU = [scriptblock]::Create($mUa.Value)
     $uaAssist = $script:caseCsv['userassist.csv']
     $shellRows = $script:caseCsv['shellbags.csv']
-    $profBySid = @{ 'S-1-5-21-1-2-3-1001' = 'aryan' }
+    $profBySid = @{ 'S-1-5-21-1-2-3-1001' = 'jsmith' }
     $sb = New-Object System.Text.StringBuilder
     try { & $sbU } catch { Write-Host "      ua-frag err: $($_.Exception.Message)" -ForegroundColor Red }
     $html2 = $sb.ToString()
-    Check 'P2: UserAssist digest names account + program' ($html2.Contains('aryan</b> - most-run') -and $html2.Contains('mspaint.exe (7x)'))
+    Check 'P2: UserAssist digest names account + program' ($html2.Contains('jsmith</b> - most-run') -and $html2.Contains('mspaint.exe (7x)'))
     Check 'P2: UEME control row skipped' ($html2 -notmatch 'CTLSESSION')
-    Check 'P2: shellbags table renders user from hive leaf' ($html2.Contains('<td>aryan</td><td>Desktop\USB-DISK</td>'))
+    Check 'P2: shellbags table renders user from hive leaf' ($html2.Contains('<td>jsmith</td><td>Desktop\USB-DISK</td>'))
     Check 'P2: shellbags stamp rendered' ($html2.Contains('2026-11-15 21:30:00'))
 }
 

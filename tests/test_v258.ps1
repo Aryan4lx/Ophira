@@ -22,14 +22,14 @@ $realShape = @(
     '',
     '-------------------------------------------------------------------------------',
     'Administrator',
-    'Aryan',
+    'jsmith',
     'NT AUTHORITY\LOCAL SERVICE',
     'The command completed successfully.',
     ''
 )
 $mem = Get-LocalAdminMembers $realShape
 Check "real net.exe shape: 3 members parsed (old Skip-6 returned ZERO)" (@($mem).Count -eq 3)
-Check "member lines exact (no header/footer leakage)" (@($mem) -join '|' -eq 'Administrator|Aryan|NT AUTHORITY\LOCAL SERVICE')
+Check "member lines exact (no header/footer leakage)" (@($mem) -join '|' -eq 'Administrator|jsmith|NT AUTHORITY\LOCAL SERVICE')
 
 # tight output: no comment line, member directly after dashes
 $mem2 = Get-LocalAdminMembers @('Alias name administrators', 'Members', '-------', 'bob')
@@ -43,7 +43,7 @@ Check "header-only -> no members" (@(Get-LocalAdminMembers @('Alias name adminis
 Check "local_admins module uses the shared parser" ($src -match [regex]::Escape('Get-LocalAdminMembers @(& net.exe localgroup administrators'))
 Check "parser whitelisted for module workers" ($src -match [regex]::Escape("'Get-LocalAdminMembers'"))
 Check "regen: v2.53 SBECmd orphan cleanup wired" ($src -match [regex]::Escape('removed v2.53 shellbag orphan'))
-Check "orphan pattern matches all 6 stray shapes" ((@('Aryan_NTUSER.csv', '0_Aryan_Aryan_UsrClass.csv', 'Aryan_Aryan_NTUSER.csv', 'Aryan_UsrClass.csv', '0_Aryan_Aryan_NTUSER.csv', 'Aryan_Aryan_UsrClass.csv') | Where-Object { $_ -match '^\d{0,3}.*_(NTUSER|UsrClass)\.csv$' }).Count -eq 6)
+Check "orphan pattern matches all 6 stray shapes" ((@('jsmith_NTUSER.csv', '0_jsmith_jsmith_UsrClass.csv', 'jsmith_jsmith_NTUSER.csv', 'jsmith_UsrClass.csv', '0_jsmith_jsmith_NTUSER.csv', 'jsmith_jsmith_UsrClass.csv') | Where-Object { $_ -match '^\d{0,3}.*_(NTUSER|UsrClass)\.csv$' }).Count -eq 6)
 Check "orphan pattern does not match shellbags.csv" ('shellbags.csv' -notmatch '^\d{0,3}.*_(NTUSER|UsrClass)\.csv$')
 Check "parse_needed: analyst-tool-missing advice" ($src -match [regex]::Escape('parser tool missing from the kit - run Ophira.ps1 -Mode Setup first'))
 Check "parse_needed: recursive kit tool probe" ($src -match [regex]::Escape("Get-ChildItem -LiteralPath `$td -Recurse -Filter `"`$(`$c.Parser).exe`""))

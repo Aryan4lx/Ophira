@@ -15,9 +15,9 @@ function Check([string]$label, [bool]$ok) {
     else { $script:fail++; Write-Host "  [FAIL] $label" -ForegroundColor Red }
 }
 $stamp = Get-Date -Format 'HHmmss'
-function Write-CaseLog { param([string]$Message, [string]$Color = 'Gray') }
+function Write-CaseLog { param([string]$Message, [string]$Color = 'Gray') $null = $Message, $Color }
 function Convert-ToWinPath { param([string]$p) $p = "$p"; if ($p -match '(?i)^\\device\\harddiskvolume\d+(\\.*)$') { return "C:$($Matches[1])" }; return ($p -replace '^\\\\\\?\\\\', '') } # v2.96: ExecStacks normalizes via this helper - fixture mirror of the Ophira.ps1 implementation
-function QuietLog { param($Message) }
+function QuietLog { param($Message) $null = $Message }
 $script:saved = @{}
 function Save-Rows { param([string]$Name, $Rows) $script:saved[$Name] = @($Rows) }
 
@@ -55,7 +55,7 @@ $script:caseCsv['amcache'] = @(
 )
 $script:caseCsv['shimcache_exec'] = @(
     [pscustomobject]@{ Path = 'C:\Recycle\svchost.exe'; Executed = 'yes'; LastModified = '2026-10-27 21:30:00' }
-    [pscustomobject]@{ Path = '\device\harddiskvolume3\users\aryan\appdata\local\temp\tool.exe'; Executed = 'no'; LastModified = '2026-10-27 22:00:00' }
+    [pscustomobject]@{ Path = '\device\harddiskvolume3\users\jsmith\appdata\local\temp\tool.exe'; Executed = 'no'; LastModified = '2026-10-27 22:00:00' }
     [pscustomobject]@{ Path = 'C:\Recycle\dump.exe'; Executed = 'yes'; LastModified = '2026-10-27 21:40:00' }
 )
 $script:caseCsv['prefetch_parsed'] = @(

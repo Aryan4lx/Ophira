@@ -22,16 +22,16 @@ Invoke-Expression (Get-Fn 'New-SessionStories')
 function T { param([string]$s) return $s }
 $script:caseCsv = @{
     'security_auth_events' = @(
-        [pscustomobject]@{ Time = '2026-11-28 10:00:00'; EventId = '4624'; Account = 'Aryan'; AccountDomain = 'DESKTOP-88Q1H74'; SubjectAccount = '-'; SourceIp = '-'; LogonType = '2'; LogonId = '0x1234'; TargetSid = 'S-1-5-21-1-1001' }
-        [pscustomobject]@{ Time = '2026-11-28 10:00:03'; EventId = '4624'; Account = 'Aryan'; AccountDomain = 'DESKTOP-88Q1H74'; SubjectAccount = '-'; SourceIp = '-'; LogonType = '2'; LogonId = '0x2468'; TargetSid = 'S-1-5-21-1-1001' }
-        [pscustomobject]@{ Time = '2026-11-28 10:00:05'; EventId = '4624'; Account = 'svc_backup'; AccountDomain = 'DESKTOP-88Q1H74'; SubjectAccount = '-'; SourceIp = '-'; LogonType = '5'; LogonId = '0x0AAA'; TargetSid = 'S-1-5-21-1-2000' }
-        [pscustomobject]@{ Time = '2026-11-28 11:00:00'; EventId = '4800'; Account = 'Aryan'; AccountDomain = 'DESKTOP-88Q1H74'; SubjectAccount = '-'; SourceIp = ''; LogonType = '2'; LogonId = '0x1234'; TargetSid = '' }
-        [pscustomobject]@{ Time = '2026-11-28 11:02:00'; EventId = '4801'; Account = 'Aryan'; AccountDomain = 'DESKTOP-88Q1H74'; SubjectAccount = '-'; SourceIp = ''; LogonType = '2'; LogonId = '0x1234'; TargetSid = '' }
-        [pscustomobject]@{ Time = '2026-11-28 11:50:00'; EventId = '4779'; Account = 'Aryan'; AccountDomain = 'DESKTOP-88Q1H74'; SubjectAccount = '-'; SourceIp = '10.0.0.5'; LogonType = ''; LogonId = '0x1234'; TargetSid = '' }
-        [pscustomobject]@{ Time = '2026-11-28 11:51:00'; EventId = '4624'; Account = 'Bob'; AccountDomain = 'DESKTOP-88Q1H74'; SubjectAccount = '-'; SourceIp = '-'; LogonType = '2'; LogonId = '0x5678'; TargetSid = 'S-1-5-21-1-1002' }
-        [pscustomobject]@{ Time = '2026-11-28 22:30:00'; EventId = '4624'; Account = 'Aryan'; AccountDomain = 'DESKTOP-88Q1H74'; SubjectAccount = '-'; SourceIp = '-'; LogonType = '2'; LogonId = '0x9999'; TargetSid = 'S-1-5-21-1-1001' }
-        [pscustomobject]@{ Time = '2026-11-28 23:00:00'; EventId = '4647'; Account = 'Aryan'; AccountDomain = 'DESKTOP-88Q1H74'; SubjectAccount = '-'; SourceIp = ''; LogonType = '2'; LogonId = '0x9999'; TargetSid = '' }
-        [pscustomobject]@{ Time = '2026-11-28 12:00:00'; EventId = '4800'; Account = 'Aryan'; AccountDomain = 'DESKTOP-88Q1H74'; SubjectAccount = '-'; SourceIp = ''; LogonType = '2'; LogonId = '0xABCD'; TargetSid = '' }
+        [pscustomobject]@{ Time = '2026-11-28 10:00:00'; EventId = '4624'; Account = 'jsmith'; AccountDomain = 'DESKTOP-EX01'; SubjectAccount = '-'; SourceIp = '-'; LogonType = '2'; LogonId = '0x1234'; TargetSid = 'S-1-5-21-1-1001' }
+        [pscustomobject]@{ Time = '2026-11-28 10:00:03'; EventId = '4624'; Account = 'jsmith'; AccountDomain = 'DESKTOP-EX01'; SubjectAccount = '-'; SourceIp = '-'; LogonType = '2'; LogonId = '0x2468'; TargetSid = 'S-1-5-21-1-1001' }
+        [pscustomobject]@{ Time = '2026-11-28 10:00:05'; EventId = '4624'; Account = 'svc_backup'; AccountDomain = 'DESKTOP-EX01'; SubjectAccount = '-'; SourceIp = '-'; LogonType = '5'; LogonId = '0x0AAA'; TargetSid = 'S-1-5-21-1-2000' }
+        [pscustomobject]@{ Time = '2026-11-28 11:00:00'; EventId = '4800'; Account = 'jsmith'; AccountDomain = 'DESKTOP-EX01'; SubjectAccount = '-'; SourceIp = ''; LogonType = '2'; LogonId = '0x1234'; TargetSid = '' }
+        [pscustomobject]@{ Time = '2026-11-28 11:02:00'; EventId = '4801'; Account = 'jsmith'; AccountDomain = 'DESKTOP-EX01'; SubjectAccount = '-'; SourceIp = ''; LogonType = '2'; LogonId = '0x1234'; TargetSid = '' }
+        [pscustomobject]@{ Time = '2026-11-28 11:50:00'; EventId = '4779'; Account = 'jsmith'; AccountDomain = 'DESKTOP-EX01'; SubjectAccount = '-'; SourceIp = '10.0.0.5'; LogonType = ''; LogonId = '0x1234'; TargetSid = '' }
+        [pscustomobject]@{ Time = '2026-11-28 11:51:00'; EventId = '4624'; Account = 'Bob'; AccountDomain = 'DESKTOP-EX01'; SubjectAccount = '-'; SourceIp = '-'; LogonType = '2'; LogonId = '0x5678'; TargetSid = 'S-1-5-21-1-1002' }
+        [pscustomobject]@{ Time = '2026-11-28 22:30:00'; EventId = '4624'; Account = 'jsmith'; AccountDomain = 'DESKTOP-EX01'; SubjectAccount = '-'; SourceIp = '-'; LogonType = '2'; LogonId = '0x9999'; TargetSid = 'S-1-5-21-1-1001' }
+        [pscustomobject]@{ Time = '2026-11-28 23:00:00'; EventId = '4647'; Account = 'jsmith'; AccountDomain = 'DESKTOP-EX01'; SubjectAccount = '-'; SourceIp = ''; LogonType = '2'; LogonId = '0x9999'; TargetSid = '' }
+        [pscustomobject]@{ Time = '2026-11-28 12:00:00'; EventId = '4800'; Account = 'jsmith'; AccountDomain = 'DESKTOP-EX01'; SubjectAccount = '-'; SourceIp = ''; LogonType = '2'; LogonId = '0xABCD'; TargetSid = '' }
     )
     'security_proc_events' = @(
         [pscustomobject]@{ Time = '2026-11-28 10:05:00'; LogonId = '0x1234'; NewProcess = 'C:\Windows\System32\cmd.exe'; CommandLine = 'cmd.exe /c dir' }
@@ -49,16 +49,16 @@ $script:caseCsv = @{
         [pscustomobject]@{ User = 'S-1-5-21-1-1001'; Kind = 'executable'; Entry = 'C:\Temp\early.exe'; RunCount = '1'; LastRun = '2026-11-28 08:00:00' }
     )
     'rdp_localsession' = @(
-        [pscustomobject]@{ TimeCreated = '2026-11-28 10:00:05'; Id = '21'; Provider = 'Microsoft-Windows-TerminalServices-LocalSessionManager'; Level = '4'; Message = 'User: DESKTOP-88Q1H74\Aryan Session ID: 1 Source Network Address: LOCAL' }
-        [pscustomobject]@{ TimeCreated = '2026-11-28 11:50:10'; Id = '24'; Provider = 'Microsoft-Windows-TerminalServices-LocalSessionManager'; Level = '4'; Message = 'User: DESKTOP-88Q1H74\Aryan Session ID: 1 Source Network Address: LOCAL' }
-        [pscustomobject]@{ TimeCreated = '2026-11-28 13:00:00'; Id = '21'; Provider = 'Microsoft-Windows-TerminalServices-LocalSessionManager'; Level = '4'; Message = 'User: DESKTOP-88Q1H74\Carol Session ID: 2 Source Network Address: LOCAL' }
-        [pscustomobject]@{ TimeCreated = '2026-11-28 23:05:00'; Id = '23'; Provider = 'Microsoft-Windows-TerminalServices-LocalSessionManager'; Level = '4'; Message = 'User: DESKTOP-88Q1H74\Carol Session ID: 2 Source Network Address: LOCAL' }
+        [pscustomobject]@{ TimeCreated = '2026-11-28 10:00:05'; Id = '21'; Provider = 'Microsoft-Windows-TerminalServices-LocalSessionManager'; Level = '4'; Message = 'User: DESKTOP-EX01\jsmith Session ID: 1 Source Network Address: LOCAL' }
+        [pscustomobject]@{ TimeCreated = '2026-11-28 11:50:10'; Id = '24'; Provider = 'Microsoft-Windows-TerminalServices-LocalSessionManager'; Level = '4'; Message = 'User: DESKTOP-EX01\jsmith Session ID: 1 Source Network Address: LOCAL' }
+        [pscustomobject]@{ TimeCreated = '2026-11-28 13:00:00'; Id = '21'; Provider = 'Microsoft-Windows-TerminalServices-LocalSessionManager'; Level = '4'; Message = 'User: DESKTOP-EX01\Carol Session ID: 2 Source Network Address: LOCAL' }
+        [pscustomobject]@{ TimeCreated = '2026-11-28 23:05:00'; Id = '23'; Provider = 'Microsoft-Windows-TerminalServices-LocalSessionManager'; Level = '4'; Message = 'User: DESKTOP-EX01\Carol Session ID: 2 Source Network Address: LOCAL' }
     )
     'system_events' = @(
         [pscustomobject]@{ TimeCreated = '2026-11-28 11:57:00'; Id = '6006'; Provider = 'EventLog'; Level = '4'; Message = 'Event log STOPPED' }
     )
     'profile_list' = @(
-        [pscustomobject]@{ Sid = 'S-1-5-21-1-1001'; User = 'Aryan' }
+        [pscustomobject]@{ Sid = 'S-1-5-21-1-1001'; User = 'jsmith' }
         [pscustomobject]@{ Sid = 'S-1-5-21-1-1002'; User = 'Bob' }
     )
 }
@@ -74,27 +74,27 @@ Write-Host "`ntest_v67 - v6.6 Session Stories" -ForegroundColor Cyan
 
 # ---- session assembly ----
 $logons = @($rows | Where-Object { $_.Kind -eq 'logon' })
-Check '4 sessions built (2x Aryan, Bob, Carol-LSM)' ($logons.Count -eq 4)
-$aryan1 = @($logons | Where-Object { $_.SessionKey -eq 'L0x1234' })[0]
+Check '4 sessions built (2x jsmith, Bob, Carol-LSM)' ($logons.Count -eq 4)
+$jsmith1 = @($logons | Where-Object { $_.SessionKey -eq 'L0x1234' })[0]
 $bobby  = @($logons | Where-Object { $_.SessionKey -eq 'L0x5678' })[0]
-$aryan2 = @($logons | Where-Object { $_.SessionKey -eq 'L0x9999' })[0]
+$jsmith2 = @($logons | Where-Object { $_.SessionKey -eq 'L0x9999' })[0]
 $carol  = @($logons | Where-Object { $_.SessionKey -like 'LSM*' })[0]
-Check 'session A logon row first + metadata' ($aryan1 -and $aryan1.SessionStart -eq '2026-11-28 10:00:00' -and $aryan1.SessionEnd -eq '2026-11-28 11:50:00')
-Check 'paired twin 4624 (0x2468) folds into A, no extra card' ("$($aryan1.Detail)" -match 'paired logon session' -and -not (@($logons | Where-Object { $_.SessionKey -eq 'L0x2468' }).Count))
+Check 'session A logon row first + metadata' ($jsmith1 -and $jsmith1.SessionStart -eq '2026-11-28 10:00:00' -and $jsmith1.SessionEnd -eq '2026-11-28 11:50:00')
+Check 'paired twin 4624 (0x2468) folds into A, no extra card' ("$($jsmith1.Detail)" -match 'paired logon session' -and -not (@($logons | Where-Object { $_.SessionKey -eq 'L0x2468' }).Count))
 $twinProc = @($rows | Where-Object { $_.Kind -eq 'ran (4688)' -and "$($_.Detail)" -match 'reg\.exe' })[0]
 Check 'twin-key 4688 joins the merged session' ($twinProc -and $twinProc.SessionKey -eq 'L0x1234')
-Check 'session A duration 110 min' ("$($aryan1.DurationMinutes)" -eq '110')
-Check 'session A user DOMAIN\user' ($aryan1.User -eq 'DESKTOP-88Q1H74\Aryan')
+Check 'session A duration 110 min' ("$($jsmith1.DurationMinutes)" -eq '110')
+Check 'session A user DOMAIN\user' ($jsmith1.User -eq 'DESKTOP-EX01\jsmith')
 Check 'service 4624 (type 5) excluded' (-not (@($logons | Where-Object { $_.SessionKey -eq 'L0x0AAA' }).Count))
 
 # ---- bookends ----
 $kinds1 = @($rows | Where-Object { $_.SessionKey -eq 'L0x1234' } | ForEach-Object { $_.Kind })
 Check 'A story: ran (4688) x2 (primary + merged twin key), share, UserAssist, locked, unlocked, switched away' ((@($kinds1 | Where-Object { $_ -eq 'ran (4688)' }).Count -eq 2) -and (@($kinds1 | Where-Object { $_ -eq 'share access' }).Count -eq 1) -and (@($kinds1 | Where-Object { $_ -eq 'ran (UserAssist)' }).Count -eq 1) -and (@($kinds1 | Where-Object { $_ -eq 'locked' }).Count -eq 1) -and (@($kinds1 | Where-Object { $_ -eq 'unlocked' }).Count -eq 1) -and (@($kinds1 | Where-Object { $_ -eq 'switched away' }).Count -eq 1))
-Check 'A end reason = switched away' ($aryan1.EndReason -eq 'switched away')
+Check 'A end reason = switched away' ($jsmith1.EndReason -eq 'switched away')
 Check 'orphan 4800 (0xABCD) dropped' (-not (@($rows | Where-Object { "$($_.Detail)" -match '0xABCD' }).Count))
 $sw = @($rows | Where-Object { $_.SessionKey -eq 'L0x1234' -and $_.Kind -eq 'switched away' })[0]
 Check '4779 wins over LSM 24 (dedupe, same minute)' ($sw -and $sw.Source -eq 'EID 4779')
-Check 'LSM 21 near 4624 deduped (no extra Aryan session)' ($logons.Count -eq 4)
+Check 'LSM 21 near 4624 deduped (no extra jsmith session)' ($logons.Count -eq 4)
 Check 'Carol LSM session created without 4624' ($carol -and "$($carol.LogonType)" -eq 'console (LSM)')
 $carolRows = @($rows | Where-Object { $_.SessionKey -eq $carol.SessionKey })
 Check 'Carol LSM logoff bookend (EID 23)' ((@($carolRows | Where-Object { $_.Kind -eq 'logged off' -and $_.Source -eq 'LSM EID 23' }).Count) -eq 1)
@@ -105,20 +105,20 @@ Check '4688 join by LogonId into session A' ($cmdRow -and $cmdRow.SessionKey -eq
 $ua1 = @($rows | Where-Object { $_.Kind -eq 'ran (UserAssist)' -and "$($_.Detail)" -match '7z\.exe' })[0]
 Check 'UserAssist SID join into session A (account history)' ($ua1 -and $ua1.SessionKey -eq 'L0x1234' -and $ua1.Attribution -eq 'account history')
 $ua2 = @($rows | Where-Object { $_.Kind -eq 'ran (UserAssist)' -and "$($_.Detail)" -match 'notepad' })[0]
-Check 'UserAssist in second Aryan session (covering-span match)' ($ua2 -and $ua2.SessionKey -eq 'L0x9999')
+Check 'UserAssist in second jsmith session (covering-span match)' ($ua2 -and $ua2.SessionKey -eq 'L0x9999')
 Check 'UEME_/unknown-SID/pre-window userassist rows skipped' (-not (@($rows | Where-Object { "$($_.Detail)" -match 'UEME_|ghost|early\.exe' }).Count))
 $shareRow = @($rows | Where-Object { $_.Kind -eq 'share access' })[0]
 Check '5145 share join detail (IPC$ -> a.txt)' ($shareRow -and "$($shareRow.Detail)" -match 'IPC\$ -> a\.txt')
 
 # ---- end reasons + chips ----
 Check 'session B ended by host shutdown (6006 within 5 min)' ($bobby.EndReason -eq 'host shutdown/reboot' -and $bobby.SessionEnd -eq '2026-11-28 11:57:00')
-Check 'session C ended by explicit logoff (4647)' ($aryan2.EndReason -eq 'logged off')
-Check 'chip: A first session for account' ("$($aryan1.Chips)" -match 'first session seen for this account')
-Check 'chip: A off-hours (Saturday)' ("$($aryan1.Chips)" -match 'off-hours start')
-Check 'chip: switch handoff pair A -> B' ("$($aryan1.Chips)" -match 'handed off to DESKTOP-88Q1H74\\Bob' -and "$($bobby.Chips)" -match 'took over from DESKTOP-88Q1H74\\Aryan')
+Check 'session C ended by explicit logoff (4647)' ($jsmith2.EndReason -eq 'logged off')
+Check 'chip: A first session for account' ("$($jsmith1.Chips)" -match 'first session seen for this account')
+Check 'chip: A off-hours (Saturday)' ("$($jsmith1.Chips)" -match 'off-hours start')
+Check 'chip: switch handoff pair A -> B' ("$($jsmith1.Chips)" -match 'handed off to DESKTOP-EX01\\Bob' -and "$($bobby.Chips)" -match 'took over from DESKTOP-EX01\\jsmith')
 Check 'chip: B ended by reboot' ("$($bobby.Chips)" -match 'ended by reboot')
-Check 'chip: C off-hours (22:30)' ("$($aryan2.Chips)" -match 'off-hours start')
-Check 'no first-session chip on later sessions' (-not ("$($aryan2.Chips)" -match 'first session'))
+Check 'chip: C off-hours (22:30)' ("$($jsmith2.Chips)" -match 'off-hours start')
+Check 'no first-session chip on later sessions' (-not ("$($jsmith2.Chips)" -match 'first session'))
 
 # ---- wiring pins in Ophira.ps1 ----
 Check 'wiring: regen step' ($script:src -match [regex]::Escape("& `$rgStep 'session stories' 'New-SessionStories' { New-SessionStories }"))

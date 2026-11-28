@@ -18,8 +18,8 @@ iex (Extract 'Get-UserProfileList' $src)
 # captured Save-Rows
 $script:saved = @{}
 function Save-Rows { param($Name, $Rows) $script:saved[$Name] = $Rows }
-function Write-CaseLog { param($m, $c) }
-function QuietLog { param($m) }
+function Write-CaseLog { param($m, $c) $null = $m, $c }
+function QuietLog { param($m) $null = $m }
 
 # --- P1: module 8.1 saves profile_list ---
 $run81 = [regex]::Match($src, "(?s)Id = '8\.1';.*?Run = \{(.*?)\r?\n        \} \}").Groups[1].Value
@@ -32,7 +32,7 @@ Check "P1: Get-UserProfileList returns Sid/Path/User rows" ($pl.Count -eq 0 -or 
 
 # --- P2: report-side maps (simulate the report block) ---
 $profRows = @(
-    [pscustomobject]@{ Sid = 'S-1-5-21-1001'; Path = 'C:\Users\aryan'; User = 'aryan' },
+    [pscustomobject]@{ Sid = 'S-1-5-21-1001'; Path = 'C:\Users\jsmith'; User = 'jsmith' },
     [pscustomobject]@{ Sid = 'S-1-5-18'; Path = 'C:\Windows\system32\config\systemprofile'; User = 'SYSTEM' }
 )
 $bamRows = @(
@@ -53,8 +53,8 @@ foreach ($b5 in $bamRows) {
     $tag5 = "$un5 (BAM)"
     if (-not ($bamByLeaf[$kl5] -contains $tag5)) { $null = $bamByLeaf[$kl5].Add($tag5) }
 }
-Check "P2: xray.exe attributed to aryan (BAM)" ($bamByLeaf.ContainsKey('xray.exe') -and $bamByLeaf['xray.exe'] -contains 'aryan (BAM)')
-Check "P2: svchost.exe attributed to aryan not SYSTEM" ($bamByLeaf.ContainsKey('svchost.exe') -and $bamByLeaf['svchost.exe'] -contains 'aryan (BAM)' -and -not ($bamByLeaf['svchost.exe'] -contains 'SYSTEM (BAM)'))
+Check "P2: xray.exe attributed to jsmith (BAM)" ($bamByLeaf.ContainsKey('xray.exe') -and $bamByLeaf['xray.exe'] -contains 'jsmith (BAM)')
+Check "P2: svchost.exe attributed to jsmith not SYSTEM" ($bamByLeaf.ContainsKey('svchost.exe') -and $bamByLeaf['svchost.exe'] -contains 'jsmith (BAM)' -and -not ($bamByLeaf['svchost.exe'] -contains 'SYSTEM (BAM)'))
 Check "P2: unknown SID excluded" (-not $bamByLeaf.ContainsKey('ghost.exe'))
 
 # --- P3: useract BAM rollup ---
@@ -69,9 +69,9 @@ foreach ($b6 in $bamRows) {
     if ($lp6 -and $lp6 -match '\.exe$') { $userAct[$k6].Procs[$lp6] = [int]$userAct[$k6].Procs[$lp6] + 1 }
     if ((& $uaTicks "$($b6.LastWrite)") -gt (& $uaTicks "$($userAct[$k6].Last)")) { $userAct[$k6].Last = "$($b6.LastWrite)" }
 }
-Check "P3: aryan account created from BAM" ($userAct.Contains('aryan'))
-Check "P3: aryan has xray + svchost in Procs" (@($userAct['aryan'].Procs.Keys) -contains 'xray.exe' -and @($userAct['aryan'].Procs.Keys) -contains 'svchost.exe')
-Check "P3: Last = newest BAM stamp" ("$($userAct['aryan'].Last)" -eq '2026-11-16 21:00:00')
+Check "P3: jsmith account created from BAM" ($userAct.Contains('jsmith'))
+Check "P3: jsmith has xray + svchost in Procs" (@($userAct['jsmith'].Procs.Keys) -contains 'xray.exe' -and @($userAct['jsmith'].Procs.Keys) -contains 'svchost.exe')
+Check "P3: Last = newest BAM stamp" ("$($userAct['jsmith'].Last)" -eq '2026-11-16 21:00:00')
 
 # --- P4: ranTxt merge logic (report cell) ---
 $ranByLeaf = @{}
@@ -80,11 +80,11 @@ $lnE = 'xray.exe'
 $ranTxt = if ($lnE -and $ranByLeaf.ContainsKey($lnE)) { @($ranByLeaf[$lnE]) -join '; ' } else { '' }
 if ($lnE -and $bamByLeaf.ContainsKey($lnE)) { $bamTxt = @($bamByLeaf[$lnE]) -join '; '; $ranTxt = if ($ranTxt) { "$ranTxt; $bamTxt" } else { $bamTxt } }
 $ranTxt = if ($ranTxt) { $ranTxt } else { $noRan++; '-' }
-Check "P4: ranTxt = aryan (BAM) when 4688 absent" ("$ranTxt" -eq 'aryan (BAM)')
-$ranByLeaf2 = @{ 'xray.exe' = 'DESKTOP\aryan' }
+Check "P4: ranTxt = jsmith (BAM) when 4688 absent" ("$ranTxt" -eq 'jsmith (BAM)')
+$ranByLeaf2 = @{ 'xray.exe' = 'DESKTOP\jsmith' }
 $ranTxt2 = @($ranByLeaf2['xray.exe']) -join '; '
 if ($bamByLeaf.ContainsKey('xray.exe')) { $bamTxt2 = @($bamByLeaf['xray.exe']) -join '; '; $ranTxt2 = "$ranTxt2; $bamTxt2" }
-Check "P4: 4688 + BAM merge with '; '" ("$ranTxt2" -eq 'DESKTOP\aryan; aryan (BAM)')
+Check "P4: 4688 + BAM merge with '; '" ("$ranTxt2" -eq 'DESKTOP\jsmith; jsmith (BAM)')
 $noRan2 = 0; $lnE2 = 'unknown.bin'
 $rt3 = if ($lnE2 -and $ranByLeaf.ContainsKey($lnE2)) { @($ranByLeaf[$lnE2]) -join '; ' } else { '' }
 if ($lnE2 -and $bamByLeaf.ContainsKey($lnE2)) { $rt3 = "$rt3; bam" }

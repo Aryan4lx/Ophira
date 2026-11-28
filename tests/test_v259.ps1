@@ -20,15 +20,15 @@ New-Item -ItemType Directory -Path $tmp -Force | Out-Null
 $nuReal = @'
 Id,Timestamp,ExeInfo,ExeInfoDescription,ExeTimestamp,SidType,Sid,UserName,UserId,AppId,BytesReceived,BytesSent,InterfaceLuid,InterfaceType,L2ProfileFlags,L2ProfileId,ProfileName
 1,2026-08-18 22:54:00,Spooler,,,LocalSystem,S-1-5-18,systemprofile,6,310,0,0,0,0,0,0,
-3,2026-09-01 03:11:00,\Device\HarddiskVolume3\Users\Aryan\AppData\Roaming\tool.exe,,,UnknownOrUserSid,S-1-5-21-500,aryan,2,77,3000,5000,19985273102270464,IF_TYPE_IEEE80211,0,268435457,
+3,2026-09-01 03:11:00,\Device\HarddiskVolume3\Users\jsmith\AppData\Roaming\tool.exe,,,UnknownOrUserSid,S-1-5-21-500,jsmith,2,77,3000,5000,19985273102270464,IF_TYPE_IEEE80211,0,268435457,
 '@
 $nuPath = Join-Path $tmp 'usages.csv'
 Set-Content -LiteralPath $nuPath -Value $nuReal -Encoding UTF8
 
 $u = @(ConvertFrom-SrumCsv -Path $nuPath)
 Check "usage: all rows normalized" ($u.Count -eq 2)
-Check "usage: Application carries the SRUM ExeInfo (entity binFromRow + report consumer match)" ($u[1].Application -eq '\Device\HarddiskVolume3\Users\Aryan\AppData\Roaming\tool.exe')
-Check "usage: User + bytes columns mapped" ($u[1].User -eq 'aryan' -and $u[1].BytesSent -eq '5000' -and $u[1].BytesReceived -eq '3000')
+Check "usage: Application carries the SRUM ExeInfo (entity binFromRow + report consumer match)" ($u[1].Application -eq '\Device\HarddiskVolume3\Users\jsmith\AppData\Roaming\tool.exe')
+Check "usage: User + bytes columns mapped" ($u[1].User -eq 'jsmith' -and $u[1].BytesSent -eq '5000' -and $u[1].BytesReceived -eq '3000')
 Check "missing file -> @()" (@(ConvertFrom-SrumCsv -Path (Join-Path $tmp 'nope.csv')).Count -eq 0)
 Set-Content -LiteralPath (Join-Path $tmp 'bad.csv') -Value "not,a,csv`r`n`"unterminated" -Encoding UTF8
 $noCrash = $false
@@ -44,7 +44,7 @@ Invoke-Expression $mGid.Value
 Invoke-Expression $m.Value
 $fixtureRows = @{
     'srum_usage' = @(
-        [pscustomobject]@{ Timestamp = '2026-09-01 03:11:00'; Application = 'tool.exe'; User = 'aryan'; BytesSent = '5000'; BytesReceived = '3000'; InterfaceType = 'IF_TYPE_IEEE80211' }
+        [pscustomobject]@{ Timestamp = '2026-09-01 03:11:00'; Application = 'tool.exe'; User = 'jsmith'; BytesSent = '5000'; BytesReceived = '3000'; InterfaceType = 'IF_TYPE_IEEE80211' }
         [pscustomobject]@{ Timestamp = '2026-09-01 04:11:00'; Application = 'Spooler'; User = 'systemprofile'; BytesSent = '0'; BytesReceived = '0'; InterfaceType = '' }
     )
 }
