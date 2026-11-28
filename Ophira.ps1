@@ -2425,19 +2425,19 @@ a{color:#7aa2f7;text-decoration:none}a:hover{color:#9ec1f0}.foot{margin-top:40px
         $null = $fsb.AppendLine("</table><div class='meta'>HuntHit rows are high/medium technique detections from each host's csv\hunt_findings.csv</div>")
     }
     if ($campaignRows.Count -gt 0) {
-        $null = $fsb.AppendLine("<h2>Campaigns - clustered host groups (one intrusion, many boxes)</h2><table><tr><th>Campaign</th><th>Hosts</th><th>Host list</th><th>Worst verdict</th><th>Tied by</th></tr>")
+        $null = $fsb.AppendLine("<h2>Campaigns - clustered host groups (one intrusion, many boxes)</h2><table><tr><th>Campaign</th><th>Hosts</th><th>Host list</th><th>Worst verdict</th><th>Span</th><th>Tied by</th></tr>")
         foreach ($c in $campaignRows) {
             $cc = switch -Wildcard ($c.WorstVerdict) { 'COMPROMISED*' { 'HIGH' } 'LIKELY*' { 'HIGH' } 'SUSPICIOUS*' { 'med' } default { 'info' } }
-            $null = $fsb.AppendLine("<tr><td><b>$($c.Campaign)</b></td><td><b>$($c.HostCount)</b></td><td class='path'>$(ConvertTo-HtmlEsc $c.Hosts)</td><td><span class='$cc'>$(ConvertTo-HtmlEsc $c.WorstVerdict)</span></td><td class='path'>$(ConvertTo-HtmlEsc $c.Evidence)</td></tr>")
+            $null = $fsb.AppendLine("<tr><td><b>$($c.Campaign)</b></td><td><b>$($c.HostCount)</b></td><td class='path'>$(ConvertTo-HtmlEsc $c.Hosts)</td><td><span class='$cc'>$(ConvertTo-HtmlEsc $c.WorstVerdict)</span> ($(ConvertTo-HtmlEsc $c.Flagged))</td><td class='path'>$(ConvertTo-HtmlEsc $c.Span)</td><td class='path'>$(ConvertTo-HtmlEsc $c.Evidence)</td></tr>")
         }
-        $null = $fsb.AppendLine("</table><div class='meta'>Union-find over every cross-host tie this report found (lateral chains, shared binary hashes, shared indicators, deployment waves): hosts linked by ANY of those land in the same campaign row. A cluster is one investigation, not N separate hosts. Full list: fleet_campaigns.csv.</div>")
+        $null = $fsb.AppendLine("</table><div class='meta'>Union-find over every cross-host tie this report found (lateral chains, shared binary hashes, shared indicators, deployment waves, same-account sign-ins, shared source IPs, shared USB devices): hosts linked by ANY of those land in the same campaign row. A cluster is one investigation, not N separate hosts. Full list: fleet_campaigns.csv.</div>")
         # v6.1: campaign narrative - the top cluster reads as one story, not a table row
         $topC = @($campaignRows | Sort-Object { [int]"$($_.HostCount)" } -Descending | Select-Object -First 1)
         if ($topC.Count -gt 0) {
             $tc = $topC[0]
             $firstEv = (("$($tc.Evidence)" -split '; ')[0])
             $lead6 = ("$($tc.Hosts)" -split ', ')[0]
-            $null = $fsb.AppendLine("<div class='card' style='margin-top:12px'><b>Campaign story (largest cluster)</b><div class='meta' style='margin-top:6px'>Campaign <b>$(ConvertTo-HtmlEsc $tc.Campaign)</b>$(if ("$($tc.Client)") { " (client $(ConvertTo-HtmlEsc $tc.Client))" }) spans <b>$($tc.HostCount)</b> host(s) - $(ConvertTo-HtmlEsc $tc.Hosts) - tied by $(ConvertTo-HtmlEsc $tc.Evidence). Worst verdict in the cluster: <b>$(ConvertTo-HtmlEsc $tc.WorstVerdict)</b>. Suggested first step: open the report for $(ConvertTo-HtmlEsc $lead6) and pivot on the first shared evidence item ($(ConvertTo-HtmlEsc $firstEv)); the same pivot applies to every other host in the cluster. Treat the cluster as ONE investigation.</div></div>")
+            $null = $fsb.AppendLine("<div class='card' style='margin-top:12px'><b>Campaign story (largest cluster)</b><div class='meta' style='margin-top:6px'>Campaign <b>$(ConvertTo-HtmlEsc $tc.Campaign)</b>$(if ("$($tc.Client)") { " (client $(ConvertTo-HtmlEsc $tc.Client))" }) spans <b>$($tc.HostCount)</b> host(s) - $(ConvertTo-HtmlEsc $tc.Hosts) - tied by $(ConvertTo-HtmlEsc $tc.Evidence). Worst verdict in the cluster: <b>$(ConvertTo-HtmlEsc $tc.WorstVerdict)</b>$(if ("$($tc.Span)") { " - activity window <b>$(ConvertTo-HtmlEsc $tc.Span)</b>" }). Suggested first step: open the report for $(ConvertTo-HtmlEsc $lead6) and pivot on the first shared evidence item ($(ConvertTo-HtmlEsc $firstEv)); the same pivot applies to every other host in the cluster. Treat the cluster as ONE investigation.</div></div>")
         }
     }
     if ($lateral.Count -gt 0) {
