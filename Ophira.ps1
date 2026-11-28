@@ -1773,19 +1773,22 @@ function New-FleetCampaigns {
         [object[]]$Waves,      # deployment-wave rows (Name/Class/SpreadMinutes/Hosts csv)
         [string[]]$AllHosts,
         [hashtable]$Verdicts,  # host -> verdict string
-        [hashtable]$ClientBy = @{}  # normalized host -> client label (MSSP multi-tenant guard, ADR-0006)
+        [hashtable]$ClientBy = @{},  # normalized host -> client label (MSSP multi-tenant guard, ADR-0006)
+        [object[]]$SessionRows = @(),  # v6.7: fleet session-story rows (Host/User/Start/Type/Source)
+        [object[]]$UsbRows = @()       # v6.7: per-host USB device rows (Host/Serial/FriendlyName/Stamp)
     )
     $norm = { param($h) ("$h").Trim().ToLower() }
     $parent = @{}
-    foreach ($h in $AllHosts) { $k = & $norm $h; if ($k) { $parent[$k] = $k } }
+    $disp = @{}   # v6.7: normalized host -> display name (evidence lines keep the collected spelling)
+    foreach ($h in $AllHosts) { $k = & $norm $h; if ($k) { $parent[$k] = $k; $disp[$k] = $h } }
     if ($parent.Count -lt 2) { return @() }
     $edges = New-Object System.Collections.Generic.List[object]
     $addEdge = {
-        param($a, $b, $line)
+        param($a, $b, $line, $t = '', $t2 = '')
         $ka = & $norm $a; $kb = & $norm $b
         if (-not $ka -or -not $kb -or $ka -eq $kb) { return }
         if (-not $parent.ContainsKey($ka) -or -not $parent.ContainsKey($kb)) { return }
-        $null = $edges.Add([pscustomobject]@{ A = $ka; B = $kb; Line = $line })
+        $null = $edges.Add([pscustomobject]@{ A = $ka; B = $kb; Line = $line; Time = "$t"; Time2 = "$t2" })
     }
     $splitHosts = {
         param($csvHosts)
@@ -1794,6 +1797,96 @@ function New-FleetCampaigns {
     # lateral chains first - strongest tie, its evidence line wins pair dedupe
     foreach ($l in $Lateral) {
         & $addEdge $l.FromHost $l.ToHost ("lateral: {0} -> {1}" -f "$($l.FromHost)", "$($l.ToHost)")
+    }
+    # v6.7: identity ties from session stories - the same account signing in on many hosts
+    $acctMap = @{}   # lowercase user -> host-key -> earliest session start
+    foreach ($sr in $SessionRows) {
+        $u = ("$($sr.User)").Trim().ToLower()
+        if (-not $u -or $u -match '^(system|local service|network service|dwm-\d+|umfd-\d+)$' -or $u.EndsWith('$') -or $u -match 'window manager|font driver') { continue }
+        $g = & $norm $sr.Host
+        if (-not $g -or -not $parent.ContainsKey($g)) { continue }
+        if (-not $acctMap.ContainsKey($u)) { $acctMap[$u] = @{} }
+        $prev = if ($acctMap[$u].ContainsKey($g)) { "$($acctMap[$u][$g])" } else { '' }
+        $st = "$($sr.Start)".Trim()
+        if (-not $prev -or ($st -and $st -lt $prev)) { $acctMap[$u][$g] = $st }
+    }
+    foreach ($u in $acctMap.Keys) {
+        $hs2 = @($acctMap[$u].Keys | Sort-Object)
+        if ($hs2.Count -lt 2) { continue }
+        for ($i = 0; $i -lt [Math]::Min($hs2.Count, 20); $i++) {
+            for ($j = $i + 1; $j -lt [Math]::Min($hs2.Count, 20); $j++) {
+                $ta = "$($acctMap[$u][$hs2[$i]])"; $tb = "$($acctMap[$u][$hs2[$j]])"
+                $tmin = $ta; $tmax = $ta
+                if ($tb) { if (-not $tmin -or $tb -lt $tmin) { $tmin = $tb }; if ($tb -gt $tmax) { $tmax = $tb } }
+                if (-not $tmin) { $tmin = ''; $tmax = '' }
+                & $addEdge $disp[$hs2[$i]] $disp[$hs2[$j]] ("account: {0} on {1} + {2}" -f $u, $disp[$hs2[$i]], $disp[$hs2[$j]]) $tmin $tmax
+            }
+        }
+    }
+    # v6.7: the same source IP signing in here and moving laterally elsewhere
+    $ipOk = { param($ip) ("$ip") -and (@('LOCAL', '-', '') -contains "$ip") -eq $false -and ("$ip") -notlike '127.*' -and ("$ip") -notlike '::1*' -and ("$ip") -notlike '169.254.*' }
+    $ipMap = @{}     # ip -> host-key -> earliest time
+    foreach ($sr in $SessionRows) {
+        $ip = ("$($sr.Source)").Trim()
+        if (-not (& $ipOk $ip)) { continue }
+        $g = & $norm $sr.Host
+        if (-not $g -or -not $parent.ContainsKey($g)) { continue }
+        if (-not $ipMap.ContainsKey($ip)) { $ipMap[$ip] = @{} }
+        $prev = if ($ipMap[$ip].ContainsKey($g)) { "$($ipMap[$ip][$g])" } else { '' }
+        $st = "$($sr.Start)".Trim()
+        if (-not $prev -or ($st -and $st -lt $prev)) { $ipMap[$ip][$g] = $st }
+    }
+    foreach ($l in $Lateral) {
+        $ip = ("$($l.SourceIp)").Trim()
+        if (-not (& $ipOk $ip)) { continue }
+        $g = & $norm $l.ToHost
+        if (-not $g -or -not $parent.ContainsKey($g)) { continue }
+        if (-not $ipMap.ContainsKey($ip)) { $ipMap[$ip] = @{} }
+        $prev = if ($ipMap[$ip].ContainsKey($g)) { "$($ipMap[$ip][$g])" } else { '' }
+        $lt = "$($l.Time)".Trim()
+        if (-not $prev -or ($lt -and $lt -lt $prev)) { $ipMap[$ip][$g] = $lt }
+    }
+    foreach ($ip in $ipMap.Keys) {
+        $hs2 = @($ipMap[$ip].Keys | Sort-Object)
+        if ($hs2.Count -lt 2) { continue }
+        for ($i = 0; $i -lt [Math]::Min($hs2.Count, 20); $i++) {
+            for ($j = $i + 1; $j -lt [Math]::Min($hs2.Count, 20); $j++) {
+                $ta = "$($ipMap[$ip][$hs2[$i]])"; $tb = "$($ipMap[$ip][$hs2[$j]])"
+                $tmin = $ta; $tmax = $ta
+                if ($tb) { if (-not $tmin -or $tb -lt $tmin) { $tmin = $tb }; if ($tb -gt $tmax) { $tmax = $tb } }
+                if (-not $tmin) { $tmin = ''; $tmax = '' }
+                & $addEdge $disp[$hs2[$i]] $disp[$hs2[$j]] ("source IP {0} -> {1} + {2}" -f $ip, $disp[$hs2[$i]], $disp[$hs2[$j]]) $tmin $tmax
+            }
+        }
+    }
+    # v6.7: the same USB storage device plugged into multiple hosts
+    $usbMap = @{}    # serial -> host-key -> earliest stamp ('serial|name' holds a display name)
+    foreach ($ur in $UsbRows) {
+        $sn = ("$($ur.Serial)").Trim()
+        if (-not $sn -or $sn -eq '0') { continue }
+        $g = & $norm $ur.Host
+        if (-not $g -or -not $parent.ContainsKey($g)) { continue }
+        if (-not $usbMap.ContainsKey($sn)) { $usbMap[$sn] = @{} }
+        $nm = ("$($ur.FriendlyName)").Trim()
+        if ($nm -and -not "$($usbMap["$sn|name"])") { $usbMap["$sn|name"] = $nm }
+        $prev = if ($usbMap[$sn].ContainsKey($g)) { "$($usbMap[$sn][$g])" } else { '' }
+        $st = "$($ur.Stamp)".Trim()
+        if (-not $prev -or ($st -and $st -lt $prev)) { $usbMap[$sn][$g] = $st }
+    }
+    foreach ($sn in @($usbMap.Keys | Where-Object { $_ -notlike '*|name' })) {
+        $hs2 = @($usbMap[$sn].Keys | Sort-Object)
+        if ($hs2.Count -lt 2) { continue }
+        $nm = "$($usbMap["$sn|name"])"
+        $lbl = if ($nm) { "{0} ({1})" -f $sn, $nm } else { $sn }
+        for ($i = 0; $i -lt [Math]::Min($hs2.Count, 20); $i++) {
+            for ($j = $i + 1; $j -lt [Math]::Min($hs2.Count, 20); $j++) {
+                $ta = "$($usbMap[$sn][$hs2[$i]])"; $tb = "$($usbMap[$sn][$hs2[$j]])"
+                $tmin = $ta; $tmax = $ta
+                if ($tb) { if (-not $tmin -or $tb -lt $tmin) { $tmin = $tb }; if ($tb -gt $tmax) { $tmax = $tb } }
+                if (-not $tmin) { $tmin = ''; $tmax = '' }
+                & $addEdge $disp[$hs2[$i]] $disp[$hs2[$j]] ("USB {0} on {1} + {2}" -f $lbl, $disp[$hs2[$i]], $disp[$hs2[$j]]) $tmin $tmax
+            }
+        }
     }
     foreach ($r in $HashRows) {
         if ("$($r.MultiHost)" -notmatch 'YES') { continue }
@@ -1840,6 +1933,7 @@ function New-FleetCampaigns {
     }
     $members = @{}   # root -> List[host display names]
     $lines = @{}     # root -> List[evidence lines whose pair lives in this cluster]
+    $times = @{}     # root -> List[datetime] (v6.7: tie-evidence times for the campaign span)
     foreach ($h in $AllHosts) {
         $k = & $norm $h
         $root = $k
@@ -1851,6 +1945,14 @@ function New-FleetCampaigns {
         $root = $e.A
         while ($parent[$root] -ne $root) { $root = $parent[$root] }
         if ($lines.ContainsKey($root) -and $lines[$root].Count -lt 8 -and -not $lines[$root].Contains($e.Line)) { $lines[$root].Add($e.Line) }
+        foreach ($tk in @("$($e.Time)", "$($e.Time2)")) {
+            if (-not "$tk") { continue }
+            $dt = Get-InvariantDate $tk   # v6.7: culture-safe parse; MinValue on fail
+            if ($dt -and $dt -ne [datetime]::MinValue) {
+                if (-not $times.ContainsKey($root)) { $times[$root] = New-Object System.Collections.Generic.List[datetime] }
+                $times[$root].Add($dt)
+            }
+        }
     }
     $rankMap = @{ 'COMPROMISED' = 4; 'LIKELY COMPROMISED' = 3; 'SUSPICIOUS' = 2; 'NO EVIDENCE' = 1; 'INCONCLUSIVE' = 0 }
     $rows = @()
@@ -1858,18 +1960,31 @@ function New-FleetCampaigns {
     $clusters = @($members.Keys | Where-Object { $members[$_].Count -ge 2 })
     foreach ($root in $clusters) {
         $ci++
-        $worst = ''; $worstRank = -1
+        $worst = ''; $worstRank = -1; $flagN = 0
         foreach ($h in $members[$root]) {
             $v = if ($Verdicts -and $Verdicts.ContainsKey($h)) { "$($Verdicts[$h])" } else { '' }
             $rk = if ($v -and $rankMap.ContainsKey($v)) { $rankMap[$v] } else { -1 }
             if ($rk -gt $worstRank) { $worstRank = $rk; $worst = $v }
+            if ($rk -ge 2) { $flagN++ }   # v6.7: SUSPICIOUS and above count as flagged
         }
         $hl = @($members[$root] | Sort-Object)
         $cLbl = ''
         foreach ($hm in $hl) { $hk = & $norm $hm; if ($ClientBy.ContainsKey($hk) -and "$($ClientBy[$hk])") { $cLbl = "$($ClientBy[$hk])"; break } }
+        # v6.7: span = earliest-to-latest tie-evidence time in this campaign (empty when none carry one)
+        $span = ''
+        if ($times.ContainsKey($root)) {
+            $tAll = @($times[$root])
+            if ($tAll.Count -gt 0) {
+                $tmin2 = $tAll[0]; $tmax2 = $tAll[0]
+                foreach ($dt2 in $tAll) { if ($dt2 -lt $tmin2) { $tmin2 = $dt2 }; if ($dt2 -gt $tmax2) { $tmax2 = $dt2 } }
+                $inv = [Globalization.CultureInfo]::InvariantCulture
+                $span = if ($tmax2 -gt $tmin2) { "{0} - {1}" -f $tmin2.ToString('yyyy-MM-dd HH:mm', $inv), $tmax2.ToString('yyyy-MM-dd HH:mm', $inv) } else { $tmin2.ToString('yyyy-MM-dd HH:mm', $inv) }
+            }
+        }
         $rows += [pscustomobject]@{
             Campaign = "C$ci"; Client = $cLbl; HostCount = $hl.Count; Hosts = ($hl -join ', ')
-            WorstVerdict = $worst; Evidence = (($lines[$root].ToArray()) -join '; ')
+            WorstVerdict = $worst; Flagged = ("{0} of {1} host(s)" -f $flagN, $hl.Count); Span = $span
+            Evidence = (($lines[$root].ToArray()) -join '; ')
         }
     }
     @($rows | Sort-Object -Property @{Expression = { $rankMap[$_.WorstVerdict] }; Descending = $true }, @{Expression = 'HostCount'; Descending = $true }, @{Expression = 'Campaign' })
