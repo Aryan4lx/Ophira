@@ -1,5 +1,5 @@
 <#
-Ophira v6.8  -  Windows Endpoint Triage Toolkit
+Ophira v6.9  -  Windows Endpoint Triage Toolkit
 READ-ONLY by design: never modifies the system, only reads and copies data
 into its own output folder. Intended to be handed to a system owner or run
 by a responder during early triage / threat hunting.
@@ -391,7 +391,7 @@ param(
     [switch]$ShareZip
 )
 
-$ScriptVersion = "6.8"
+$ScriptVersion = "6.9"
 $ErrorActionPreference = 'Continue'
 $ProgressPreference = 'SilentlyContinue'
 
@@ -13123,7 +13123,7 @@ function New-HuntFindings {
     }
     & $trace 'R70' 'DCOM lateral command surface' "proc + powershell command surfaces -> $($r70Seen.Count) pattern/source hit(s)"
 
-    # v6.8 R71: DNS cache C2 scoring - a Get-DnsClientCache dump carries no process
+    # v6.9 R71: DNS cache C2 scoring - a Get-DnsClientCache dump carries no process
     # attribution, so tells stay structural: tunneling-shaped labels, known-bad domain
     # patterns, abuse-heavy TLDs (info only). One finding per domain; reverse/benign silent.
     $r71Saw = @{}
@@ -13153,7 +13153,7 @@ function New-HuntFindings {
     }
     & $trace 'R71' 'DNS cache C2 scoring' "dns_cache -> $r71Tun tunneling, $r71Tld susp-TLD, $r71Bad known-bad"
 
-    # v6.8 R72: vulnerable-driver blocklist tamper - the zero-write turns off Defender's
+    # v6.9 R72: vulnerable-driver blocklist tamper - the zero-write turns off Defender's
     # BYOVD protection (Sigma b8421346, high, unlikely FP). Registry evidence needs Sysmon
     # EID 13; the command surface (reg add ... /d 0) covers hosts without Sysmon. Re-enable
     # writes (0x1) and key-open events stay silent.
@@ -13182,7 +13182,7 @@ function New-HuntFindings {
     }
     & $trace 'R72' 'driver-blocklist tamper' "sysmon_registry EID13 + command surfaces -> $r72N zero-write(s)"
 
-    # v6.8 R73: remote-service lateral join - a 7045 install by account X within 15 min
+    # v6.9 R73: remote-service lateral join - a 7045 install by account X within 15 min
     # AFTER a type-3 (network) logon of the same account is the classic psexec/sc remote
     # service shape. Network evidence = 4624 type-3 with a real source IP; service accounts
     # excluded with the same shape the campaign stitcher uses.
@@ -13213,6 +13213,92 @@ function New-HuntFindings {
         & $find 'Service install preceded by network logon (same account)' 'medium' $r73a "'$(("$($r73s.Service)" -split '\s+')[0])' installed $([Math]::Round($r73best.Min, 0)) min after a type-3 logon of $r73a from $($r73best.Ip)" 'T1021.002'
     }
     & $trace 'R73' '7045 + 4624-T3 remote-service join' "system_new_services x security_auth_events -> $r73N join(s)"
+
+    # v6.9 R74: run-key writes during the collection window + hidden (null-terminated)
+    # valuename. A run-key SetValue IS persistence being installed now; the hidden shape
+    # (path ending in a backslash) is the regedit-invisible trick - no benign writer
+    # produces it. Elastic: run_key_and_startup_broad / via_hidden_run_key_valuename.
+    $r74N = 0
+    $r74H = 0
+    $r74Seen = @{}
+    foreach ($r74r in @(Import-CaseCsv 'sysmon_registry')) {
+        $r74t = "$($r74r.TargetObject)"
+        if ($r74t -notmatch '(?i)\\(Microsoft\\Windows\\CurrentVersion\\Run(Once)?|WOW6432Node\\Microsoft\\Windows\\CurrentVersion\\Run(Once)?|Policies\\Explorer\\Run)\\') { continue }
+        if (("$($r74r.EventType)" -notmatch '(?i)set|create')) { continue }
+        $r74k = "$r74t|$($r74r.Image)"
+        if ($r74Seen.ContainsKey($r74k)) { continue }
+        $r74Seen[$r74k] = $true
+        $r74img = Split-Path "$($r74r.Image)" -Leaf
+        $r74det = "$r74t = $("$($r74r.Details)".Trim())"
+        if ($r74t.EndsWith([string][char]92) -or $r74t.Contains([string][char]0)) {
+            $r74H++
+            & $find 'Hidden run-key valuename write' 'high' $r74img.ToLower() "$r74det - path ends in a backslash: the value name is null-terminated so regedit cannot display it" 'T1547.001'
+        } else {
+            $r74N++
+            & $find 'Run-key write during collection window' 'medium' $r74img.ToLower() "$r74det written by $($r74r.Image) - persistence installed during the triage window" 'T1547.001'
+        }
+    }
+    & $trace 'R74' 'run-key writes during window' "sysmon_registry Run-path EID13 -> $r74N write(s), $r74H hidden"
+
+    # v6.9 R75: a non-Kerberos process connecting to port 88 shortly followed by a
+    # 4768/4769 ticket issue from the same source IP - the Kerberos-relay/forge lateral
+    # shape (Elastic kerberos_correlation, window relaxed 3s -> 5min for log granularity).
+    $r75N = 0
+    $r75ker = New-Object System.Collections.Generic.List[object]
+    foreach ($r75a in @(Import-CaseCsv 'security_kerberos')) {
+        if (@('4768', '4769') -notcontains "$($r75a.EventId)") { continue }
+        $r75ip = ("$($r75a.IpAddress)" -replace '\(0x[0-9a-f]+\)', '').Trim()
+        if (-not $r75ip -or @('LOCAL', '-', '0.0.0.0', '::', '::1') -contains $r75ip -or $r75ip -like '127.*' -or $r75ip -like '169.254.*') { continue }
+        $r75at = Get-InvariantDate "$($r75a.Time)"
+        if (-not $r75at -or $r75at -eq [datetime]::MinValue) { continue }
+        $null = $r75ker.Add([pscustomobject]@{ Ip = $r75ip; At = $r75at; Eid = "$($r75a.EventId)"; Acct = "$($r75a.Account)" })
+    }
+    foreach ($r75net in @(Import-CaseCsv 'sysmon_network')) {
+        $r75img = Split-Path "$($r75net.Image)" -Leaf
+        if ($r75img -match '^(lsass|svchost|wininit)\.exe$') { continue }
+        $r75port = "$($r75net.DestPort)"
+        if ($r75port -ne '88' -and "$($r75net.DestPortName)" -notmatch '(?i)kerberos') { continue }
+        $r75sip = "$($r75net.SourceIp)"
+        if (-not $r75sip -or @('LOCAL', '-', '0.0.0.0', '::', '::1') -contains $r75sip -or $r75sip -like '127.*' -or $r75sip -like '169.254.*') { continue }
+        $r75nt = Get-InvariantDate "$($r75net.Time)"
+        if (-not $r75nt -or $r75nt -eq [datetime]::MinValue) { continue }
+        $r75best = $null
+        foreach ($r75kr in $r75ker) {
+            if ($r75kr.Ip -ne $r75sip) { continue }
+            $r75d = ($r75kr.At - $r75nt).TotalMinutes
+            if ($r75d -lt 0 -or $r75d -gt 5) { continue }
+            if ($null -eq $r75best -or $r75d -lt $r75best.Min) { $r75best = [pscustomobject]@{ Min = $r75d; K = $r75kr } }
+        }
+        if ($null -eq $r75best) { continue }
+        $r75N++
+        & $find 'Kerberos ticket issued after non-standard process connection' 'medium' $r75img.ToLower() "$r75img ($r75sip -> $($r75net.DestIp):$r75port) at $($r75net.Time), then EID $($r75best.K.Eid) ticket for $($r75best.K.Acct) from the same IP +$([Math]::Round($r75best.Min, 1)) min - relay/forge lateral candidate" 'T1558'
+    }
+    & $trace 'R75' 'kerberos port-88 join' "sysmon_network x security_kerberos -> $r75N join(s)"
+
+    # v6.9 R76: test-signing / integrity-checks disabled via bcdedit - enables unsigned
+    # kernel drivers (BYOVD) and bare CI bypass; the value must be yes|on|1 so /enum
+    # chatter and 'off' never match. R72 covers the blocklist, not these.
+    $r76N = 0
+    $r76Seen = @{}
+    foreach ($r76s in @('security_proc_events', 'sysmon_proc_create', 'powershell_events')) {
+        foreach ($r76p in @(Import-CaseCsv $r76s)) {
+            if ("$r76s" -eq 'powershell_events' -and "$($r76p.Id)" -ne '4104') { continue }
+            $r76c = if ("$r76s" -eq 'powershell_events') { "$($r76p.Message)" } else { "$($r76p.CommandLine)" }
+            if (-not $r76c) { continue }
+            if ($r76c -match '(?i)bcdedit.{0,60}testsigning.{0,10}(yes|on|1)(\s|$)') {
+                if ($r76Seen.ContainsKey("tsig|$r76s")) { continue }
+                $r76Seen["tsig|$r76s"] = $true
+                $r76N++
+                & $find 'Test-signing enabled (bcdedit)' 'high' $r76s "command surface: $($r76c.Substring(0, [Math]::Min(160, $r76c.Length)))" 'T1553.002'
+            } elseif ($r76c -match '(?i)bcdedit.{0,60}nointegritychecks.{0,10}(yes|on|1)(\s|$)') {
+                if ($r76Seen.ContainsKey("noci|$r76s")) { continue }
+                $r76Seen["noci|$r76s"] = $true
+                $r76N++
+                & $find 'Integrity checks disabled (bcdedit)' 'high' $r76s "command surface: $($r76c.Substring(0, [Math]::Min(160, $r76c.Length)))" 'T1553.002'
+            }
+        }
+    }
+    & $trace 'R76' 'bcdedit test-signing/CI off' "command surfaces -> $r76N hit(s)"
 
     # v2.87 storm guard: one broken source can flood one rule with hundreds of rows and
     # drown both the report and the verdict - cap each rule+severity at 15 rows and
@@ -13529,7 +13615,7 @@ function Get-CompromiseVerdict {
     $postureBad = @($posture | Where-Object { "$($_.Status)" -eq 'BAD' })
     $credSweep = Import-CaseCsv 'credential_sweep'
     $hunt = Import-CaseCsv 'hunt_findings'
-    $huntHi = @($hunt | Where-Object { "$($_.Severity)" -eq 'high' -and "$($_.Rule)" -match 'Renamed LOLBin|side-load|Downloaded then executed|LSASS access|LSASS dump|secretsdump|ntdsutil|RunAsPPL|LOLBin service binary|Office app spawned|proxy-execution|Admin-share|Defender (real-time|exclusion)|DCSync|Password spray|Web server spawned|Remote-access tunnel|ServiceDll tamper|authorized_keys|Svchost masquerade|Cross-process injection|C2-style named pipe|image tampering|Direct volume access|WMI event subscription|Sysmon configuration changed|Lookalike system binary|Misplaced system binary|Known-bad name pattern|vulnerable driver blocklist' })   # v6.8: +vulnerable driver blocklist (R72 BYOVD tamper); v6.5: +LOLBin service binary (R68); v6.4: +LSASS dump/secretsdump/ntdsutil/RunAsPPL (R64-R66 credential-dump family)
+    $huntHi = @($hunt | Where-Object { "$($_.Severity)" -eq 'high' -and "$($_.Rule)" -match 'Renamed LOLBin|side-load|Downloaded then executed|LSASS access|LSASS dump|secretsdump|ntdsutil|RunAsPPL|LOLBin service binary|Hidden run-key valuename write|Test-signing enabled|Integrity checks disabled|Office app spawned|proxy-execution|Admin-share|Defender (real-time|exclusion)|DCSync|Password spray|Web server spawned|Remote-access tunnel|ServiceDll tamper|authorized_keys|Svchost masquerade|Cross-process injection|C2-style named pipe|image tampering|Direct volume access|WMI event subscription|Sysmon configuration changed|Lookalike system binary|Misplaced system binary|Known-bad name pattern|vulnerable driver blocklist' })   # v6.8: +vulnerable driver blocklist (R72 BYOVD tamper); v6.5: +LOLBin service binary (R68); v6.4: +LSASS dump/secretsdump/ntdsutil/RunAsPPL (R64-R66 credential-dump family)
     # v2.64: EcsConfigs-only 5007 exclusion - Features\EcsConfigs is Defender's tamper-protected,
     # platform-managed cloud-config key (rewritten on every engine sync), NOT a user-set exclusion.
     # A 'Defender exclusion configuration changed' finding that only touches EcsConfigs paths is

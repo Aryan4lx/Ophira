@@ -1,3 +1,9 @@
+## v6.9 - hunt rules R74-R76 (run-key breadth + Kerberos join + boot-config tamper)
+- R74 run-key breadth (T1547.001): registry writes on Run/RunOnce/Policies-Explorer-Run paths during the log window flag medium; a valuename ending in a backslash (null-terminated, invisible in regedit) flags high via the 'Hidden run-key valuename write' huntHi term
+- R75 Kerberos ticket-request join (T1558): non-lsass/svchost process opening port 88 joined to a 4768/4769 ticket request from the same IP within 5 minutes flags medium
+- R76 bcdedit tamper surface (T1553.002): testsigning yes/on/1 flags high ('Test-signing enabled (bcdedit)'), nointegritychecks yes/on/1 flags high ('Integrity checks disabled (bcdedit)'); /enum and off stay silent; scanned across 4688 + Sysmon EID 1 + 4104
+- lint: test_v279 stub params annotated (PSReviewUnusedParameter suppressed)
+
 ## v6.8 - hunt rules R71-R73 + CI checkout@v5
 - R71 DNS cache C2 sweep (medium, T1071.004): scores dns_cache rows - non-browser process, tunneling length ratios (>0.75), rare TLDs, known-bad domains; dedicated medium verdict door
 - R72 driver blocklist tamper scan (high, T1554 + T1112): Sysmon EID 13 on SiPolicy / CODE INTEGRITY POLICY OPTIONS registry paths + command surface on bcdedit testsigning / dconfig CI checks

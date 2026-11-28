@@ -38,11 +38,11 @@ $script:Verbosity = 1
 $CaseDir = ''
 $Computer = 'V279HOST'
 $huntSaved = New-Object System.Collections.Generic.List[object]
-function Write-CaseLog { param([string]$Message, [string]$Color = 'Gray') }  # console sink unused at Verbosity 1
+function Write-CaseLog { param([System.Diagnostics.CodeAnalysis.SuppressMessageAttribute('PSReviewUnusedParameter', 'Message')][string]$Message, [System.Diagnostics.CodeAnalysis.SuppressMessageAttribute('PSReviewUnusedParameter', 'Color')][string]$Color = 'Gray') }  # console sink unused at Verbosity 1
 function Get-KnownBadRegexes { return @() }
 function Save-Rows { param([string]$Name, $Rows) $script:huntSaved.Add([pscustomobject]@{ Name = $Name; Rows = @($Rows).Count }) }
-function Test-IsUserWritablePath { param([string]$Path) $false }
-function Test-IsPublicIp { param([string]$Ip) $false }
+function Test-IsUserWritablePath { param([System.Diagnostics.CodeAnalysis.SuppressMessageAttribute('PSReviewUnusedParameter', 'Path')][string]$Path) $false }
+function Test-IsPublicIp { param([System.Diagnostics.CodeAnalysis.SuppressMessageAttribute('PSReviewUnusedParameter', 'Ip')][string]$Ip) $false }
 $script:FixtureCsv = @{}
 $procRows = New-Object System.Collections.Generic.List[object]
 1..16 | ForEach-Object { $null = $procRows.Add([pscustomobject]@{ Time = "2026-10-23 10:$($_.toString('00')):00"; Account = 'V279HOST\alice'; NewProcess = 'C:\Windows\System32\whoami.exe'; ParentProcess = 'C:\Windows\System32\cmd.exe'; CommandLine = 'whoami' }) }
@@ -57,7 +57,7 @@ Invoke-Expression $m.Value
 $null = New-HuntFindings
 
 $huntLogText = Get-Content -LiteralPath $huntLog -Raw
-Check "T12: exactly one trace line per rule (64 rule blocks)" (@([regex]::Matches($huntLogText, '(?m)^\[[\d:]+\] R\d')).Count -eq 64)
+Check "T12: exactly one trace line per rule (67 rule blocks)" (@([regex]::Matches($huntLogText, '(?m)^\[[\d:]+\] R\d')).Count -eq 67)
 Check "T12: R13 trace carries input counts AND findings-out counts (the brief's polarity example)" ($huntLogText -match [regex]::Escape('R13 discovery command storm: 2 accounts x 22 cmds (security_proc_events: 22 rows) -> 2 findings (2 low)'))
 Check "T12: R14 rule with a finding logs 1 in / 1 high out" ($huntLogText -match [regex]::Escape('R14 Defender tamper (5001/5007): defender_config_events: 1 rows -> 1 finding (1 high)'))
 Check "T12: clean rule logs its empty-input gate (R34)" ($huntLogText -match [regex]::Escape('R34 ADS on executables: ads_findings: 0 rows -> 0 findings'))
@@ -70,7 +70,7 @@ Check "T12: traces did not change findings output (2 R13 low + 1 R14 high)" (($h
 $verdLog = Join-Path $env:TEMP "ophira_v279_verdict_$stamp.log"
 $CaseLog = $verdLog
 $verdCap = New-Object System.Collections.Generic.List[string]
-function Write-CaseLog { param([string]$Message, [string]$Color = 'Gray') $script:verdCap.Add($Message) }
+function Write-CaseLog { param([string]$Message, [System.Diagnostics.CodeAnalysis.SuppressMessageAttribute('PSReviewUnusedParameter', 'Color')][string]$Color = 'Gray') $script:verdCap.Add($Message) }
 $verdDir = Join-Path $env:TEMP "ophira_v279_vcase_$stamp"
 New-Item -ItemType Directory -Path $verdDir -Force | Out-Null
 $RawDir = $verdDir; $MemDir = Join-Path $verdDir 'mem'
@@ -101,7 +101,7 @@ Check "T12: traces did not change the verdict output (rank 3, 1 signal)" (($v.Le
 # PART D - regen summary block
 # ============================================================================
 $regCap = New-Object System.Collections.Generic.List[string]
-function Write-CaseLog { param([string]$Message, [string]$Color = 'Gray') $script:regCap.Add($Message) }
+function Write-CaseLog { param([string]$Message, [System.Diagnostics.CodeAnalysis.SuppressMessageAttribute('PSReviewUnusedParameter', 'Color')][string]$Color = 'Gray') $script:regCap.Add($Message) }
 $regDir = Join-Path $env:TEMP "ophira_v279_rcase_$stamp"
 $regCsv = Join-Path $regDir 'csv'
 New-Item -ItemType Directory -Path $regCsv, (Join-Path $regDir 'raw') -Force | Out-Null
@@ -113,7 +113,7 @@ $script:SavedArtifacts = New-Object System.Collections.Generic.List[object]
 function ConvertTo-SafeInt { param([string]$Value, [int]$Default = 0) if ([string]::IsNullOrWhiteSpace($Value)) { return $Default }; try { return [int]$Value } catch { return $Default } }
 function Save-Rows { param([string]$Name, $Rows) if ($null -ne $script:SavedArtifacts) { $script:SavedArtifacts.Add([pscustomobject]@{ Path = "csv\fake\$Name.csv"; Rows = @($Rows).Count }) } }
 function New-SuperTimeline { Save-Rows -Name 'supertimeline' -Rows (1..1234) }
-function Import-PlasoTimeline { param($p) -1 }
+function Import-PlasoTimeline { param([System.Diagnostics.CodeAnalysis.SuppressMessageAttribute('PSReviewUnusedParameter', 'p')]$p) -1 }
 function New-SigmaRuleLogs { }
 function New-HuntFindings { Save-Rows -Name 'hunt_findings' -Rows (1..2) }
 function New-IocHits { Save-Rows -Name 'ioc_hits_dns' -Rows (1..1); Save-Rows -Name 'ioc_hits_amcache' -Rows (1..2) }
