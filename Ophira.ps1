@@ -4236,7 +4236,8 @@ $script:Modules = @(
                 # the 7045 field labels instead - same pattern as the 4624 parser in 4.1.
                 $name = if ($msg -match 'Service Name:\s+(.+?)\s+Service File Name:') { $Matches[1].Trim() } else { '' }
                 $file = if ($msg -match 'Service File Name:\s+(.+?)\s+Service Type:') { $Matches[1].Trim() } else { '' }
-                [pscustomobject]@{ Time = $_.TimeCreated; Service = $name; Binary = $file; Type = 'NewService' }
+                $acct = if ($msg -match 'Service Account:\s+(.+?)\s*$') { $Matches[1].Trim() } else { '' }   # v6.8: tail field - feeds the R73 T3 join
+                [pscustomobject]@{ Time = $_.TimeCreated; Service = $name; Binary = $file; Type = 'NewService'; Acct = $acct }
             })
             Save-Rows -Name 'system_new_services' -Rows $svc
         } }
@@ -13122,6 +13123,97 @@ function New-HuntFindings {
     }
     & $trace 'R70' 'DCOM lateral command surface' "proc + powershell command surfaces -> $($r70Seen.Count) pattern/source hit(s)"
 
+    # v6.8 R71: DNS cache C2 scoring - a Get-DnsClientCache dump carries no process
+    # attribution, so tells stay structural: tunneling-shaped labels, known-bad domain
+    # patterns, abuse-heavy TLDs (info only). One finding per domain; reverse/benign silent.
+    $r71Saw = @{}
+    $r71Tun = 0; $r71Tld = 0; $r71Bad = 0
+    foreach ($r71q in @(Import-CaseCsv 'dns_cache')) {
+        $r71n = ("$($r71q.Entry)" -split '\s+')[0].ToLower().Trim()
+        if (-not $r71n -or $r71n -notmatch '^[a-z0-9._-]{4,240}$' -or $r71n -match 'in-addr\.arpa$') { continue }
+        if ($r71Saw.ContainsKey($r71n)) { continue }
+        $r71Saw[$r71n] = $true
+        $r71lbl = ($r71n -split '\.')[0]
+        if ($r71lbl.Length -ge 40 -and $r71lbl -match '^[0-9a-f]+$') {
+            $r71Tun++
+            & $find 'DNS tunneling-shaped query' 'medium' $r71n "DNS cache: long single-token hex label ($($r71lbl.Length) chars) - tunneling shape" 'T1071.004'
+            continue
+        }
+        $r71kb = $false
+        foreach ($r71p in (Get-KnownBadRegexes)) { if ($r71n -match $r71p) { $r71kb = $true; break } }
+        if ($r71kb) {
+            $r71Bad++
+            & $find 'Known-bad pattern in DNS query' 'medium' $r71n "DNS cache: queried name matches a known-bad pattern" 'T1071.004'
+            continue
+        }
+        if ($r71n -match '\.(top|xyz|icu|click|rest|gq|tk|ml|cf|loan|men|mom|cyou|sbs)$') {
+            $r71Tld++
+            & $find 'Suspicious-TLD DNS query' 'info' $r71n "DNS cache: abuse-heavy TLD (resolved $(("$($r71q.Data)" -split '\s+')[0]))" 'T1071.004'
+        }
+    }
+    & $trace 'R71' 'DNS cache C2 scoring' "dns_cache -> $r71Tun tunneling, $r71Tld susp-TLD, $r71Bad known-bad"
+
+    # v6.8 R72: vulnerable-driver blocklist tamper - the zero-write turns off Defender's
+    # BYOVD protection (Sigma b8421346, high, unlikely FP). Registry evidence needs Sysmon
+    # EID 13; the command surface (reg add ... /d 0) covers hosts without Sysmon. Re-enable
+    # writes (0x1) and key-open events stay silent.
+    $r72N = 0
+    foreach ($r72r in @(Import-CaseCsv 'sysmon_registry')) {
+        $r72t = "$($r72r.TargetObject)"
+        if ($r72t -notmatch '(?i)\\Control\\CI\\Config\\VulnerableDriverBlocklistEnable$') { continue }
+        if (("$($r72r.EventType)" -notmatch '(?i)set|update')) { continue }
+        if (("$($r72r.Details)" -match '(?i)(0x)?([0-9a-f]+)\)?\s*$')) {   # house trailing-hex parse (same shape as the RunAsPPL scan)
+            try { $r72val = [Convert]::ToInt64($Matches[2], 16) } catch { $r72val = -1 }
+            if ($r72val -eq 0) {
+                $r72N++
+                & $find 'Vulnerable driver blocklist disabled (registry)' 'high' "$($r72r.Image)" "$r72t = $("$($r72r.Details)".Trim()) (BYOVD protection off)" 'T1685'
+            }
+        }
+    }
+    foreach ($r72s in @('security_proc_events', 'sysmon_proc_create', 'powershell_events')) {
+        foreach ($r72p in @(Import-CaseCsv $r72s)) {
+            if ("$r72s" -eq 'powershell_events' -and "$($r72p.Id)" -ne '4104') { continue }
+            $r72c = if ("$r72s" -eq 'powershell_events') { "$($r72p.Message)" } else { "$($r72p.CommandLine)" }
+            if ($r72c -match '(?i)VulnerableDriverBlocklistEnable' -and $r72c -match '(?i)/d\s+"?0+"?(\s|/|$)' -and $r72c -match '(?i)\badd\b') {
+                $r72N++
+                & $find 'Vulnerable driver blocklist write attempt (command line)' 'high' "$r72s" "command surface: $($r72c.Substring(0, [Math]::Min(160, $r72c.Length)))" 'T1685'
+            }
+        }
+    }
+    & $trace 'R72' 'driver-blocklist tamper' "sysmon_registry EID13 + command surfaces -> $r72N zero-write(s)"
+
+    # v6.8 R73: remote-service lateral join - a 7045 install by account X within 15 min
+    # AFTER a type-3 (network) logon of the same account is the classic psexec/sc remote
+    # service shape. Network evidence = 4624 type-3 with a real source IP; service accounts
+    # excluded with the same shape the campaign stitcher uses.
+    $r73N = 0
+    $r73T3 = New-Object System.Collections.Generic.List[object]
+    foreach ($r73a2 in @(Import-CaseCsv 'security_auth_events')) {
+        if ("$($r73a2.EventId)" -ne '4624' -or "$($r73a2.LogonType)" -ne '3') { continue }
+        $r73ip = ("$($r73a2.SourceIp)" -split '\s+')[0]
+        if (-not $r73ip -or @('LOCAL', '-', '0.0.0.0', '::') -contains $r73ip -or $r73ip -like '127.*' -or $r73ip -like '169.254.*') { continue }
+        $r73at = Get-InvariantDate "$($r73a2.Time)"
+        if (-not $r73at -or $r73at -eq [datetime]::MinValue) { continue }
+        $null = $r73T3.Add([pscustomobject]@{ Acct = (("$($r73a2.Account)" -split '\\')[-1]).ToLower().Trim(); At = $r73at; Ip = $r73ip })
+    }
+    foreach ($r73s in @(Import-CaseCsv 'system_new_services')) {
+        $r73a = (("$($r73s.Acct)" -split '\\')[-1]).ToLower().Trim()
+        if (-not $r73a -or $r73a.EndsWith('$') -or $r73a -match '^(system|local service|network service|dwm-\d+|umfd-\d+|window manager|font driver)$') { continue }
+        $r73st = Get-InvariantDate "$($r73s.Time)"
+        if (-not $r73st -or $r73st -eq [datetime]::MinValue) { continue }
+        $r73best = $null
+        foreach ($r73t in $r73T3) {
+            if ($r73t.Acct -ne $r73a) { continue }
+            $r73d = ($r73st - $r73t.At).TotalMinutes
+            if ($r73d -lt 0 -or $r73d -gt 15) { continue }
+            if ($null -eq $r73best -or $r73d -lt $r73best.Min) { $r73best = [pscustomobject]@{ Min = $r73d; Ip = $r73t.Ip } }
+        }
+        if ($null -eq $r73best) { continue }
+        $r73N++
+        & $find 'Service install preceded by network logon (same account)' 'medium' $r73a "'$(("$($r73s.Service)" -split '\s+')[0])' installed $([Math]::Round($r73best.Min, 0)) min after a type-3 logon of $r73a from $($r73best.Ip)" 'T1021.002'
+    }
+    & $trace 'R73' '7045 + 4624-T3 remote-service join' "system_new_services x security_auth_events -> $r73N join(s)"
+
     # v2.87 storm guard: one broken source can flood one rule with hundreds of rows and
     # drown both the report and the verdict - cap each rule+severity at 15 rows and
     # aggregate the overflow into one info row so the count is never silently lost
@@ -13437,7 +13529,7 @@ function Get-CompromiseVerdict {
     $postureBad = @($posture | Where-Object { "$($_.Status)" -eq 'BAD' })
     $credSweep = Import-CaseCsv 'credential_sweep'
     $hunt = Import-CaseCsv 'hunt_findings'
-    $huntHi = @($hunt | Where-Object { "$($_.Severity)" -eq 'high' -and "$($_.Rule)" -match 'Renamed LOLBin|side-load|Downloaded then executed|LSASS access|LSASS dump|secretsdump|ntdsutil|RunAsPPL|LOLBin service binary|Office app spawned|proxy-execution|Admin-share|Defender (real-time|exclusion)|DCSync|Password spray|Web server spawned|Remote-access tunnel|ServiceDll tamper|authorized_keys|Svchost masquerade|Cross-process injection|C2-style named pipe|image tampering|Direct volume access|WMI event subscription|Sysmon configuration changed|Lookalike system binary|Misplaced system binary|Known-bad name pattern' })   # v6.5: +LOLBin service binary (R68); v6.4: +LSASS dump/secretsdump/ntdsutil/RunAsPPL (R64-R66 credential-dump family)
+    $huntHi = @($hunt | Where-Object { "$($_.Severity)" -eq 'high' -and "$($_.Rule)" -match 'Renamed LOLBin|side-load|Downloaded then executed|LSASS access|LSASS dump|secretsdump|ntdsutil|RunAsPPL|LOLBin service binary|Office app spawned|proxy-execution|Admin-share|Defender (real-time|exclusion)|DCSync|Password spray|Web server spawned|Remote-access tunnel|ServiceDll tamper|authorized_keys|Svchost masquerade|Cross-process injection|C2-style named pipe|image tampering|Direct volume access|WMI event subscription|Sysmon configuration changed|Lookalike system binary|Misplaced system binary|Known-bad name pattern|vulnerable driver blocklist' })   # v6.8: +vulnerable driver blocklist (R72 BYOVD tamper); v6.5: +LOLBin service binary (R68); v6.4: +LSASS dump/secretsdump/ntdsutil/RunAsPPL (R64-R66 credential-dump family)
     # v2.64: EcsConfigs-only 5007 exclusion - Features\EcsConfigs is Defender's tamper-protected,
     # platform-managed cloud-config key (rewritten on every engine sync), NOT a user-set exclusion.
     # A 'Defender exclusion configuration changed' finding that only touches EcsConfigs paths is
