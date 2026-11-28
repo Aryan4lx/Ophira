@@ -15,7 +15,7 @@ CI (GitHub Actions, `windows-latest`) runs the same suite on every push.
 
 ## Release convention
 1. Bump `Ophira vN.N` header comment AND `$ScriptVersion`.
-2. Update `README.md` (module bullets / tools table / roadmap) and `CHANGELOG.md`.
+2. Update `README.md` (module bullets / tools table) and `CHANGELOG.md`.
 3. Full test suite green → single commit `vN.N: description` → push to `main`.
 
 ## PowerShell 5.1 quirks that bite here (learned the hard way)
