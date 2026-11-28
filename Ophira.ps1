@@ -1973,7 +1973,7 @@ function New-FleetCampaigns {
         # v6.7: span = earliest-to-latest tie-evidence time in this campaign (empty when none carry one)
         $span = ''
         if ($times.ContainsKey($root)) {
-            $tAll = @($times[$root])
+            $tAll = $times[$root].ToArray()   # @($genericList) is a 5.1 landmine on some builds (AGENTS.md)
             if ($tAll.Count -gt 0) {
                 $tmin2 = $tAll[0]; $tmax2 = $tAll[0]
                 foreach ($dt2 in $tAll) { if ($dt2 -lt $tmin2) { $tmin2 = $dt2 }; if ($dt2 -gt $tmax2) { $tmax2 = $dt2 } }
