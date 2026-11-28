@@ -1802,7 +1802,7 @@ function New-FleetCampaigns {
     $acctMap = @{}   # lowercase user -> host-key -> earliest session start
     foreach ($sr in $SessionRows) {
         $u = ("$($sr.User)").Trim().ToLower()
-        if (-not $u -or $u -match '^(system|local service|network service|dwm-\d+|umfd-\d+)$' -or $u.EndsWith('$') -or $u -match 'window manager|font driver') { continue }
+        if (-not $u -or $u -match '^(system|local service|network service|dwm-\d+|umfd-\d+)$' -or $u -match '^(nt authority|nt service)\\' -or $u.EndsWith('$') -or $u -match 'window manager|font driver') { continue }   # v6.9: qualified service accounts (NT AUTHORITY\System) excluded too
         $g = & $norm $sr.Host
         if (-not $g -or -not $parent.ContainsKey($g)) { continue }
         if (-not $acctMap.ContainsKey($u)) { $acctMap[$u] = @{} }
@@ -1824,7 +1824,7 @@ function New-FleetCampaigns {
         }
     }
     # v6.7: the same source IP signing in here and moving laterally elsewhere
-    $ipOk = { param($ip) ("$ip") -and (@('LOCAL', '-', '') -contains "$ip") -eq $false -and ("$ip") -notlike '127.*' -and ("$ip") -notlike '::1*' -and ("$ip") -notlike '169.254.*' }
+    $ipOk = { param($ip) ("$ip") -and (@('LOCAL', '-', '', '0.0.0.0', '::') -contains "$ip") -eq $false -and ("$ip") -notlike '127.*' -and ("$ip") -notlike '::1*' -and ("$ip") -notlike '169.254.*' -and ("$ip") -notlike 'fe80:*' }   # v6.9: +0.0.0.0/bare-::/link-local v6
     $ipMap = @{}     # ip -> host-key -> earliest time
     foreach ($sr in $SessionRows) {
         $ip = ("$($sr.Source)").Trim()

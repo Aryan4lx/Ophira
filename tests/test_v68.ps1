@@ -103,6 +103,21 @@ $ev7 = if ($t7) { "$($t7[0].Evidence)" } else { '' }
 $cnt7 = [regex]::Matches($ev7, [regex]::Escape('account: jsmith on')).Count
 Check 'T7 account tie line deduped to one' ($cnt7 -eq 1)
 
+Write-Host '--- T7b: non-routable / unparseable source IPs never tie hosts ---'
+$t7b = @(Invoke-Stitch -AllHosts @('H1', 'H2', 'H3', 'H4', 'H5', 'H6') -SessionRows @(
+    (SRow 'H1' 'alice' '2026-11-24 09:00:00' '2' '0.0.0.0'), (SRow 'H2' 'bob' '2026-11-24 09:05:00' '2' '0.0.0.0'),
+    (SRow 'H3' 'carol' '2026-11-24 09:00:00' '2' '::'), (SRow 'H4' 'dan' '2026-11-24 09:05:00' '2' '::'),
+    (SRow 'H5' 'eve' '2026-11-24 09:00:00' '2' 'fe80::1'), (SRow 'H6' 'frank' '2026-11-24 09:05:00' '2' 'fe80::1') ))
+Check 'T7b 0.0.0.0 source never merges H1+H2' ($t7b.Count -eq 0)
+Check 'T7b fe80:/:: sources never merge H3-H6' ($t7b.Count -eq 0)
+
+Write-Host '--- T7c: domain-qualified service accounts never tie hosts ---'
+$t7c = @(Invoke-Stitch -AllHosts @('H1', 'H2', 'H3', 'H4') -SessionRows @(
+    (SRow 'H1' 'NT AUTHORITY\System' '2026-11-24 09:00:00'), (SRow 'H2' 'NT AUTHORITY\System' '2026-11-24 09:05:00'),
+    (SRow 'H3' 'NT SERVICE\WdiServiceHost' '2026-11-24 09:00:00'), (SRow 'H4' 'NT SERVICE\WdiServiceHost' '2026-11-24 09:05:00') ))
+Check 'T7c NT AUTHORITY\\System never merges H1+H2' ($t7c.Count -eq 0)
+Check 'T7c NT SERVICE accounts never merge H3+H4' ($t7c.Count -eq 0)
+
 Write-Host '--- T8: fleet harvest wiring pins (Analyze-mode plumbing) ---'
 Check 'T8 $fleetUsb list initialized' ($script:src -match [regex]::Escape('$fleetUsb = New-Object System.Collections.Generic.List[object]'))
 Check 'T8 usb_devices harvest with cap + serial filter' ($script:src -match [regex]::Escape('Join-Path $csvDir ''usb_devices.csv''') -and $script:src -match '\$fleetUsb\.Count -lt 5000' -and $script:src -match [regex]::Escape('$sn -eq ''0'''))
