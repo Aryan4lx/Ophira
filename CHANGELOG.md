@@ -2,7 +2,7 @@
 - R71 DNS cache C2 sweep (medium, T1071.004): scores dns_cache rows - non-browser process, tunneling length ratios (>0.75), rare TLDs, known-bad domains; dedicated medium verdict door
 - R72 driver blocklist tamper scan (high, T1554 + T1112): Sysmon EID 13 on SiPolicy / CODE INTEGRITY POLICY OPTIONS registry paths + command surface on bcdedit testsigning / dconfig CI checks
 - R73 7045+4624-Type-3 lateral join: system new-service installs joined to network logons sharing the account within the log window
-- CI: actions/checkout@v4 -> @v5 (Node 20 deprecation)
+- CI: actions/checkout v4 -> v5 (Node 20 deprecation)
 
 ## v6.7 - fleet campaign ties v2 (accounts, source IPs, USB, spans)
 
